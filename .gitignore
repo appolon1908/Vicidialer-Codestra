@@ -1,7 +1,8 @@
 *.tmp
 *.log
+__pycache__/
+*.py[cod]
 test-output/
 secrets/
 *.key
 *.asc
-
