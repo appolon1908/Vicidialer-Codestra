@@ -6,3 +6,8 @@ test-output/
 secrets/
 *.key
 *.asc
+distroless-python3-debian13-vulnerability.json
+gate3a-sbom-4418cc5.cdx.json
+gate3a-secure-candidate-vulnerability.json
+gate3a-vulnerability-4418cc5.json
+python312-slim-current-vulnerability.json
