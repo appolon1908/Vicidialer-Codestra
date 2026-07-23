@@ -1,0 +1,7 @@
+*.tmp
+*.log
+test-output/
+secrets/
+*.key
+*.asc
+
