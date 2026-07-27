@@ -2,6 +2,9 @@
 
 Status: **SOURCE PUBLICATION AUTHORIZED**.
 
+Implementation commit:
+`bf3581d5b656d43e22cde10746eb6bafb8bb092e`
+
 The curated component is integrated from the related
 `release/production-activation` history under `vicidial/`. Source, history,
 secret, sensitive-artifact, compilation, test, and staged-path gates must pass
