@@ -15,6 +15,13 @@ Implemented in `src/codestra_vicidial`:
 - same-campaign transfer target policy;
 - global and per-family kill switches, all default false;
 - no production activation endpoint.
+- compatible user groups use strict `allowed_campaigns` normalization and safe
+  additive membership without removing unrelated authorized campaigns;
+- completion compares campaign, lists, user/inbound/closer groups, scripts,
+  dispositions, callback policy, transfer policy, recording-policy reference,
+  reporting mapping, and disabled state;
+- mismatches return `reconciliation_required`, preserve the pre-write snapshot,
+  record only redacted hashes/field names, and remain retryable.
 
 The code is complete for offline/staging acceptance. It has not replaced the
 running adapter and has not written to VICIdial.

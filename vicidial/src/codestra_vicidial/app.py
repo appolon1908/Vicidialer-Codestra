@@ -13,7 +13,7 @@ from .models import (
 )
 from .repository import CollisionError, MemoryRepository, MySQLRepository
 from .security import RequestAuthenticator
-from .service import AdapterService, FeatureFlags
+from .service import AdapterService, FeatureFlags, ReadbackMismatch
 from .state import StateStore
 
 
@@ -23,6 +23,17 @@ def create_app(service: AdapterService, authenticator: RequestAuthenticator) -> 
     @app.exception_handler(CollisionError)
     async def collision_handler(_request: Request, exc: CollisionError):
         return JSONResponse(status_code=409, content={"detail": str(exc)})
+
+    @app.exception_handler(ReadbackMismatch)
+    async def readback_handler(_request: Request, exc: ReadbackMismatch):
+        return JSONResponse(
+            status_code=409,
+            content={
+                "status": "reconciliation_required",
+                "detail": str(exc),
+                "readback": exc.results,
+            },
+        )
 
     @app.get("/health")
     def health():
