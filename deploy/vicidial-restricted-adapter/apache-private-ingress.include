@@ -1,0 +1,21 @@
+# Include inside the accepted edge.internal.codestra.agency
+# 10.40.0.2:8443 mTLS VirtualHost. The adapter stays loopback-only.
+<LocationMatch "^/restricted-vicidial/(?:health|ready|version)$">
+    <RequireAll>
+        Require method GET
+        Require ip 10.40.0.1
+        Require expr "%{SSL_CLIENT_VERIFY} == 'SUCCESS'"
+    </RequireAll>
+</LocationMatch>
+
+<LocationMatch "^/restricted-vicidial/v1/(?:campaigns(?:/.*)?|agents(?:/.*)?|leads(?:/.*)?|callbacks(?:/.*)?|scripts/sync|dispositions/sync|transfer-policies/sync|reconciliation(?:/.*)?)$">
+    <RequireAll>
+        Require ip 10.40.0.1
+        Require expr "%{SSL_CLIENT_VERIFY} == 'SUCCESS'"
+    </RequireAll>
+    RequestHeader set X-Forwarded-For "%{REMOTE_ADDR}s"
+    RequestHeader unset Proxy early
+</LocationMatch>
+
+ProxyPass "/restricted-vicidial/" "http://127.0.0.1:8097/" connectiontimeout=2 timeout=10
+ProxyPassReverse "/restricted-vicidial/" "http://127.0.0.1:8097/"
