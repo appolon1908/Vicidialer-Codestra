@@ -43,3 +43,14 @@ dist/
 build/
 .cache/
 logs/
+.pytest_cache/
+*.pgcustom
+.locks/
+.r2_candidate/
+.remote-edit/
+.vicidial-staging-repo/
+.campaign-invariant-evidence
+.identity-center-backup
+.n8n-current-evidence
+.vicidial-mapping-evidence
+evidence/**/backup/
