@@ -1,0 +1,17 @@
+[Unit]
+Description=Check Codestra restricted VICIdial adapter readiness
+After=codestra-vicidial-restricted-adapter.service
+
+[Service]
+Type=oneshot
+User=codestra-adapter
+Group=codestra-adapter
+ExecStart=/usr/bin/curl --fail --silent --show-error http://127.0.0.1:8097/ready
+NoNewPrivileges=true
+PrivateTmp=true
+PrivateDevices=true
+ProtectSystem=strict
+ProtectHome=true
+RestrictAddressFamilies=AF_UNIX AF_INET
+IPAddressDeny=any
+IPAddressAllow=localhost
