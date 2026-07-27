@@ -73,8 +73,12 @@ class CampaignDesignRequest:
             raise DesignValidationError("integration_uuid must be a UUID") from exc
         if self.odoo_campaign_id <= 0:
             raise DesignValidationError("odoo_campaign_id must be positive")
-        if self.business_unit not in LIST_RANGES:
+        if self.business_unit not in {*LIST_RANGES, "TEST"}:
             raise DesignValidationError("unknown business-unit code")
+        if self.business_unit == "TEST" and self.environment == "production":
+            raise DesignValidationError(
+                "TEST business-unit code is forbidden in production"
+            )
         if not CODE_PART.fullmatch(self.purpose):
             raise DesignValidationError("purpose must contain only A-Z and 0-9")
         if self.direction not in VALID_DIRECTIONS:
@@ -269,6 +273,11 @@ def build_manifest(
         "production": "PROD",
     }[request.environment]
     groups = list(dict.fromkeys(request.agent_roles + request.transfer_roles))
+    actual_campaign_id = (
+        "TST" + sha256(request.integration_uuid.encode()).hexdigest()[:5].upper()
+        if request.business_unit == "TEST"
+        else campaign_id.replace("-", "")[:8]
+    )
     return {
         "schema_version": "campaign-provisioning.v1",
         "environment": request.environment,
@@ -283,6 +292,7 @@ def build_manifest(
         },
         "vicidial": {
             "campaign_id": campaign_id,
+            "actual_campaign_id": actual_campaign_id,
             "active": False,
             "default_list_id": list_id,
             "lists": [
