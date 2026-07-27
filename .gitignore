@@ -1,0 +1,16 @@
+config/vicidial-server.env
+.env
+.env.*
+*.pem
+*.key
+*.p12
+*.pfx
+evidence/private/
+reports/private/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.venv/
+*.sqlite3
+*.sqlite3-wal
+*.sqlite3-shm

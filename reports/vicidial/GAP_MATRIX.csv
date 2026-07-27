@@ -1,0 +1,17 @@
+capability,baseline,status,implementation,evidence
+Source restriction,Private services are loopback/private,PARTIAL,Exact IP validation implemented; approved firewall deployment pending,tests/test_adapter.py
+Service authentication,Existing HMAC adapter, PASS,Signed identity scope timestamp nonce and body hash implemented,tests/test_adapter.py
+General SQL shell file endpoints,None found,PASS,No such endpoints implemented,src/codestra_vicidial/app.py
+Campaign validate,Missing,PASS,Strict manifest validation and collision preview,src/codestra_vicidial/service.py
+Campaign provision disabled,Missing,STAGING_READY,Disabled create/adopt/read-back implemented; live writes remain off,src/codestra_vicidial/repository.py
+Lists and groups sync,Missing,STAGING_READY,Allowlisted disabled provisioning with ownership checks,src/codestra_vicidial/repository.py
+Scripts and dispositions sync,Missing,STAGING_READY,Allowlisted disabled provisioning and compatibility checks,src/codestra_vicidial/repository.py
+Agent synchronization,Existing partial,PASS,Disabled sync and disable read-back implemented,tests/test_adapter.py
+Lead publication,Missing,STAGING_READY,External-ID duplicate suppression and read-back implemented,tests/test_adapter.py
+Callback creation,Missing,STAGING_READY,External-ID adoption and read-back implemented,tests/test_adapter.py
+Transfer policy,Missing,STAGING_READY,Same-manifest target allowlist implemented,tests/test_adapter.py
+Reconciliation,Agent-only partial,PARTIAL,Adapter inventory and state reconciliation implemented; cross-system comparison pending,src/codestra_vicidial/service.py
+Event gateway,Running external delivery disabled,PARTIAL,Existing passive gateway preserved; restart lifecycle not rerun,reports/vicidial/EVENT_GATEWAY_TESTS.md
+Firewall,Existing rules preserved,PRODUCTION_BLOCKED,9443 source-only rule not applied without approved deployment window,reports/vicidial/FIREWALL.md
+mTLS,Existing PKI/private channel assets,PARTIAL,Ingress termination remains deployment prerequisite,docs/ADAPTER_OPERATIONS.md
+Production activation,Disabled,PASS,No activation route and production dialing hard false,src/codestra_vicidial/service.py

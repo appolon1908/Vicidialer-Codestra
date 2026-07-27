@@ -1,0 +1,11 @@
+campaign_id,name,active,dial_method,call_time,classification
+AI_INBOU,Codestra AI Inbound,Y,MANUAL,24hours,existing
+AI_PREQU,Codestra AI Prequalification,Y,MANUAL,24hours,existing
+CALE1629,STG CAL-TEST-OUT,N,MANUAL,9am-9pm,staging
+CODABB8E,STG COD-TEST-OUT,N,MANUAL,9am-9pm,staging
+FTPA2BD0,STG FTP-TEST-OUT,N,MANUAL,9am-9pm,staging
+MBLC8349,STG MBL-TEST-OUT,N,MANUAL,9am-9pm,staging
+MOYDCB3B,STG MOY-TEST-OUT,N,MANUAL,9am-9pm,staging
+RLP0E661,STG RLP-TEST-OUT,N,MANUAL,9am-9pm,staging
+SCP93B8E,STG SCP-TEST-OUT,N,MANUAL,9am-9pm,staging
+TRX04B71,STG TRX-TEST-OUT,N,MANUAL,9am-9pm,staging

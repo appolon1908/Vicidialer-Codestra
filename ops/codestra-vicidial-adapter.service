@@ -1,0 +1,33 @@
+[Unit]
+Description=Codestra restricted VICIdial adapter
+After=network-online.target mariadb.service asterisk.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=codestra-vicidial
+Group=codestra-vicidial
+WorkingDirectory=/opt/codestra/vicidial-adapter
+EnvironmentFile=/etc/codestra/vicidial-adapter.env
+ExecStart=/opt/codestra/vicidial-adapter/.venv/bin/uvicorn codestra_vicidial.app:app --host 10.40.0.2 --port 9443 --no-server-header
+Restart=on-failure
+RestartSec=5
+NoNewPrivileges=true
+PrivateTmp=true
+PrivateDevices=true
+ProtectSystem=strict
+ProtectHome=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectKernelLogs=true
+ProtectControlGroups=true
+RestrictSUIDSGID=true
+LockPersonality=true
+RestrictRealtime=true
+RestrictAddressFamilies=AF_UNIX AF_INET
+ReadOnlyPaths=/run/secrets
+ReadWritePaths=/var/lib/codestra-vicidial-adapter
+UMask=0077
+
+[Install]
+WantedBy=multi-user.target
