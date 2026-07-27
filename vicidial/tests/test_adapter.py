@@ -8,11 +8,12 @@ import pytest
 from pydantic import ValidationError
 
 from codestra_vicidial.app import create_app
+from codestra_vicidial.curation import content_categories
 from codestra_vicidial.models import (
     AgentCommand, CallbackCommand, CampaignCommand, DisableAgentCommand,
     LeadCommand, TransferPolicyCommand,
 )
-from codestra_vicidial.repository import CollisionError, MemoryRepository
+from codestra_vicidial.repository import CollisionError, MemoryRepository, MySQLRepository
 from codestra_vicidial.security import RequestAuthenticator
 from codestra_vicidial.service import AdapterService, FeatureFlags
 from codestra_vicidial.state import StateStore
@@ -181,6 +182,44 @@ def test_compatible_adoption(harness):
     service.provision_campaign("first-key", command)
     result = service.provision_campaign("second-key", command)
     assert {row["result"] for row in result["resources"]} == {"adopted"}
+
+
+def test_secret_detectors_match_real_whitespace_not_literal_backslashes():
+    assert content_categories(b"Authorization: Bearer actual-token") == {
+        "authorization header"
+    }
+    assert "credential assignment" in content_categories(
+        b"client_secret = actual-secret-value"
+    )
+    assert content_categories(b"client_secret = ${PROTECTED_FILE}") == set()
+
+
+def test_existing_user_group_requires_exact_allowed_campaign_ownership():
+    with pytest.raises(CollisionError, match="incompatible collision"):
+        MySQLRepository._check(
+            {"name": "Synthetic Agents", "allowed_campaigns": " OTHER01 -"},
+            {"name": "Synthetic Agents", "allowed_campaigns": " TST00001 -"},
+            ("name", "allowed_campaigns"),
+            "TEST_E2E_AGENT",
+        )
+
+
+def test_provisioning_rejects_incomplete_generated_resource_readback(
+    harness, monkeypatch
+):
+    service, repo = harness
+    original = repo.campaign_resources
+
+    def missing_script(spec):
+        readback = original(spec)
+        readback["scripts"] = []
+        return readback
+
+    monkeypatch.setattr(repo, "campaign_resources", missing_script)
+    with pytest.raises(RuntimeError, match="script read-back is incomplete"):
+        service.provision_campaign(
+            "incomplete-readback", CampaignCommand.model_validate(campaign_payload())
+        )
 
 
 def test_incompatible_collision_blocks(harness):

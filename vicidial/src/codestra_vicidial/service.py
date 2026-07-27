@@ -76,11 +76,34 @@ class AdapterService:
                     command.campaign.model_dump(mode="json"))},
             )
             resources = self.repository.provision_campaign_disabled(command.campaign)
-            actual = self.repository.campaign(command.campaign.actual_id)
+            readback = self.repository.campaign_resources(command.campaign)
+            actual = readback["campaign"]
             if not actual or actual.get("active") != "N":
                 raise RuntimeError("campaign read-back is not disabled")
             if any(item.get("active") != "N" for item in actual.get("lists", [])):
                 raise RuntimeError("list read-back is not disabled")
+            desired_groups = {(item.kind, item.code) for item in command.campaign.groups}
+            actual_groups = {
+                (item.get("kind"), item.get("code")) for item in readback["groups"]
+            }
+            if actual_groups != desired_groups or any(
+                item.get("active") != "N" for item in readback["groups"]
+            ):
+                raise RuntimeError("group read-back is incomplete or not disabled")
+            desired_scripts = {item.code for item in command.campaign.scripts}
+            actual_scripts = {item.get("script_id") for item in readback["scripts"]}
+            if actual_scripts != desired_scripts or any(
+                item.get("active") != "N" for item in readback["scripts"]
+            ):
+                raise RuntimeError("script read-back is incomplete or not disabled")
+            desired_dispositions = {
+                item.code for item in command.campaign.dispositions
+            }
+            actual_dispositions = {
+                item.get("status") for item in actual.get("dispositions", [])
+            }
+            if actual_dispositions != desired_dispositions:
+                raise RuntimeError("disposition read-back is incomplete")
             self.state.put_mapping(
                 "campaign", command.campaign.canonical_id, command.campaign.actual_id,
                 self.state.digest(command.campaign.model_dump(mode="json")))
@@ -89,6 +112,7 @@ class AdapterService:
             return {
                 "status": "complete_disabled", "snapshot_id": snapshot_id,
                 "resources": resources, "actual": actual,
+                "resource_readback": readback,
             }
 
         return self._execute("campaign.provision-disabled", key, command,

@@ -13,6 +13,7 @@ class CollisionError(ValueError):
 
 class Repository(Protocol):
     def campaign(self, actual_id: str) -> dict | None: ...
+    def campaign_resources(self, spec: CampaignSpec) -> dict: ...
     def provision_campaign_disabled(self, spec: CampaignSpec) -> list[dict]: ...
     def disable_campaign(self, actual_id: str) -> None: ...
     def agent(self, user_id: str) -> dict | None: ...
@@ -57,6 +58,21 @@ class MemoryRepository:
         result["dispositions"] = [deepcopy(row) for (campaign, _), row in self.dispositions.items()
                                   if campaign == actual_id]
         return result
+
+    def campaign_resources(self, spec: CampaignSpec) -> dict:
+        return {
+            "campaign": self.campaign(spec.actual_id),
+            "groups": [
+                deepcopy(self.groups[(item.kind, item.code)])
+                for item in spec.groups
+                if (item.kind, item.code) in self.groups
+            ],
+            "scripts": [
+                deepcopy(self.scripts[item.code])
+                for item in spec.scripts
+                if item.code in self.scripts
+            ],
+        }
 
     def provision_campaign_disabled(self, spec: CampaignSpec) -> list[dict]:
         # Preflight every possible collision before the first mutation. This is
@@ -240,6 +256,37 @@ class MySQLRepository:
             "FROM vicidial_campaign_statuses WHERE campaign_id=%s", (actual_id,))
         return row
 
+    def campaign_resources(self, spec: CampaignSpec) -> dict:
+        groups = []
+        for item in spec.groups:
+            if item.kind == "user":
+                row = self._one(
+                    "SELECT user_group AS code,group_name AS name,allowed_campaigns "
+                    "FROM vicidial_user_groups WHERE user_group=%s", (item.code,))
+                if row:
+                    row["kind"] = "user"
+                    row["active"] = "N"
+            else:
+                row = self._one(
+                    "SELECT group_id AS code,group_name AS name,active "
+                    "FROM vicidial_inbound_groups WHERE group_id=%s", (item.code,))
+                if row:
+                    row["kind"] = item.kind
+            if row:
+                groups.append(row)
+        scripts = []
+        for item in spec.scripts:
+            row = self._one(
+                "SELECT script_id,script_name,script_text,active "
+                "FROM vicidial_scripts WHERE script_id=%s", (item.code,))
+            if row:
+                scripts.append(row)
+        return {
+            "campaign": self.campaign(spec.actual_id),
+            "groups": groups,
+            "scripts": scripts,
+        }
+
     @staticmethod
     def _check(current: dict | None, desired: dict, fields: tuple[str, ...], target: str) -> bool:
         if current is None:
@@ -284,9 +331,15 @@ class MySQLRepository:
         for item in spec.groups:
             if item.kind == "user":
                 current_group = self._one(
-                    "SELECT user_group AS code,group_name AS name FROM vicidial_user_groups "
+                    "SELECT user_group AS code,group_name AS name,allowed_campaigns "
+                    "FROM vicidial_user_groups "
                     "WHERE user_group=%s", (item.code,))
-                self._check(current_group, {"name": item.name}, ("name",), item.code)
+                self._check(
+                    current_group,
+                    {"name": item.name,
+                     "allowed_campaigns": f" {spec.actual_id} -"},
+                    ("name", "allowed_campaigns"), item.code,
+                )
             else:
                 current_group = self._one(
                     "SELECT group_id AS code,group_name AS name,active "
@@ -345,10 +398,15 @@ class MySQLRepository:
         for item in spec.groups:
             if item.kind == "user":
                 current = self._one(
-                    "SELECT user_group AS code,group_name AS name FROM vicidial_user_groups "
+                    "SELECT user_group AS code,group_name AS name,allowed_campaigns "
+                    "FROM vicidial_user_groups "
                     "WHERE user_group=%s", (item.code,))
-                adopted = self._check(current, {"code": item.code, "name": item.name},
-                                      ("name",), item.code)
+                adopted = self._check(
+                    current,
+                    {"code": item.code, "name": item.name,
+                     "allowed_campaigns": f" {spec.actual_id} -"},
+                    ("name", "allowed_campaigns"), item.code,
+                )
                 if not adopted:
                     self._execute(
                         "INSERT INTO vicidial_user_groups(user_group,group_name,allowed_campaigns)"

@@ -6,9 +6,10 @@ import csv
 import hashlib
 import mimetypes
 import os
-import re
 import subprocess
 from pathlib import Path
+
+from codestra_vicidial.curation import content_categories
 
 ROOT = Path(__file__).resolve().parents[1]
 REPORT = ROOT / "reports" / "github"
@@ -22,14 +23,6 @@ SENSITIVE_SUFFIX = {
     ".wav": "recording/audio", ".gsm": "recording/audio", ".mp3": "recording/audio",
     ".ogg": "recording/audio", ".log": "runtime log", ".backup": "backup",
 }
-CONTENT_RULES = [
-    ("private key", re.compile(rb"-----BEGIN (?:RSA |EC |OPENSSH )?PRIVATE KEY-----")),
-    ("authorization header", re.compile(rb"(?im)^authorization\\s*:\\s*(?:bearer|basic)\\s+\\S+")),
-    ("credential assignment", re.compile(
-        rb"(?im)(?:password|passwd|client_secret|api_key|jwt_key|sip_secret)\\s*[:=]\\s*[^\\s$<{][^\\r\\n]{3,}"
-    )),
-]
-
 def tracked(path: Path) -> bool:
     result = subprocess.run(
         ["git", "check-ignore", "-q", "--no-index", str(path.relative_to(ROOT))],
@@ -65,9 +58,7 @@ for path in sorted(ROOT.rglob("*")):
         categories.add("sensitive/runtime directory")
     if stat.st_size <= 4 * 1024 * 1024:
         data = path.read_bytes()
-        for category, rule in CONTENT_RULES:
-            if rule.search(data):
-                categories.add(category)
+        categories.update(content_categories(data))
     for category in sorted(categories):
         is_safe_sql = category == "database dump or migration" and "migrations" in lowered
         sensitive.append({
