@@ -43,3 +43,11 @@ Current critical blockers:
 - Required live synthetic adapter, event lifecycle/restart, cross-system
   reconciliation, and MyISAM rollback tests are incomplete.
 - No initial commit or push is permitted while these gates remain incomplete.
+
+Staging deployment of the loopback-only, memory-backed adapter is complete with
+every write flag false. This does not change the recommendation:
+**STAGING-ONLY / NO-GO for production**.
+
+Positive health from `10.40.0.1`, live MyISAM rollback, event restart/no-gap
+testing, live database-backed reconciliation, cross-system reconciliation, and
+production dialing remain blocked or not tested.

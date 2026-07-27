@@ -1,36 +1,37 @@
 # Adapter tests
 
-Latest isolated run: **13 passed in 1.04 seconds** using Python 3.11.
+Latest isolated source run: **13 passed** using Python 3.11.
 
-Authentication/source/scope/signature/replay rejection, strict schemas,
-absence of SQL/shell/file endpoints, kill switches, idempotency, adoption,
-collision rejection, disabled read-back, snapshotting, agent/lead/callback
-flows, transfer policy, reconciliation, and rollback safety passed.
+Covered:
 
-The deployment unit is a template and is not installed; `systemd-analyze
-verify` therefore reports the expected missing `/opt/.../uvicorn` executable.
-No service was started.
+- route contract and absence of SQL/shell/exec/file routes
+- source, identity, scope, signature, timestamp, nonce, and replay rejection
+- strict schema and business-unit validation
+- disabled-by-default provisioning and read-back
+- idempotent retry and conflict handling
+- compatible adoption and incompatible collision blocking
+- pre-mutation rollback safety and snapshots
+- kill switches
+- agent sync/disable
+- lead duplicate retry
+- callback read-back
+- same-campaign transfer allowlist
+- reconciliation
 
-## Baseline suite
+## Staging deployment
 
-Command: `/root/codestra-vicidial-edge/.test-venv/bin/pytest -q`
+The separate `codestra-vicidial-restricted-adapter.service` passes:
 
-Result: `72 passed, 3 skipped, 44 subtests passed in 6.99s`.
+- `systemd-analyze verify`
+- systemd security exposure score 1.5 (`OK`)
+- Apache syntax validation
+- firewalld configuration validation
+- loopback `/health`, `/ready`, and `/version`
+- adapter-only graceful restart
+- periodic readiness service
+- all negative tests in `ADAPTER_NEGATIVE_TESTS.md`
 
-## New restricted adapter suite
+Positive mTLS health originating on `10.40.0.1` remains **BLOCKED** pending an
+authenticated execution channel on Application Server A.
 
-Command:
-
-```text
-PYTHONPATH=src /root/codestra-vicidial-edge/.test-venv/bin/pytest -q
-```
-
-Result: `12 passed in 0.98s`.
-
-Covered: route contract; source, identity, scope, signature, timestamp/nonce
-authentication; replay rejection; strict schema validation; disabled-by-default
-provisioning; read-back; idempotent retry; compatible adoption; incompatible
-collision; kill switch; agent disable; lead duplicate retry; callback read-back;
-same-campaign transfer allowlist; disable; reconciliation.
-
-No live mutation or customer destination was used.
+No live VICIdial/MariaDB mutation or customer destination was used.

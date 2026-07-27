@@ -9,6 +9,7 @@ Result: **PRODUCTION_BLOCKED / configuration preserved**.
 - No process listens on TCP/9443
 - MariaDB listens on loopback only
 
-No firewall change was made. Before deployment, prepare timed automatic
-rollback and add only an exact private-source rule for port 9443 after mTLS and
-adapter configuration validation.
+No firewall change was needed. The adapter is loopback-only behind the accepted
+Apache mTLS listener. The existing exact `10.40.0.1 → 10.40.0.2:8443` rule is
+the complete ingress path. TCP/9443 remains closed with no listener or rule.
+A timed rollback was prepared and cancelled after successful validation.

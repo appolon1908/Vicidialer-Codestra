@@ -96,7 +96,7 @@ def test_route_contract_is_present(harness):
 def test_auth_source_identity_scope_signature_and_replay():
     auth = RequestAuthenticator(
         "codestra-middleware", b"x" * 32,
-        frozenset({"65.109.65.169"}), max_clock_skew_seconds=60,
+        frozenset({"65.109.65.169", "10.40.0.1"}), max_clock_skew_seconds=60,
     )
     body = b'{"safe":true}'
     now = int(time.time())
@@ -105,6 +105,13 @@ def test_auth_source_identity_scope_signature_and_replay():
                 scopes={"telephony:provision"}, timestamp=now,
                 nonce="nonce-1234567890", body=body, signature=signature,
                 required_scope="telephony:provision", now=now)
+    private_nonce = "private-peer-1234567890"
+    auth.verify(
+        source="10.40.0.1", identity="codestra-middleware",
+        scopes={"telephony:provision"}, timestamp=now, nonce=private_nonce,
+        body=body, signature=auth.sign(now, private_nonce, body),
+        required_scope="telephony:provision", now=now,
+    )
     with pytest.raises(PermissionError, match="replay"):
         auth.verify(source="65.109.65.169", identity="codestra-middleware",
                     scopes={"telephony:provision"}, timestamp=now,

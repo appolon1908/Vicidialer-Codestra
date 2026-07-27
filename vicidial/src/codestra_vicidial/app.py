@@ -233,6 +233,7 @@ def app_from_environment() -> FastAPI:
         key=key,
         authorized_sources=frozenset({
             os.environ.get("AUTHORIZED_APPLICATION_SERVER_IP", "65.109.65.169"),
+            os.environ.get("AUTHORIZED_PRIVATE_SOURCE_IP", "10.40.0.1"),
             "127.0.0.1",
         }),
     )
