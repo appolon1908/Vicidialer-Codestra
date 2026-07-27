@@ -15,3 +15,6 @@ Event gateway,Running external delivery disabled,PARTIAL,Existing passive gatewa
 Firewall,Existing rules preserved,PRODUCTION_BLOCKED,9443 source-only rule not applied without approved deployment window,reports/vicidial/FIREWALL.md
 mTLS,Existing PKI/private channel assets,PARTIAL,Ingress termination remains deployment prerequisite,docs/ADAPTER_OPERATIONS.md
 Production activation,Disabled,PASS,No activation route and production dialing hard false,src/codestra_vicidial/service.py
+Repository publication,Target and branch confirmed,PRODUCTION_BLOCKED,No stage push or force-push until repository secret artifact test and production gates pass,reports/vicidial/PRODUCTION_GATE.md
+Middleware endpoint,https://api.codestra.agency,PARTIAL,Recorded in safe templates; authenticated connectivity not exercised,config/adapter.env.example
+Identity issuer,https://auth.codestra.agency,PARTIAL,Recorded in safe templates; issuer validation not exercised,config/adapter.env.example

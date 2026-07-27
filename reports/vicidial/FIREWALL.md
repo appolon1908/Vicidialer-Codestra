@@ -8,3 +8,8 @@ No firewall mutation was made. Deployment must first schedule automatic rollback
 and then allow the adapter private TCP/9443 listener only from `65.109.65.169`.
 The proposed service binds `10.40.0.2`, not a public wildcard address. A public
 listener is prohibited unless exact-source firewalling and mTLS are verified.
+
+The confirmed middleware endpoint is `https://api.codestra.agency` and the
+confirmed identity issuer is `https://auth.codestra.agency`. DNS names do not
+replace the exact authorized source address `65.109.65.169` in adapter or
+firewall policy.

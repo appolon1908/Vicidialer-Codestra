@@ -2,6 +2,14 @@
 
 ## Safety state
 
+- Confirmed repository target:
+  `https://github.com/appolon1908-hue/codestra-production-platform.git`.
+- Confirmed deployment branch: `release/vicidial-adapter`.
+- Confirmed authorized application server: `65.109.65.169`.
+- Confirmed middleware base URL: `https://api.codestra.agency`.
+- Confirmed Keycloak issuer: `https://auth.codestra.agency`.
+- These values are recorded as configuration metadata only. No remote was
+  contacted, no branch was created, and no deployment was initiated.
 - Inventory was read-only. No Asterisk, MariaDB, Apache, VICIdial, firewall, or
   active Codestra service was restarted or reconfigured.
 - A pre-implementation backup is stored outside Git at
