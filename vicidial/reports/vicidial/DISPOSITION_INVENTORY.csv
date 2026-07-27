@@ -1,0 +1,7 @@
+campaign_id,status,status_name,selectable,human_answered
+MOYDCB3B,TCB,Test Callback,Y,N
+MOYDCB3B,TDNC,Test Do Not Call,Y,N
+MOYDCB3B,TNA,Test No Answer,Y,N
+CODABB8E,TCB,Test Callback,Y,N
+CODABB8E,TDNC,Test Do Not Call,Y,N
+CODABB8E,TNA,Test No Answer,Y,N

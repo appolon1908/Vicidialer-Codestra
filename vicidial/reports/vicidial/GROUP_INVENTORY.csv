@@ -1,0 +1,17 @@
+group_id,name,type,active
+TST_MOY,STG MOY,user_group,not_applicable
+TST_COD,STG COD,user_group,not_applicable
+TST_SCP,STG SCP,user_group,not_applicable
+TST_MBL,STG MBL,user_group,not_applicable
+TST_RLP,STG RLP,user_group,not_applicable
+TST_FTP,STG FTP,user_group,not_applicable
+TST_TRX,STG TRX,user_group,not_applicable
+TST_CAL,STG CAL,user_group,not_applicable
+TST_MOY_IN,STG MOY IN,inbound_group,N
+TST_COD_IN,STG COD IN,inbound_group,N
+TST_SCP_IN,STG SCP IN,inbound_group,N
+TST_MBL_IN,STG MBL IN,inbound_group,N
+TST_RLP_IN,STG RLP IN,inbound_group,N
+TST_FTP_IN,STG FTP IN,inbound_group,N
+TST_TRX_IN,STG TRX IN,inbound_group,N
+TST_CAL_IN,STG CAL IN,inbound_group,N
