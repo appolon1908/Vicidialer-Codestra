@@ -1,0 +1,7 @@
+<!-- The accepted Apache mTLS ingress is used instead of a direct 9443 bind. -->
+<rule family="ipv4">
+  <source address="10.40.0.1/32"/>
+  <destination address="10.40.0.2/32"/>
+  <port protocol="tcp" port="8443"/>
+  <accept/>
+</rule>
