@@ -61,13 +61,37 @@ for path in sorted(ROOT.rglob("*")):
         categories.update(content_categories(data))
     for category in sorted(categories):
         is_safe_sql = category == "database dump or migration" and "migrations" in lowered
+        is_scanner_fixture = (
+            rel == "tests/test_adapter.py"
+            and category in {"credential assignment", "authorization header"}
+        )
+        is_protected_reference = (
+            rel == "src/codestra_vicidial/app.py"
+            and category == "credential assignment"
+        )
+        if is_scanner_fixture:
+            reported_category = "synthetic secret-scanner fixture"
+            remediation = "retain synthetic-only regression fixture"
+            decision = "INCLUDE"
+        elif is_protected_reference:
+            reported_category = "protected credential-file reference"
+            remediation = "retain; value is loaded from protected file"
+            decision = "INCLUDE"
+        elif is_safe_sql:
+            reported_category = "parameterized migration"
+            remediation = "manual review before staging"
+            decision = "REVIEW"
+        else:
+            reported_category = category
+            remediation = "exclude from Git"
+            decision = "IGNORE"
         sensitive.append({
             "path": rel,
-            "category": "parameterized migration" if is_safe_sql else category,
+            "category": reported_category,
             "detection_method": "extension/path/content rule",
             "redacted_fingerprint": fingerprint(path),
-            "remediation": "manual review before staging" if is_safe_sql else "exclude from Git",
-            "decision": "REVIEW" if is_safe_sql else "IGNORE",
+            "remediation": remediation,
+            "decision": decision,
         })
 
 def write_csv(path: Path, rows: list[dict], fields: list[str]) -> None:

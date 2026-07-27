@@ -26,10 +26,9 @@ Blocking:
 - live staging synthetic campaign/lead/agent/callback/transfer tests are pending;
 - event lifecycle restart/no-gap evidence is pending;
 - authoritative Odoo/n8n mapping comparison is pending.
-- repository destination and branch contents have not been verified against the
-  local tree;
-- secret and sensitive-artifact gates have not yet produced passing publication
-  evidence.
+- repository destination and branch were verified before the checkpoint;
+- candidate-tree, 53-commit history, staged-diff, and curated sensitive-artifact
+  publication gates pass.
 
 Do not enable production dialing.
 
@@ -42,7 +41,7 @@ Current critical blockers:
   though MariaDB is loopback-only.
 - Required live synthetic adapter, event lifecycle/restart, cross-system
   reconciliation, and MyISAM rollback tests are incomplete.
-- No initial commit or push is permitted while these gates remain incomplete.
+- Merge and deployment remain prohibited while these gates remain incomplete.
 
 Staging deployment of the loopback-only, memory-backed adapter is complete with
 every write flag false. This does not change the recommendation:
@@ -51,3 +50,9 @@ every write flag false. This does not change the recommendation:
 Positive health from `10.40.0.1`, live MyISAM rollback, event restart/no-gap
 testing, live database-backed reconciliation, cross-system reconciliation, and
 production dialing remain blocked or not tested.
+
+The following remain explicitly false:
+`ENABLE_VICIDIAL_WRITES`, `ENABLE_AGENT_SYNC`, `ENABLE_LEAD_PUBLICATION`,
+`ENABLE_LIVE_CALL_CONTROL`, `ENABLE_WARM_TRANSFER`, `ENABLE_IVR_ROUTING`,
+`ENABLE_PRODUCTION_DIALING`, `ENABLE_EMAIL_DELIVERY`,
+`ENABLE_SMS_DELIVERY`, and `ENABLE_AI_ACTIONS`.

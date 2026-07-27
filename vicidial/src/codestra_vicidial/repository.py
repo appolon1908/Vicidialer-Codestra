@@ -11,10 +11,51 @@ class CollisionError(ValueError):
     pass
 
 
+class MalformedCampaignMembership(CollisionError):
+    pass
+
+
+def normalize_allowed_campaigns(value: str) -> list[str]:
+    """Strictly parse VICIdial's `` CAMPAIGN OTHER -`` representation."""
+    if not isinstance(value, str):
+        raise MalformedCampaignMembership("allowed_campaigns must be text")
+    stripped = value.strip()
+    if stripped == "-ALL-CAMPAIGNS-":
+        raise CollisionError("unrestricted user group cannot be adopted")
+    if not stripped.endswith("-"):
+        raise MalformedCampaignMembership("allowed_campaigns missing terminator")
+    body = stripped[:-1].strip()
+    if not body:
+        return []
+    tokens = body.split()
+    if any(not __import__("re").fullmatch(r"[A-Z0-9_]{2,8}", token)
+           for token in tokens):
+        raise MalformedCampaignMembership(
+            "allowed_campaigns contains malformed campaign")
+    if len(tokens) != len(set(tokens)):
+        raise MalformedCampaignMembership(
+            "allowed_campaigns contains duplicate campaign")
+    return tokens
+
+
+def format_allowed_campaigns(campaigns: list[str]) -> str:
+    if len(campaigns) != len(set(campaigns)):
+        raise MalformedCampaignMembership("duplicate campaign")
+    return (" " + " ".join(campaigns) if campaigns else "") + " -"
+
+
+def additive_campaign_membership(current: str, desired: str) -> tuple[str, bool]:
+    campaigns = normalize_allowed_campaigns(current)
+    if desired in campaigns:
+        return format_allowed_campaigns(campaigns), False
+    return format_allowed_campaigns([*campaigns, desired]), True
+
+
 class Repository(Protocol):
     def campaign(self, actual_id: str) -> dict | None: ...
     def campaign_resources(self, spec: CampaignSpec) -> dict: ...
     def provision_campaign_disabled(self, spec: CampaignSpec) -> list[dict]: ...
+    def disable_campaign_resources(self, spec: CampaignSpec) -> None: ...
     def disable_campaign(self, actual_id: str) -> None: ...
     def agent(self, user_id: str) -> dict | None: ...
     def sync_agent_disabled(self, spec: AgentSpec) -> dict: ...
@@ -117,6 +158,14 @@ class MemoryRepository:
             current = store.get(key)
             if current and any(current.get(field) != desired.get(field) for field in fields):
                 raise CollisionError(f"incompatible collision: {key}")
+        for item in spec.groups:
+            if item.kind == "user":
+                if not item.code.startswith(spec.business_unit + "_"):
+                    raise CollisionError(f"incompatible ownership: {item.code}")
+                current = self.groups.get((item.kind, item.code))
+                if current:
+                    additive_campaign_membership(
+                        current.get("allowed_campaigns"), spec.actual_id)
         results = []
         campaign = {
             "campaign_id": spec.actual_id, "canonical_id": spec.canonical_id,
@@ -135,8 +184,28 @@ class MemoryRepository:
             results.append({"type": "list", "id": item.list_id, "result": status})
         for item in spec.groups:
             desired = {"code": item.code, "name": item.name, "kind": item.kind, "active": "N"}
-            status = self._adopt(self.groups, (item.kind, item.code), desired,
-                                 ("name", "kind", "active"))
+            if item.kind == "user":
+                if not item.code.startswith(spec.business_unit + "_"):
+                    raise CollisionError(f"incompatible ownership: {item.code}")
+                current = self.groups.get((item.kind, item.code))
+                if current is None:
+                    desired["allowed_campaigns"] = format_allowed_campaigns(
+                        [spec.actual_id])
+                    self.groups[(item.kind, item.code)] = deepcopy(desired)
+                    status = "created"
+                else:
+                    if any(current.get(field) != desired.get(field)
+                           for field in ("name", "kind", "active")):
+                        raise CollisionError(
+                            f"incompatible collision: {item.code}")
+                    normalized, added = additive_campaign_membership(
+                        current.get("allowed_campaigns"), spec.actual_id)
+                    current["allowed_campaigns"] = normalized
+                    status = "updated" if added else "adopted"
+            else:
+                status = self._adopt(
+                    self.groups, (item.kind, item.code), desired,
+                    ("name", "kind", "active"))
             results.append({"type": item.kind + "_group", "id": item.code, "result": status})
         for item in spec.scripts:
             desired = {"script_id": item.code, "script_name": item.name, "script_text": item.text,
@@ -161,6 +230,18 @@ class MemoryRepository:
         for item in self.lists.values():
             if item["campaign_id"] == actual_id:
                 item["active"] = "N"
+
+    def disable_campaign_resources(self, spec: CampaignSpec) -> None:
+        if spec.actual_id in self.campaigns:
+            self.disable_campaign(spec.actual_id)
+        for item in spec.groups:
+            row = self.groups.get((item.kind, item.code))
+            if row is not None and item.kind != "user":
+                row["active"] = "N"
+        for item in spec.scripts:
+            row = self.scripts.get(item.code)
+            if row is not None:
+                row["active"] = "N"
 
     def agent(self, user_id: str) -> dict | None:
         return deepcopy(self.agents.get(user_id))
@@ -277,7 +358,7 @@ class MySQLRepository:
         scripts = []
         for item in spec.scripts:
             row = self._one(
-                "SELECT script_id,script_name,script_text,active "
+                "SELECT script_id,script_name,script_comments,script_text,active "
                 "FROM vicidial_scripts WHERE script_id=%s", (item.code,))
             if row:
                 scripts.append(row)
@@ -330,16 +411,17 @@ class MySQLRepository:
             )
         for item in spec.groups:
             if item.kind == "user":
+                if not item.code.startswith(spec.business_unit + "_"):
+                    raise CollisionError(f"incompatible ownership: {item.code}")
                 current_group = self._one(
                     "SELECT user_group AS code,group_name AS name,allowed_campaigns "
                     "FROM vicidial_user_groups "
                     "WHERE user_group=%s", (item.code,))
-                self._check(
-                    current_group,
-                    {"name": item.name,
-                     "allowed_campaigns": f" {spec.actual_id} -"},
-                    ("name", "allowed_campaigns"), item.code,
-                )
+                self._check(current_group, {"name": item.name},
+                            ("name",), item.code)
+                if current_group:
+                    additive_campaign_membership(
+                        current_group.get("allowed_campaigns"), spec.actual_id)
             else:
                 current_group = self._one(
                     "SELECT group_id AS code,group_name AS name,active "
@@ -403,14 +485,24 @@ class MySQLRepository:
                     "WHERE user_group=%s", (item.code,))
                 adopted = self._check(
                     current,
-                    {"code": item.code, "name": item.name,
-                     "allowed_campaigns": f" {spec.actual_id} -"},
-                    ("name", "allowed_campaigns"), item.code,
+                    {"code": item.code, "name": item.name},
+                    ("name",), item.code,
                 )
                 if not adopted:
                     self._execute(
                         "INSERT INTO vicidial_user_groups(user_group,group_name,allowed_campaigns)"
-                        " VALUES(%s,%s,%s)", (item.code, item.name, f" {spec.actual_id} -"))
+                        " VALUES(%s,%s,%s)",
+                        (item.code, item.name,
+                         format_allowed_campaigns([spec.actual_id])))
+                    group_result = "created"
+                else:
+                    normalized, added = additive_campaign_membership(
+                        current["allowed_campaigns"], spec.actual_id)
+                    if added:
+                        self._execute(
+                            "UPDATE vicidial_user_groups SET allowed_campaigns=%s "
+                            "WHERE user_group=%s", (normalized, item.code))
+                    group_result = "updated" if added else "adopted"
             else:
                 current = self._one(
                     "SELECT group_id AS code,group_name AS name,active FROM vicidial_inbound_groups "
@@ -422,8 +514,9 @@ class MySQLRepository:
                         "INSERT INTO vicidial_inbound_groups(group_id,group_name,active,"
                         "group_color,group_handling,call_time_id) VALUES(%s,%s,'N','white','PHONE','24hours')",
                         (item.code, item.name))
+                group_result = "adopted" if adopted else "created"
             results.append({"type": item.kind + "_group", "id": item.code,
-                            "result": "adopted" if adopted else "created"})
+                            "result": group_result})
         for item in spec.scripts:
             current = self._one(
                 "SELECT script_id,script_name,script_text,active FROM vicidial_scripts WHERE script_id=%s",
@@ -464,6 +557,24 @@ class MySQLRepository:
         self._execute("UPDATE vicidial_campaigns SET active='N',auto_dial_level='0' WHERE campaign_id=%s",
                       (actual_id,))
         self._execute("UPDATE vicidial_lists SET active='N' WHERE campaign_id=%s", (actual_id,))
+        self.db.commit()
+
+    def disable_campaign_resources(self, spec: CampaignSpec) -> None:
+        self._execute(
+            "UPDATE vicidial_campaigns SET active='N',auto_dial_level='0' "
+            "WHERE campaign_id=%s", (spec.actual_id,))
+        self._execute(
+            "UPDATE vicidial_lists SET active='N' WHERE campaign_id=%s",
+            (spec.actual_id,))
+        for item in spec.groups:
+            if item.kind != "user":
+                self._execute(
+                    "UPDATE vicidial_inbound_groups SET active='N' "
+                    "WHERE group_id=%s", (item.code,))
+        for item in spec.scripts:
+            self._execute(
+                "UPDATE vicidial_scripts SET active='N' WHERE script_id=%s",
+                (item.code,))
         self.db.commit()
 
     def agent(self, user_id: str) -> dict | None:

@@ -1,6 +1,7 @@
 # Adapter tests
 
-Latest isolated source run: **13 passed** using Python 3.11.
+Latest isolated review-correction run: **29 passed** using Python 3.11. All
+existing tests remain included.
 
 Covered:
 
@@ -17,6 +18,13 @@ Covered:
 - callback read-back
 - same-campaign transfer allowlist
 - reconciliation
+- raw-byte scanner whitespace/newline semantics with synthetic-only fixtures
+- additive `allowed_campaigns` adoption and unrelated campaign preservation
+- malformed, duplicate, unrestricted, and incompatible ownership rejection
+- complete per-resource desired-versus-actual read-back
+- group, script, disposition, transfer-policy, and disabled-state mismatch
+- redacted evidence, preserved snapshots, partial-failure retry, and
+  reconciliation after correction
 
 ## Staging deployment
 

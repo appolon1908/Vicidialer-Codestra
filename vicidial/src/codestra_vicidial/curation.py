@@ -6,11 +6,11 @@ import re
 CONTENT_RULES = (
     ("private key", re.compile(rb"-----BEGIN (?:RSA |EC |OPENSSH )?PRIVATE KEY-----")),
     ("authorization header", re.compile(
-        rb"(?im)^authorization\s*:\s*(?:bearer|basic)\s+\S+"
+        rb"(?im)^authorization[ \t]*:[ \t]*(?:bearer|basic)[ \t]+\S+"
     )),
     ("credential assignment", re.compile(
         rb"(?im)(?:password|passwd|client_secret|api_key|jwt_key|sip_secret)"
-        rb"\s*[:=]\s*[^\s$<{][^\r\n]{3,}"
+        rb"[ \t]*[:=][ \t]*[^\s$<{][^\r\n]{3,}"
     )),
 )
 
