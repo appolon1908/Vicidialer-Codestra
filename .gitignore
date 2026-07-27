@@ -31,6 +31,12 @@ config/*.secret.env
 *.backup
 backups/
 recordings/
+spool/
+runtime/
+*.wav
+*.gsm
+*.mp3
+*.ogg
 filestore/
 data/
 volumes/
@@ -44,6 +50,8 @@ build/
 .cache/
 logs/
 .pytest_cache/
+.venv/
+*.egg-info/
 *.pgcustom
 .locks/
 .r2_candidate/

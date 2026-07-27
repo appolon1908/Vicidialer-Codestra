@@ -1,0 +1,3 @@
+scope,status_set,implementation_status,test_status
+staging,TCB-TDNC-TNA,PASS,NOT_TESTED
+production,per-campaign,MISSING,NOT_TESTED

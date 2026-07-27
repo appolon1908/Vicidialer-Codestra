@@ -1,0 +1,9 @@
+business_unit,odoo_crm_team,odoo_campaign,vicidial_campaign,direction,default_list,user_group,inbound_group,closer_group,script,disposition_set,n8n_scope,middleware_mapping,environment,feature_flags,implementation_status,test_status
+MOY,Moy Logistics,MOY-TEST-OUT,MOYDCB3B,outbound,91001,TST_MOY,TST_MOY_IN,TST_MOY_IN,TMOYV1,test-v1,STG-MOY-TEST-V1,pending,staging,all_false,PARTIAL,NOT_TESTED
+COD,Codestra,COD-TEST-OUT,CODABB8E,outbound,91002,TST_COD,TST_COD_IN,TST_COD_IN,TCODV1,test-v1,STG-COD-TEST-V1,pending,staging,all_false,PARTIAL,NOT_TESTED
+SCP,Senior Citizen Products,SCP-TEST-OUT,SCP93B8E,outbound,91003,TST_SCP,TST_SCP_IN,TST_SCP_IN,TSCPV1,test-v1,STG-SCP-TEST-V1,pending,staging,all_false,PARTIAL,NOT_TESTED
+MBL,MoneyBee Business Loans,MBL-TEST-OUT,MBLC8349,outbound,91004,TST_MBL,TST_MBL_IN,TST_MBL_IN,TMBLV1,test-v1,STG-MBL-TEST-V1,pending,staging,all_false,PARTIAL,NOT_TESTED
+RLP,RLP International Real Estate,RLP-TEST-OUT,RLP0E661,outbound,91005,TST_RLP,TST_RLP_IN,TST_RLP_IN,TRLPV1,test-v1,STG-RLP-TEST-V1,pending,staging,all_false,PARTIAL,NOT_TESTED
+FTP,For the People,FTP-TEST-OUT,FTPA2BD0,outbound,91006,TST_FTP,TST_FTP_IN,TST_FTP_IN,TFTPV1,test-v1,STG-FTP-TEST-V1,pending,staging,all_false,PARTIAL,NOT_TESTED
+TRX,TradeX,TRX-TEST-OUT,TRX04B71,outbound,91007,TST_TRX,TST_TRX_IN,TST_TRX_IN,TTRXV1,test-v1,STG-TRX-TEST-V1,pending,staging,all_false,PARTIAL,NOT_TESTED
+CAL,Calderon Farm,CAL-TEST-OUT,CALE1629,outbound,91008,TST_CAL,TST_CAL_IN,TST_CAL_IN,TCALV1,test-v1,STG-CAL-TEST-V1,pending,staging,all_false,PARTIAL,NOT_TESTED

@@ -1,0 +1,11 @@
+[Unit]
+Description=Periodic Codestra restricted VICIdial adapter readiness check
+
+[Timer]
+OnBootSec=2min
+OnUnitActiveSec=1min
+AccuracySec=10s
+Unit=codestra-vicidial-restricted-adapter-health.service
+
+[Install]
+WantedBy=timers.target
