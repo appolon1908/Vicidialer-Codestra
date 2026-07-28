@@ -25,6 +25,14 @@ class StateStore:
         CREATE TABLE IF NOT EXISTS mappings(
           kind TEXT NOT NULL, external_id TEXT NOT NULL, actual_id TEXT NOT NULL,
           payload_hash TEXT NOT NULL, PRIMARY KEY(kind,external_id));
+        CREATE UNIQUE INDEX IF NOT EXISTS mappings_kind_actual
+          ON mappings(kind,actual_id);
+        CREATE TABLE IF NOT EXISTS campaign_desired(
+          canonical_id TEXT PRIMARY KEY, actual_id TEXT NOT NULL UNIQUE,
+          desired_json TEXT NOT NULL, desired_hash TEXT NOT NULL);
+        CREATE TABLE IF NOT EXISTS group_ownership(
+          code TEXT PRIMARY KEY, campaign_id TEXT NOT NULL,
+          business_unit TEXT NOT NULL, kind TEXT NOT NULL);
         CREATE TABLE IF NOT EXISTS transfer_policies(
           campaign_id TEXT PRIMARY KEY, targets TEXT NOT NULL, updated_at TEXT NOT NULL);
         CREATE TABLE IF NOT EXISTS snapshots(
@@ -80,13 +88,90 @@ class StateStore:
             (kind, external_id),
         ).fetchone()
 
+    def mapping_for_actual(self, kind: str, actual_id: str) -> sqlite3.Row | None:
+        return self.db.execute(
+            "SELECT external_id,payload_hash FROM mappings "
+            "WHERE kind=? AND actual_id=?", (kind, actual_id)
+        ).fetchone()
+
     def put_mapping(self, kind: str, external_id: str, actual_id: str, payload_hash: str) -> None:
+        try:
+            self.db.execute("BEGIN IMMEDIATE")
+            current = self.mapping(kind, external_id)
+            if current is not None:
+                if current["actual_id"] != actual_id:
+                    raise ValueError("ownership collision: canonical mapping changed")
+                if current["payload_hash"] != payload_hash:
+                    raise ValueError("mapping desired hash conflict")
+                self.db.commit()
+                return
+            self.db.execute(
+                "INSERT INTO mappings(kind,external_id,actual_id,payload_hash) "
+                "VALUES(?,?,?,?)",
+                (kind, external_id, actual_id, payload_hash),
+            )
+            self.db.commit()
+        except sqlite3.IntegrityError as exc:
+            self.db.rollback()
+            raise ValueError("ownership collision: actual mapping already claimed") from exc
+        except Exception:
+            self.db.rollback()
+            raise
+
+    def put_campaign_desired(self, canonical_id: str, actual_id: str,
+                             desired: dict) -> None:
+        payload_hash = self.digest(desired)
+        current = self.db.execute(
+            "SELECT actual_id,desired_hash FROM campaign_desired "
+            "WHERE canonical_id=?", (canonical_id,)
+        ).fetchone()
+        if current:
+            if current["actual_id"] != actual_id:
+                raise ValueError("ownership collision: desired campaign remapped")
+            if current["desired_hash"] != payload_hash:
+                raise ValueError("campaign desired hash conflict")
+            return
         self.db.execute(
-            "INSERT INTO mappings(kind,external_id,actual_id,payload_hash) VALUES(?,?,?,?) "
-            "ON CONFLICT(kind,external_id) DO UPDATE SET actual_id=excluded.actual_id,payload_hash=excluded.payload_hash",
-            (kind, external_id, actual_id, payload_hash),
+            "INSERT INTO campaign_desired VALUES(?,?,?,?)",
+            (canonical_id, actual_id, json.dumps(desired, sort_keys=True),
+             payload_hash),
         )
         self.db.commit()
+
+    def campaign_desired(self) -> list[dict]:
+        return [
+            {
+                "canonical_id": row["canonical_id"],
+                "actual_id": row["actual_id"],
+                "desired": json.loads(row["desired_json"]),
+                "desired_hash": row["desired_hash"],
+            }
+            for row in self.db.execute(
+                "SELECT canonical_id,actual_id,desired_json,desired_hash "
+                "FROM campaign_desired ORDER BY canonical_id"
+            ).fetchall()
+        ]
+
+    def put_group_ownership(self, code: str, campaign_id: str,
+                            business_unit: str, kind: str) -> None:
+        current = self.db.execute(
+            "SELECT campaign_id,business_unit,kind FROM group_ownership "
+            "WHERE code=?", (code,)
+        ).fetchone()
+        desired = (campaign_id, business_unit, kind)
+        if current and tuple(current) != desired:
+            raise ValueError("transfer target ownership collision")
+        self.db.execute(
+            "INSERT OR IGNORE INTO group_ownership VALUES(?,?,?,?)",
+            (code, campaign_id, business_unit, kind),
+        )
+        self.db.commit()
+
+    def group_owner(self, code: str) -> sqlite3.Row | None:
+        return self.db.execute(
+            "SELECT campaign_id,business_unit,kind FROM group_ownership "
+            "WHERE code=?", (code,)
+        ).fetchone()
 
     def put_transfer_policy(self, campaign_id: str, targets: list[str]) -> None:
         self.db.execute(

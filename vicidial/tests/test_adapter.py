@@ -6,21 +6,25 @@ from copy import deepcopy
 from pathlib import Path
 
 import pytest
-from pydantic import ValidationError
-
 from codestra_vicidial.app import create_app
 from codestra_vicidial.curation import content_categories
 from codestra_vicidial.models import (
-    AgentCommand, CallbackCommand, CampaignCommand, DisableAgentCommand,
-    LeadCommand, TransferPolicyCommand,
+    AgentCommand,
+    CallbackCommand,
+    CampaignCommand,
+    DisableAgentCommand,
+    LeadCommand,
+    TransferPolicyCommand,
 )
 from codestra_vicidial.repository import (
-    CollisionError, MemoryRepository, MySQLRepository,
+    CollisionError,
+    MemoryRepository,
     normalize_allowed_campaigns,
 )
 from codestra_vicidial.security import RequestAuthenticator
 from codestra_vicidial.service import AdapterService, FeatureFlags, ReadbackMismatch
 from codestra_vicidial.state import StateStore
+from pydantic import ValidationError
 
 
 def context() -> dict:
@@ -298,7 +302,7 @@ def test_complete_readback_matches_every_required_resource(harness):
     } == {
         "campaign", "list", "user_group", "closer_group", "script",
         "disposition", "transfer_policy", "recording_policy_reference",
-        "callback_policy", "reporting_mapping",
+        "callback_policy", "reporting_mapping", "canonical_mapping",
     }
 
 
@@ -519,3 +523,132 @@ def test_disable_and_reconciliation(harness):
     disabled = service.disable_campaign("disable-next", command)
     assert disabled["actual"]["active"] == "N"
     assert service.reconciliation()["inventory"]["campaigns"] == 1
+
+
+def test_disable_requires_mapping_and_ownership_before_touching_campaign(tmp_path):
+    repo = MemoryRepository()
+    service = service_for(repo, tmp_path)
+    command = CampaignCommand.model_validate(campaign_payload())
+    repo.campaigns["CODT0001"] = {
+        "campaign_id": "CODT0001", "canonical_id": "COD-TEST-OUT",
+        "campaign_name": "Codestra synthetic test", "active": "Y",
+        "dial_method": "MANUAL", "local_call_time": "9am-9pm",
+    }
+    with pytest.raises(CollisionError, match="mapping missing"):
+        service.disable_campaign("disable-no-mapping", command)
+    assert repo.campaigns["CODT0001"]["active"] == "Y"
+    service.state.put_mapping(
+        "campaign", "COD-TEST-OUT", "CODT0001",
+        service.state.digest(command.campaign.model_dump(mode="json")))
+    repo.campaigns["CODT0001"]["canonical_id"] = "SCP-TEST-OUT"
+    with pytest.raises(CollisionError, match="marker mismatch"):
+        service.disable_campaign("disable-wrong-owner", command)
+    assert repo.campaigns["CODT0001"]["active"] == "Y"
+    repo.campaigns["CODT0001"]["canonical_id"] = "COD-TEST-OUT"
+    assert service.disable_campaign("disable-valid-owner", command)["status"] == "disabled"
+
+
+def test_canonical_mapping_is_immutable_and_actual_id_is_unique(tmp_path):
+    state = StateStore(tmp_path / "mapping.sqlite3")
+    state.put_mapping("campaign", "COD-TEST-OUT", "CODT0001", "a" * 64)
+    state.put_mapping("campaign", "COD-TEST-OUT", "CODT0001", "a" * 64)
+    with pytest.raises(ValueError, match="canonical mapping changed"):
+        state.put_mapping("campaign", "COD-TEST-OUT", "CODT0002", "a" * 64)
+    with pytest.raises(ValueError, match="desired hash conflict"):
+        state.put_mapping("campaign", "COD-TEST-OUT", "CODT0001", "b" * 64)
+    with pytest.raises(ValueError, match="actual mapping already claimed"):
+        state.put_mapping("campaign", "SCP-TEST-OUT", "CODT0001", "a" * 64)
+
+
+def test_provision_rejects_canonical_remap_before_creating_second_campaign(harness):
+    service, repo = harness
+    command = CampaignCommand.model_validate(campaign_payload())
+    service.provision_campaign("mapping-first", command)
+    changed = campaign_payload()
+    changed["campaign"]["actual_id"] = "CODT0002"
+    with pytest.raises(CollisionError, match="mapping collision"):
+        service.provision_campaign(
+            "mapping-second", CampaignCommand.model_validate(changed))
+    assert "CODT0002" not in repo.campaigns
+
+
+def test_list_readback_matches_by_identifier_not_row_order(tmp_path):
+    payload = campaign_payload()
+    payload["campaign"]["lists"].append({
+        "list_id": 21002, "code": "COD_TEST_SECOND", "active": False,
+    })
+    repo = MemoryRepository()
+    original = repo.campaign
+
+    def reversed_lists(actual_id):
+        result = original(actual_id)
+        if result:
+            result["lists"].reverse()
+        return result
+
+    repo.campaign = reversed_lists
+    service = service_for(repo, tmp_path)
+    result = service.provision_campaign(
+        "list-order", CampaignCommand.model_validate(payload))
+    assert all(row["match"] for row in result["readback"])
+
+
+def test_transfer_target_requires_exact_campaign_and_business_unit(harness):
+    service, repo = harness
+    service.provision_campaign(
+        "transfer-owner", CampaignCommand.model_validate(campaign_payload()))
+    repo.groups[("closer", "COD_OTHER_CLOSER")] = {
+        "code": "COD_OTHER_CLOSER", "name": "Other closer",
+        "kind": "closer", "active": "N",
+    }
+    service.state.put_group_ownership(
+        "COD_OTHER_CLOSER", "OTHER001", "COD", "closer")
+    command = TransferPolicyCommand.model_validate({
+        "context": context(),
+        "policy": {
+            "campaign_id": "CODT0001",
+            "allowed_targets": ["COD_OTHER_CLOSER"],
+        },
+    })
+    with pytest.raises(ValueError, match="ownership mismatch"):
+        service.sync_transfer_policy("transfer-cross-campaign", command)
+
+
+def test_callback_external_id_requires_identical_immutable_payload(harness):
+    service, repo = harness
+    payload = {
+        "context": context(),
+        "callback": {
+            "external_id": "callback-collision", "lead_id": 1,
+            "campaign_id": "CODT0001", "user_id": "COD1001",
+            "callback_time": "2026-07-28T14:00:00Z",
+            "recipient": "USERONLY", "comments": "Synthetic",
+        },
+    }
+    first = service.create_callback(
+        "callback-original", CallbackCommand.model_validate(payload))
+    retry = service.create_callback(
+        "callback-retry", CallbackCommand.model_validate(payload))
+    assert first["actual"]["callback_id"] == retry["actual"]["callback_id"]
+    payload["callback"]["lead_id"] = 2
+    with pytest.raises(CollisionError, match="callback external id collision"):
+        service.create_callback(
+            "callback-collision", CallbackCommand.model_validate(payload))
+    assert len(repo.callbacks) == 1
+
+
+def test_reconciliation_compares_desired_and_actual_and_reports_drift(harness):
+    service, repo = harness
+    command = CampaignCommand.model_validate(campaign_payload())
+    service.provision_campaign("reconcile-desired", command)
+    complete = service.reconciliation()
+    assert complete["status"] == "complete"
+    assert all(row["desired_hash"] and row["match"]
+               for row in complete["resources"])
+    repo.scripts["COD_TEST_SDR_V1"]["script_text"] = "drift"
+    drift = service.reconciliation()
+    assert drift["status"] == "drift_detected"
+    script = next(row for row in drift["resources"]
+                  if row["type"] == "script")
+    assert script["status"] == "mismatch"
+    assert script["repair_classification"] == "approval_required"
