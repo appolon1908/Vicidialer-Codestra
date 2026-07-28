@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import hashlib
+import json
 from copy import deepcopy
 from datetime import datetime, timezone
 from typing import Any, Protocol
@@ -65,7 +67,19 @@ class Repository(Protocol):
     def callback(self, callback_id: int) -> dict | None: ...
     def callback_by_external_id(self, external_id: str) -> dict | None: ...
     def create_callback(self, spec: CallbackSpec) -> dict: ...
+    def campaign_owner(self, actual_id: str) -> str | None: ...
+    def transfer_target(self, code: str, require_active: bool = False) -> dict | None: ...
     def inventory(self) -> dict: ...
+
+
+def callback_payload(spec: CallbackSpec) -> dict:
+    return spec.model_dump(mode="json")
+
+
+def callback_payload_hash(spec: CallbackSpec) -> str:
+    return hashlib.sha256(json.dumps(
+        callback_payload(spec), sort_keys=True, separators=(",", ":")
+    ).encode()).hexdigest()
 
 
 class MemoryRepository:
@@ -99,6 +113,22 @@ class MemoryRepository:
         result["dispositions"] = [deepcopy(row) for (campaign, _), row in self.dispositions.items()
                                   if campaign == actual_id]
         return result
+
+    def campaign_owner(self, actual_id: str) -> str | None:
+        row = self.campaigns.get(actual_id)
+        return str(row["canonical_id"]) if row and row.get("canonical_id") else None
+
+    def transfer_target(self, code: str, require_active: bool = False) -> dict | None:
+        rows = [
+            deepcopy(row) for (kind, group_code), row in self.groups.items()
+            if group_code == code and kind in {"inbound", "closer"}
+        ]
+        if len(rows) != 1:
+            return None
+        row = rows[0]
+        if require_active and row.get("active") != "Y":
+            return None
+        return row
 
     def campaign_resources(self, spec: CampaignSpec) -> dict:
         return {
@@ -286,6 +316,9 @@ class MemoryRepository:
     def create_callback(self, spec: CallbackSpec) -> dict:
         prior = self.callback_by_external_id(spec.external_id)
         if prior:
+            if any(str(prior.get(field)) != str(value)
+                   for field, value in callback_payload(spec).items()):
+                raise CollisionError("callback external id collision")
             return prior
         callback_id = max(self.callbacks, default=0) + 1
         result = spec.model_dump(mode="json") | {"callback_id": callback_id, "status": "ACTIVE"}
@@ -335,6 +368,22 @@ class MySQLRepository:
         row["dispositions"] = self._all(
             "SELECT status,status_name,selectable,human_answered,category "
             "FROM vicidial_campaign_statuses WHERE campaign_id=%s", (actual_id,))
+        return row
+
+    def campaign_owner(self, actual_id: str) -> str | None:
+        row = self._one(
+            "SELECT campaign_description FROM vicidial_campaigns "
+            "WHERE campaign_id=%s", (actual_id,))
+        marker = str(row.get("campaign_description", "")) if row else ""
+        return marker.removeprefix("CODESTRA:") if marker.startswith(
+            "CODESTRA:") else None
+
+    def transfer_target(self, code: str, require_active: bool = False) -> dict | None:
+        row = self._one(
+            "SELECT group_id AS code,group_name AS name,active "
+            "FROM vicidial_inbound_groups WHERE group_id=%s", (code,))
+        if row is None or (require_active and row.get("active") != "Y"):
+            return None
         return row
 
     def campaign_resources(self, spec: CampaignSpec) -> dict:
@@ -636,8 +685,14 @@ class MySQLRepository:
     def create_callback(self, spec: CallbackSpec) -> dict:
         prior = self.callback_by_external_id(spec.external_id)
         if prior:
+            marker = str(prior.get("comments", "")).split(":", 3)
+            if len(marker) < 3 or marker[2] != callback_payload_hash(spec):
+                raise CollisionError("callback external id collision")
             return prior
-        comments = f"CODESTRA:{spec.external_id}:{spec.comments}"[:255]
+        comments = (
+            f"CODESTRA:{spec.external_id}:{callback_payload_hash(spec)}:"
+            f"{spec.comments}"
+        )[:255]
         self._execute(
             "INSERT INTO vicidial_callbacks(lead_id,campaign_id,status,entry_time,callback_time,"
             "user,recipient,comments) VALUES(%s,%s,'ACTIVE',%s,%s,%s,%s,%s)",

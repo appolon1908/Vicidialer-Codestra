@@ -1,11 +1,15 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
 import uuid
+from dataclasses import dataclass
 
 from .models import (
-    AgentCommand, CallbackCommand, CampaignCommand, DisableAgentCommand,
-    LeadCommand, TransferPolicyCommand,
+    AgentCommand,
+    CallbackCommand,
+    CampaignCommand,
+    DisableAgentCommand,
+    LeadCommand,
+    TransferPolicyCommand,
 )
 from .repository import CollisionError, Repository, normalize_allowed_campaigns
 from .state import StateStore
@@ -96,8 +100,9 @@ class AdapterService:
             "campaign", spec.actual_id, campaign_desired, campaign,
             tuple(campaign_desired)))
         list_rows = campaign.get("lists", []) if campaign else []
-        for index, item in enumerate(spec.lists):
-            row = list_rows[index] if index < len(list_rows) else None
+        list_by_id = {int(row["list_id"]): row for row in list_rows}
+        for item in spec.lists:
+            row = list_by_id.get(item.list_id)
             desired = {
                 "list_id": item.list_id, "list_name": item.code,
                 "campaign_id": spec.actual_id, "active": "N",
@@ -177,6 +182,19 @@ class AdapterService:
             "reporting_mapping", spec.actual_id,
             {"reporting_mapping": spec.reporting_mapping}, policy,
             ("reporting_mapping",)))
+        mapping = self.state.mapping("campaign", spec.canonical_id)
+        mapping_actual = (
+            {"canonical_id": spec.canonical_id,
+             "actual_id": mapping["actual_id"],
+             "desired_hash": mapping["payload_hash"]}
+            if mapping else None
+        )
+        desired_hash = self.state.digest(spec.model_dump(mode="json"))
+        results.append(self._comparison(
+            "canonical_mapping", spec.canonical_id,
+            {"canonical_id": spec.canonical_id, "actual_id": spec.actual_id,
+             "desired_hash": desired_hash},
+            mapping_actual, ("canonical_id", "actual_id", "desired_hash")))
         return actual, results
 
     def validate_campaign(self, command: CampaignCommand) -> dict:
@@ -194,6 +212,19 @@ class AdapterService:
         self._require(self.flags.provisioning, "campaign provisioning")
 
         def apply() -> dict:
+            desired_hash = self.state.digest(
+                command.campaign.model_dump(mode="json"))
+            mapping = self.state.mapping(
+                "campaign", command.campaign.canonical_id)
+            if mapping and (
+                    mapping["actual_id"] != command.campaign.actual_id
+                    or mapping["payload_hash"] != desired_hash):
+                raise CollisionError("canonical campaign mapping collision")
+            actual_mapping = self.state.mapping_for_actual(
+                "campaign", command.campaign.actual_id)
+            if actual_mapping and actual_mapping["external_id"] != (
+                    command.campaign.canonical_id):
+                raise CollisionError("actual campaign ownership collision")
             snapshot_id = str(uuid.uuid4())
             before = self.repository.campaign_resources(command.campaign)
             self.state.snapshot(
@@ -210,7 +241,14 @@ class AdapterService:
             resources = self.repository.provision_campaign_disabled(command.campaign)
             self.state.put_mapping(
                 "campaign", command.campaign.canonical_id, command.campaign.actual_id,
-                self.state.digest(command.campaign.model_dump(mode="json")))
+                desired_hash)
+            self.state.put_campaign_desired(
+                command.campaign.canonical_id, command.campaign.actual_id,
+                command.campaign.model_dump(mode="json"))
+            for group in command.campaign.groups:
+                self.state.put_group_ownership(
+                    group.code, command.campaign.actual_id,
+                    command.campaign.business_unit, group.kind)
             self.state.put_transfer_policy(
                 command.campaign.actual_id, command.campaign.transfer_targets)
             self.state.put_campaign_policy(
@@ -259,6 +297,20 @@ class AdapterService:
         self._require(self.flags.provisioning, "campaign provisioning")
 
         def apply() -> dict:
+            spec = command.campaign
+            mapping = self.state.mapping("campaign", spec.canonical_id)
+            if mapping is None:
+                raise CollisionError("campaign ownership mapping missing")
+            if mapping["actual_id"] != spec.actual_id:
+                raise CollisionError("campaign ownership mapping mismatch")
+            if mapping["payload_hash"] != self.state.digest(
+                    spec.model_dump(mode="json")):
+                raise CollisionError("campaign desired mapping changed")
+            owner = self.repository.campaign_owner(spec.actual_id)
+            if owner is None:
+                raise CollisionError("campaign ownership marker missing")
+            if owner != spec.canonical_id:
+                raise CollisionError("campaign ownership marker mismatch")
             self.repository.disable_campaign(command.campaign.actual_id)
             actual = self.repository.campaign(command.campaign.actual_id)
             if not actual or actual.get("active") != "N":
@@ -324,12 +376,21 @@ class AdapterService:
             actual = self.repository.campaign(command.policy.campaign_id)
             if not actual:
                 raise ValueError("campaign missing")
-            known_groups = {
-                group["code"] for group in getattr(self.repository, "groups", {}).values()
-                if group["kind"] in {"inbound", "closer"}
-            }
-            if known_groups and set(command.policy.allowed_targets) - known_groups:
-                raise ValueError("transfer target missing")
+            owner = self.repository.campaign_owner(command.policy.campaign_id)
+            if owner is None:
+                raise ValueError("campaign ownership marker missing")
+            business_unit = owner.split("-", 1)[0]
+            for target in command.policy.allowed_targets:
+                group = self.repository.transfer_target(target)
+                state_owner = self.state.group_owner(target)
+                if group is None:
+                    raise ValueError("transfer target missing")
+                if state_owner is None:
+                    raise ValueError("transfer target ownership missing")
+                if (state_owner["campaign_id"] != command.policy.campaign_id
+                        or state_owner["business_unit"] != business_unit
+                        or state_owner["kind"] not in {"inbound", "closer"}):
+                    raise ValueError("transfer target ownership mismatch")
             self.state.put_transfer_policy(
                 command.policy.campaign_id, command.policy.allowed_targets)
             return {"campaign_id": command.policy.campaign_id,
@@ -339,4 +400,50 @@ class AdapterService:
                              command.policy.campaign_id, apply)
 
     def reconciliation(self) -> dict:
-        return {"status": "complete", "inventory": self.repository.inventory()}
+        desired_rows = self.state.campaign_desired()
+        if not desired_rows:
+            return {
+                "status": "blocked", "inventory": self.repository.inventory(),
+                "resources": [], "reason": "desired state missing",
+            }
+        resources: list[dict] = []
+        blocked = False
+        for stored in desired_rows:
+            try:
+                command = CampaignCommand.model_validate({
+                    "context": {
+                        "correlation_id": "reconciliation-readback",
+                        "actor": "adapter-reconciler",
+                        "reason": "compare persisted desired and actual state",
+                        "requested_at": "2026-01-01T00:00:00Z",
+                    },
+                    "campaign": stored["desired"],
+                })
+                _actual, comparisons = self._campaign_readback(command)
+                for comparison in comparisons:
+                    comparison["status"] = (
+                        "match" if comparison["match"] else "mismatch")
+                    comparison["mismatch_fields"] = comparison.pop("mismatches")
+                    comparison["repair_classification"] = (
+                        "none" if comparison["match"]
+                        else "approval_required")
+                resources.extend(comparisons)
+            except Exception as exc:
+                blocked = True
+                resources.append({
+                    "type": "campaign", "id": stored["canonical_id"],
+                    "match": False, "status": "blocked",
+                    "mismatch_fields": [type(exc).__name__],
+                    "desired_hash": stored["desired_hash"],
+                    "actual_hash": None, "repair_classification": "blocked",
+                })
+        mismatched = [row for row in resources if not row["match"]]
+        status = (
+            "blocked" if blocked
+            else "drift_detected" if mismatched
+            else "complete"
+        )
+        return {
+            "status": status, "inventory": self.repository.inventory(),
+            "resources": resources,
+        }
