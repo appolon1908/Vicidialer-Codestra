@@ -30,10 +30,12 @@ class FeatureFlags:
 
 
 class AdapterService:
-    def __init__(self, repository: Repository, state: StateStore, flags: FeatureFlags):
+    def __init__(self, repository: Repository, state: StateStore, flags: FeatureFlags,
+                 target_id: str = "local-vicidial"):
         self.repository = repository
         self.state = state
         self.flags = flags
+        self.target_id = target_id
 
     def _execute(self, operation: str, key: str, command, target: str, fn) -> dict:
         body = command.model_dump(mode="json")
@@ -42,13 +44,18 @@ class AdapterService:
         if prior is not None:
             return prior | {"idempotent_replay": True}
         context = command.context
+        operation_id = self.state.begin_operation(
+            operation, key, digest, context.correlation_id)
         try:
             result = fn()
+            result = result | {"operation_id": operation_id}
             self.state.record(operation, key, digest, result)
+            self.state.finish_operation(operation_id, result)
             self.state.audit(context.correlation_id, context.actor, operation, target,
                              "success", result)
             return result | {"idempotent_replay": False}
         except Exception as exc:
+            self.state.fail_operation(operation_id, type(exc).__name__)
             self.state.audit(context.correlation_id, context.actor, operation, target,
                              "rejected", {"error_type": type(exc).__name__})
             raise
@@ -340,3 +347,18 @@ class AdapterService:
 
     def reconciliation(self) -> dict:
         return {"status": "complete", "inventory": self.repository.inventory()}
+
+    def runtime_readback(self) -> dict:
+        inventory = self.repository.inventory()
+        return {
+            "status": "ready",
+            "target_attestation": {
+                "target_id": self.target_id,
+                "inventory_sha256": self.state.digest(inventory),
+            },
+            "feature_flags": {
+                name: bool(value) for name, value in vars(self.flags).items()
+            },
+            "inventory": inventory,
+            "kill_switch_active": not self.flags.writes,
+        }

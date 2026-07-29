@@ -1,6 +1,6 @@
 # Adapter tests
 
-Latest isolated review-correction run: **29 passed** using Python 3.11. All
+Latest completion run: **34 passed** using Python 3.11. All
 existing tests remain included.
 
 Covered:
@@ -25,6 +25,9 @@ Covered:
 - group, script, disposition, transfer-policy, and disabled-state mismatch
 - redacted evidence, preserved snapshots, partial-failure retry, and
   reconciliation after correction
+- body-bound execution grants and exact target attestation
+- durable operation lifecycle, stable result IDs, and interrupted recovery
+- bounded AMI parsing, event allowlisting, redaction, and durable deduplication
 
 ## Staging deployment
 

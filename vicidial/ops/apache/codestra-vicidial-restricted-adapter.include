@@ -7,7 +7,7 @@
     </RequireAll>
 </LocationMatch>
 
-<LocationMatch "^/restricted-vicidial/v1/(?:campaigns(?:/.*)?|agents(?:/.*)?|leads(?:/.*)?|callbacks(?:/.*)?|scripts/sync|dispositions/sync|transfer-policies/sync|reconciliation(?:/.*)?)$">
+<LocationMatch "^/restricted-vicidial/v1/(?:campaigns(?:/.*)?|agents(?:/.*)?|leads(?:/.*)?|callbacks(?:/.*)?|scripts/sync|dispositions/sync|transfer-policies/sync|reconciliation(?:/.*)?|runtime/readback|operations/[A-Fa-f0-9]{32})$">
     <RequireAll>
         Require ip 10.40.0.1
         Require expr "%{SSL_CLIENT_VERIFY} == 'SUCCESS'"

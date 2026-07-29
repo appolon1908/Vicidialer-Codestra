@@ -1,0 +1,31 @@
+groups:
+  - name: codestra-vicidial-adapter
+    rules:
+      - alert: VICIdialAdapterUnavailable
+        expr: probe_success{module="codestra_vicidial_adapter_private"} == 0
+        for: 2m
+        labels:
+          severity: critical
+        annotations:
+          summary: Private VICIdial adapter is unavailable
+      - alert: VICIdialAdapterUnexpectedWritesEnabled
+        expr: codestra_vicidial_adapter_writes_enabled != 0
+        for: 0m
+        labels:
+          severity: critical
+        annotations:
+          summary: VICIdial staging adapter writes are unexpectedly enabled
+      - alert: AMIEventGatewayObservationGap
+        expr: time() - codestra_ami_last_event_timestamp_seconds > 120
+        for: 2m
+        labels:
+          severity: warning
+        annotations:
+          summary: AMI event observation gap exceeds two minutes
+      - alert: AMIEventGatewayDeliveryBacklog
+        expr: codestra_ami_outbox_oldest_age_seconds > 300
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: AMI event delivery backlog is stale

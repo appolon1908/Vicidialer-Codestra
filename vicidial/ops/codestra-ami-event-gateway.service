@@ -1,0 +1,40 @@
+[Unit]
+Description=Codestra passive AMI event gateway
+After=network-online.target asterisk.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=codestra-adapter
+Group=codestra-adapter
+EnvironmentFile=/etc/codestra/ami-event-gateway.env
+WorkingDirectory=/opt/codestra/vicidial-restricted-adapter/current
+LoadCredential=ami-user:/etc/codestra/secrets/ami-event-user
+LoadCredential=ami-secret:/etc/codestra/secrets/ami-event-secret
+LoadCredential=tls-key:/etc/codestra/secrets/event-gateway-tls-key
+ExecStart=/opt/codestra/vicidial-restricted-adapter/current/.venv/bin/python -m codestra_vicidial.gateway_main
+Restart=on-failure
+RestartSec=5
+TimeoutStopSec=30
+UMask=0077
+StateDirectory=codestra-ami-event-gateway
+StateDirectoryMode=0700
+NoNewPrivileges=true
+PrivateTmp=true
+PrivateDevices=true
+ProtectSystem=strict
+ProtectHome=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictAddressFamilies=AF_UNIX AF_INET
+IPAddressDeny=any
+IPAddressAllow=localhost
+IPAddressAllow=10.40.0.1
+CapabilityBoundingSet=
+LockPersonality=true
+RestrictSUIDSGID=true
+ReadWritePaths=/var/lib/codestra-ami-event-gateway
+
+[Install]
+WantedBy=multi-user.target

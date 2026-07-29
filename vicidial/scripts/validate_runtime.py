@@ -35,3 +35,12 @@ if not secret.is_file() or secret.stat().st_size < 32:
     raise SystemExit("adapter HMAC credential missing or too short")
 if not str(secret).startswith("/run/credentials/") and secret.stat().st_mode & 0o077:
     raise SystemExit("adapter HMAC credential permissions are too broad")
+
+grant_secret = Path(os.environ["CODESTRA_EXECUTION_GRANT_HMAC_FILE"])
+if not grant_secret.is_file() or grant_secret.stat().st_size < 32:
+    raise SystemExit("execution grant HMAC credential missing or too short")
+if (not str(grant_secret).startswith("/run/credentials/")
+        and grant_secret.stat().st_mode & 0o077):
+    raise SystemExit("execution grant HMAC credential permissions are too broad")
+if os.environ.get("CODESTRA_ADAPTER_TARGET_ID") != "vicidial:65.21.67.207:staging":
+    raise SystemExit("adapter target attestation mismatch")

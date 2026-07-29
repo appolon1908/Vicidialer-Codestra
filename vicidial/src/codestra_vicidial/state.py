@@ -10,8 +10,9 @@ from pathlib import Path
 class StateStore:
     def __init__(self, path: Path):
         path.parent.mkdir(parents=True, exist_ok=True)
-        self.db = sqlite3.connect(path)
+        self.db = sqlite3.connect(path, timeout=10, check_same_thread=False)
         self.db.row_factory = sqlite3.Row
+        self.db.execute("PRAGMA busy_timeout=10000")
         self.db.execute("PRAGMA journal_mode=WAL")
         self.db.executescript("""
         CREATE TABLE IF NOT EXISTS requests(
@@ -38,6 +39,15 @@ class StateStore:
           evidence_id INTEGER PRIMARY KEY AUTOINCREMENT, occurred_at TEXT NOT NULL,
           operation TEXT NOT NULL, target_hash TEXT NOT NULL, outcome TEXT NOT NULL,
           redacted_json TEXT NOT NULL);
+        CREATE TABLE IF NOT EXISTS operation_runs(
+          operation_id TEXT PRIMARY KEY, operation TEXT NOT NULL,
+          idempotency_key TEXT NOT NULL, request_hash TEXT NOT NULL,
+          correlation_id TEXT NOT NULL, status TEXT NOT NULL,
+          attempt INTEGER NOT NULL, started_at TEXT NOT NULL,
+          updated_at TEXT NOT NULL, result_json TEXT, error_type TEXT,
+          UNIQUE(operation,idempotency_key));
+        CREATE INDEX IF NOT EXISTS operation_runs_status
+          ON operation_runs(status,updated_at);
         """)
         self.db.commit()
 
@@ -63,6 +73,73 @@ class StateStore:
              datetime.now(timezone.utc).isoformat()),
         )
         self.db.commit()
+
+    def begin_operation(self, operation: str, key: str, request_hash: str,
+                        correlation_id: str) -> str:
+        operation_id = self.digest({"operation": operation, "key": key})[:32]
+        now = datetime.now(timezone.utc).isoformat()
+        self.db.execute(
+            "INSERT INTO operation_runs(operation_id,operation,idempotency_key,"
+            "request_hash,correlation_id,status,attempt,started_at,updated_at) "
+            "VALUES(?,?,?,?,?,'running',1,?,?) "
+            "ON CONFLICT(operation,idempotency_key) DO UPDATE SET "
+            "status='running',attempt=operation_runs.attempt+1,"
+            "updated_at=excluded.updated_at,error_type=NULL "
+            "WHERE operation_runs.request_hash=excluded.request_hash",
+            (operation_id, operation, key, request_hash, correlation_id, now, now),
+        )
+        row = self.db.execute(
+            "SELECT operation_id,request_hash FROM operation_runs "
+            "WHERE operation=? AND idempotency_key=?", (operation, key)
+        ).fetchone()
+        if row["request_hash"] != request_hash:
+            raise ValueError("idempotency conflict")
+        self.db.commit()
+        return row["operation_id"]
+
+    def finish_operation(self, operation_id: str, result: dict) -> None:
+        self.db.execute(
+            "UPDATE operation_runs SET status='succeeded',updated_at=?,"
+            "result_json=?,error_type=NULL WHERE operation_id=?",
+            (datetime.now(timezone.utc).isoformat(),
+             json.dumps(result, sort_keys=True, default=str), operation_id),
+        )
+        self.db.commit()
+
+    def fail_operation(self, operation_id: str, error_type: str) -> None:
+        self.db.execute(
+            "UPDATE operation_runs SET status='failed',updated_at=?,error_type=? "
+            "WHERE operation_id=?",
+            (datetime.now(timezone.utc).isoformat(), error_type, operation_id),
+        )
+        self.db.commit()
+
+    def operation(self, operation_id: str) -> dict | None:
+        row = self.db.execute(
+            "SELECT * FROM operation_runs WHERE operation_id=?", (operation_id,)
+        ).fetchone()
+        if not row:
+            return None
+        return {
+            "operation_id": row["operation_id"], "operation": row["operation"],
+            "status": row["status"], "attempt": row["attempt"],
+            "correlation_id": row["correlation_id"],
+            "started_at": row["started_at"], "updated_at": row["updated_at"],
+            "result": json.loads(row["result_json"]) if row["result_json"] else None,
+            "error_type": row["error_type"],
+        }
+
+    def recover_interrupted(self) -> list[dict]:
+        rows = self.db.execute(
+            "SELECT operation_id,operation,idempotency_key,attempt FROM operation_runs "
+            "WHERE status='running' ORDER BY started_at"
+        ).fetchall()
+        now = datetime.now(timezone.utc).isoformat()
+        self.db.execute(
+            "UPDATE operation_runs SET status='recovery_required',updated_at=? "
+            "WHERE status='running'", (now,))
+        self.db.commit()
+        return [dict(row) for row in rows]
 
     def audit(self, correlation_id: str, actor: str, operation: str, target: str,
               outcome: str, detail: object) -> None:

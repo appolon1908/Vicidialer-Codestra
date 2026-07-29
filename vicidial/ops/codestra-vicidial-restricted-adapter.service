@@ -12,6 +12,7 @@ WorkingDirectory=/opt/codestra/vicidial-restricted-adapter/current
 EnvironmentFile=/etc/codestra/vicidial-restricted-adapter.env
 Environment=PYTHONPATH=/opt/codestra/vicidial-restricted-adapter/current/src
 LoadCredential=adapter-hmac:/etc/codestra/secrets/telephony-provisioning-hmac
+LoadCredential=execution-grant-hmac:/etc/codestra/secrets/execution-grant-hmac
 ExecStartPre=/opt/codestra/vicidial-restricted-adapter/current/.venv/bin/python scripts/validate_runtime.py
 ExecStart=/opt/codestra/vicidial-restricted-adapter/current/.venv/bin/uvicorn codestra_vicidial.app:app --host 127.0.0.1 --port 8097 --no-server-header --proxy-headers --forwarded-allow-ips=127.0.0.1
 ExecStartPost=/bin/sh -c 'for i in 1 2 3 4 5; do /usr/bin/curl --fail --silent --show-error http://127.0.0.1:8097/ready && exit 0; sleep 1; done; exit 1'
