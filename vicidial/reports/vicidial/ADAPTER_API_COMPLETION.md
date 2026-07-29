@@ -37,3 +37,17 @@ acceptance remain separately gated because this source workspace is not the
 VICIdial host and no production mutation was authorized or attempted.
 
 Recommendation: **STAGING-ONLY**.
+
+## Authoritative route expansion
+
+The authoritative branch now also exposes the versioned
+`/api/v1/telephony`, `/api/v1/vicidial`, and `/api/v1/asterisk` contracts for
+capabilities, effective flags, policy evaluation, VICIdial users and phones,
+readback, Asterisk endpoints and contacts, dialplan validation, passive runtime
+state, and restricted call control. Route names and public-ID parameters match
+the approved contract.
+
+Read-only API, reconciliation, and metrics flags default true. Every write,
+reload, revocation, transfer, call, and call-control flag defaults false.
+`LOCAL_KILL_SWITCH` defaults true and prevents execution even if an individual
+operation flag is accidentally enabled.

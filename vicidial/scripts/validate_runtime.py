@@ -13,11 +13,37 @@ FALSE_FLAGS = (
     "ENABLE_IVR_CALLBACKS",
     "ENABLE_WARM_TRANSFER",
     "ENABLE_PRODUCTION_DIALING",
+    "VICIDIAL_USER_WRITES_ENABLED",
+    "VICIDIAL_PHONE_WRITES_ENABLED",
+    "VICIDIAL_CAMPAIGN_WRITES_ENABLED",
+    "VICIDIAL_LEAD_WRITES_ENABLED",
+    "ASTERISK_ENDPOINT_WRITES_ENABLED",
+    "ASTERISK_CONTACT_REVOCATION_ENABLED",
+    "ASTERISK_RELOAD_ENABLED",
+    "INTERNAL_CALLS_ENABLED",
+    "CALL_HANGUP_ENABLED",
+    "CALL_DTMF_ENABLED",
+    "CALL_HOLD_ENABLED",
+    "CALL_RESUME_ENABLED",
+    "TRANSFERS_ENABLED",
+    "EXTERNAL_CALLS_ENABLED",
+    "CUSTOMER_CALLS_ENABLED",
+)
+TRUE_FLAGS = (
+    "TELEPHONY_ADAPTER_API_ENABLED",
+    "VICIDIAL_READS_ENABLED",
+    "ASTERISK_READS_ENABLED",
+    "TELEPHONY_RECONCILIATION_ENABLED",
+    "TELEPHONY_METRICS_ENABLED",
+    "LOCAL_KILL_SWITCH",
 )
 
 for name in FALSE_FLAGS:
     if os.environ.get(name, "").lower() != "false":
         raise SystemExit("{} must be false in staging deployment".format(name))
+for name in TRUE_FLAGS:
+    if os.environ.get(name, "").lower() != "true":
+        raise SystemExit("{} must be true in staging deployment".format(name))
 
 if os.environ.get("CODESTRA_ADAPTER_BACKEND") != "memory":
     raise SystemExit("initial staging deployment requires memory backend")

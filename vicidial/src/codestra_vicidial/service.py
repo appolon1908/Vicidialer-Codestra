@@ -20,6 +20,11 @@ class ReadbackMismatch(RuntimeError):
 
 @dataclass(frozen=True)
 class FeatureFlags:
+    telephony_adapter_api: bool = True
+    vicidial_reads: bool = True
+    asterisk_reads: bool = True
+    reconciliation: bool = True
+    metrics: bool = True
     writes: bool = False
     provisioning: bool = False
     agent_sync: bool = False
@@ -27,6 +32,22 @@ class FeatureFlags:
     callback_writes: bool = False
     transfer_policy_sync: bool = False
     production_dialing: bool = False
+    vicidial_user_writes: bool = False
+    vicidial_phone_writes: bool = False
+    vicidial_campaign_writes: bool = False
+    vicidial_lead_writes: bool = False
+    asterisk_endpoint_writes: bool = False
+    asterisk_contact_revocation: bool = False
+    asterisk_reload: bool = False
+    internal_calls: bool = False
+    call_hangup: bool = False
+    call_dtmf: bool = False
+    call_hold: bool = False
+    call_resume: bool = False
+    transfers: bool = False
+    external_calls: bool = False
+    customer_calls: bool = False
+    local_kill_switch: bool = True
 
 
 class AdapterService:

@@ -48,8 +48,54 @@ class StateStore:
           UNIQUE(operation,idempotency_key));
         CREATE INDEX IF NOT EXISTS operation_runs_status
           ON operation_runs(status,updated_at);
+        CREATE TABLE IF NOT EXISTS public_resources(
+          kind TEXT NOT NULL, public_id TEXT NOT NULL, desired_json TEXT NOT NULL,
+          enabled INTEGER NOT NULL DEFAULT 0, updated_at TEXT NOT NULL,
+          PRIMARY KEY(kind,public_id));
         """)
         self.db.commit()
+
+    def put_resource(self, kind: str, public_id: str, desired: dict,
+                     enabled: bool = False) -> dict:
+        now = datetime.now(timezone.utc).isoformat()
+        self.db.execute(
+            "INSERT INTO public_resources VALUES(?,?,?,?,?) "
+            "ON CONFLICT(kind,public_id) DO UPDATE SET "
+            "desired_json=excluded.desired_json,enabled=excluded.enabled,"
+            "updated_at=excluded.updated_at",
+            (kind, public_id, json.dumps(desired, sort_keys=True),
+             1 if enabled else 0, now),
+        )
+        self.db.commit()
+        return self.resource(kind, public_id)
+
+    def resource(self, kind: str, public_id: str) -> dict | None:
+        row = self.db.execute(
+            "SELECT desired_json,enabled,updated_at FROM public_resources "
+            "WHERE kind=? AND public_id=?", (kind, public_id)
+        ).fetchone()
+        if not row:
+            return None
+        desired = json.loads(row["desired_json"])
+        return {
+            "public_id": public_id, "kind": kind, "desired": desired,
+            "enabled": bool(row["enabled"]), "updated_at": row["updated_at"],
+            "readback_sha256": self.digest({
+                "kind": kind, "public_id": public_id, "desired": desired,
+                "enabled": bool(row["enabled"]),
+            }),
+        }
+
+    def set_resource_enabled(self, kind: str, public_id: str,
+                             enabled: bool) -> dict | None:
+        self.db.execute(
+            "UPDATE public_resources SET enabled=?,updated_at=? "
+            "WHERE kind=? AND public_id=?",
+            (1 if enabled else 0, datetime.now(timezone.utc).isoformat(),
+             kind, public_id),
+        )
+        self.db.commit()
+        return self.resource(kind, public_id)
 
     @staticmethod
     def digest(value: object) -> str:

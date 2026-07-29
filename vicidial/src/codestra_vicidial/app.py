@@ -1,12 +1,14 @@
 from __future__ import annotations
 
 import os
+import secrets
 from pathlib import Path
 
 from fastapi import Depends, FastAPI, Header, HTTPException, Request
 from fastapi.responses import JSONResponse
 
 from . import __version__
+from .contract_api import register_contract_routes
 from .grants import ExecutionGrantValidator
 from .models import (
     AgentCommand, CallbackCommand, CampaignCommand, DisableAgentCommand,
@@ -219,6 +221,9 @@ def create_app(service: AdapterService, authenticator: RequestAuthenticator,
             raise HTTPException(404, "operation missing")
         return result
 
+    contract_grant = grant_validator or ExecutionGrantValidator(
+        key=secrets.token_bytes(32), expected_target=service.target_id)
+    register_contract_routes(app, service, authenticator, contract_grant)
     return app
 
 
@@ -233,6 +238,11 @@ def app_from_environment() -> FastAPI:
     target_id = os.environ.get(
         "CODESTRA_ADAPTER_TARGET_ID", "vicidial:65.21.67.207:staging")
     flags = FeatureFlags(
+        telephony_adapter_api=os.environ.get("TELEPHONY_ADAPTER_API_ENABLED", "true") == "true",
+        vicidial_reads=os.environ.get("VICIDIAL_READS_ENABLED", "true") == "true",
+        asterisk_reads=os.environ.get("ASTERISK_READS_ENABLED", "true") == "true",
+        reconciliation=os.environ.get("TELEPHONY_RECONCILIATION_ENABLED", "true") == "true",
+        metrics=os.environ.get("TELEPHONY_METRICS_ENABLED", "true") == "true",
         writes=os.environ.get("ENABLE_VICIDIAL_WRITES") == "true",
         provisioning=os.environ.get("ENABLE_PROVISIONING") == "true",
         agent_sync=os.environ.get("ENABLE_AGENT_SYNC") == "true",
@@ -240,6 +250,22 @@ def app_from_environment() -> FastAPI:
         callback_writes=os.environ.get("ENABLE_IVR_CALLBACKS") == "true",
         transfer_policy_sync=os.environ.get("ENABLE_WARM_TRANSFER") == "true",
         production_dialing=False,
+        vicidial_user_writes=os.environ.get("VICIDIAL_USER_WRITES_ENABLED") == "true",
+        vicidial_phone_writes=os.environ.get("VICIDIAL_PHONE_WRITES_ENABLED") == "true",
+        vicidial_campaign_writes=os.environ.get("VICIDIAL_CAMPAIGN_WRITES_ENABLED") == "true",
+        vicidial_lead_writes=os.environ.get("VICIDIAL_LEAD_WRITES_ENABLED") == "true",
+        asterisk_endpoint_writes=os.environ.get("ASTERISK_ENDPOINT_WRITES_ENABLED") == "true",
+        asterisk_contact_revocation=os.environ.get("ASTERISK_CONTACT_REVOCATION_ENABLED") == "true",
+        asterisk_reload=os.environ.get("ASTERISK_RELOAD_ENABLED") == "true",
+        internal_calls=os.environ.get("INTERNAL_CALLS_ENABLED") == "true",
+        call_hangup=os.environ.get("CALL_HANGUP_ENABLED") == "true",
+        call_dtmf=os.environ.get("CALL_DTMF_ENABLED") == "true",
+        call_hold=os.environ.get("CALL_HOLD_ENABLED") == "true",
+        call_resume=os.environ.get("CALL_RESUME_ENABLED") == "true",
+        transfers=os.environ.get("TRANSFERS_ENABLED") == "true",
+        external_calls=os.environ.get("EXTERNAL_CALLS_ENABLED") == "true",
+        customer_calls=os.environ.get("CUSTOMER_CALLS_ENABLED") == "true",
+        local_kill_switch=os.environ.get("LOCAL_KILL_SWITCH", "true") == "true",
     )
     backend_name = os.environ.get("CODESTRA_ADAPTER_BACKEND", "memory")
     if backend_name == "mysql":

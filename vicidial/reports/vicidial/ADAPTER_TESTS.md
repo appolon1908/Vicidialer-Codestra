@@ -1,6 +1,6 @@
 # Adapter tests
 
-Latest completion run: **34 passed** using Python 3.11. All
+Latest authoritative API completion run: **38 passed** using Python 3.11. All
 existing tests remain included.
 
 Covered:
@@ -28,6 +28,10 @@ Covered:
 - body-bound execution grants and exact target attestation
 - durable operation lifecycle, stable result IDs, and interrupted recovery
 - bounded AMI parsing, event allowlisting, redaction, and durable deduplication
+- exact VICIdial user/phone/readback and Asterisk endpoint/contact/dialplan/runtime
+  route contract
+- authenticated restricted-call denial with the local kill switch active
+- required read-enabled and mutation-disabled effective-flag defaults
 
 ## Staging deployment
 

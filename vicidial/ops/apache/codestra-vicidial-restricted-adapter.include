@@ -1,10 +1,19 @@
 # Include inside the accepted 10.40.0.2:8443 mTLS VirtualHost.
-<LocationMatch "^/restricted-vicidial/(?:health|ready|version)$">
+<LocationMatch "^/restricted-vicidial/(?:health|ready|version|health/(?:live|ready)|metrics|\.well-known/codestra-service)$">
     <RequireAll>
         Require method GET
         Require ip 10.40.0.1
         Require expr "%{SSL_CLIENT_VERIFY} == 'SUCCESS'"
     </RequireAll>
+</LocationMatch>
+
+<LocationMatch "^/restricted-vicidial/api/v1/(?:telephony/(?:capabilities|effective-flags|policy/evaluations)|vicidial/(?:users|phones|campaigns|lists|leads|agents|runtime)(?:/.*)?|asterisk/(?:endpoints|dialplan|runtime|internal-calls|calls)(?:/.*)?)$">
+    <RequireAll>
+        Require ip 10.40.0.1
+        Require expr "%{SSL_CLIENT_VERIFY} == 'SUCCESS'"
+    </RequireAll>
+    RequestHeader set X-Forwarded-For "%{REMOTE_ADDR}s"
+    RequestHeader unset Proxy early
 </LocationMatch>
 
 <LocationMatch "^/restricted-vicidial/v1/(?:campaigns(?:/.*)?|agents(?:/.*)?|leads(?:/.*)?|callbacks(?:/.*)?|scripts/sync|dispositions/sync|transfer-policies/sync|reconciliation(?:/.*)?|runtime/readback|operations/[A-Fa-f0-9]{32})$">
