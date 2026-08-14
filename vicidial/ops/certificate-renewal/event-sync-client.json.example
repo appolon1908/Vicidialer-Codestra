@@ -1,0 +1,20 @@
+{
+  "certificate": "/etc/codestra/secrets/middleware-event-mtls/client.crt",
+  "private_key": "/etc/codestra/secrets/middleware-event-mtls/client.key",
+  "ca_certificate": "/etc/codestra/secrets/middleware-event-mtls/ca.crt",
+  "openssl_config": "/etc/codestra/agents/vicidial-event-sync/client-ext.cnf",
+  "enrollment_helper": "/usr/local/libexec/codestra-production-ca-enroll",
+  "profile": "vicidial-event-client-v1",
+  "subject": "/O=Codestra/OU=VICIdial Event Sync/CN=codestra-vicidial-event-sync",
+  "purpose": "sslclient",
+  "eku": "TLS Web Client Authentication",
+  "required_san_text": [
+    "DNS:codestra-vicidial-event-sync",
+    "IP Address:10.40.0.2"
+  ],
+  "renew_before_days": 30,
+  "service": "codestra-vicidial-sync.service",
+  "post_health_command": [
+    "/usr/local/libexec/codestra-server-a-authenticated-readiness"
+  ]
+}

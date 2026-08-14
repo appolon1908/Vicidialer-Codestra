@@ -1,0 +1,21 @@
+{
+  "certificate": "/etc/codestra/agents/vicidial-observer/pki/agent.crt",
+  "private_key": "/etc/codestra/agents/vicidial-observer/pki/agent.key",
+  "ca_certificate": "/etc/codestra/agents/vicidial-observer/pki/production-ca.crt",
+  "openssl_config": "/etc/codestra/agents/vicidial-observer/pki/agent-ext.cnf",
+  "enrollment_helper": "/usr/local/libexec/codestra-production-ca-enroll",
+  "profile": "vicidial-observer-server-v1",
+  "subject": "/O=Codestra/OU=VICIdial Observer/CN=vici-agent",
+  "purpose": "sslserver",
+  "eku": "TLS Web Server Authentication",
+  "required_san_text": [
+    "DNS:vici-agent",
+    "IP Address:10.40.0.2",
+    "URI:spiffe://codestra.internal/agent/vici"
+  ],
+  "renew_before_days": 30,
+  "service": "codestra-vicidial-observer.service",
+  "post_health_command": [
+    "/usr/local/libexec/codestra-observer-authenticated-health"
+  ]
+}
