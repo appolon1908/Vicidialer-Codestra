@@ -27,7 +27,7 @@ if os.environ.get("AUTHORIZED_PRIVATE_SOURCE_IP") != "10.40.0.1":
     raise SystemExit("authorized private source mismatch")
 if os.environ.get("MIDDLEWARE_BASE_URL") != "https://api.codestra.agency":
     raise SystemExit("middleware URL mismatch")
-if os.environ.get("KEYCLOAK_ISSUER_URL") != "https://auth.codestra.agency":
+if os.environ.get("KEYCLOAK_ISSUER_URL") != "https://auth.codestra.co":
     raise SystemExit("Keycloak issuer mismatch")
 
 secret = Path(os.environ["CODESTRA_ADAPTER_HMAC_FILE"])
