@@ -52,6 +52,7 @@ SystemCallArchitectures=native
 SystemCallFilter=@system-service
 SystemCallErrorNumber=EPERM
 ReadOnlyPaths=/run/credentials
+ReadOnlyPaths=/etc/codestra/reconciliation-policy.json
 ReadWritePaths=/var/lib/codestra-vicidial-restricted-adapter
 LimitNOFILE=1024
 TasksMax=64

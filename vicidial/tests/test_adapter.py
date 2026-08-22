@@ -103,6 +103,7 @@ def test_route_contract_is_present(harness):
         ("POST", "/v1/campaigns/provision-disabled"),
         ("POST", "/v1/campaigns/update-disabled"),
         ("POST", "/v1/campaigns/disable"),
+        ("POST", "/v1/reconciliation/campaigns/provision-disabled"),
         ("GET", "/v1/campaigns/{campaign_id}/actual-state"),
         ("POST", "/v1/agents/sync"), ("POST", "/v1/agents/disable"),
         ("GET", "/v1/agents/{user_id}/actual-state"),

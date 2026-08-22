@@ -103,6 +103,12 @@ class CampaignCommand(StrictModel):
     campaign: CampaignSpec
 
 
+class ReconciliationCampaignCommand(CampaignCommand):
+    authorization_reference: Annotated[str, Field(pattern=r"^CHG-[A-Z0-9-]{10,80}$")]
+    plan_sha256: Annotated[str, Field(pattern=r"^[a-f0-9]{64}$")]
+    backup_reference: Annotated[str, Field(pattern=r"^[A-Za-z0-9._:/-]{8,255}$")]
+
+
 class AgentSpec(StrictModel):
     user_id: Annotated[str, Field(pattern=r"^[A-Z]{3}[0-9]{4,12}$")]
     full_name: Annotated[str, Field(min_length=2, max_length=50)]

@@ -3,11 +3,13 @@
 from __future__ import annotations
 
 import os
+import sys
 from pathlib import Path
 
-FALSE_FLAGS = (
-    "ENABLE_VICIDIAL_WRITES",
-    "ENABLE_PROVISIONING",
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
+from codestra_vicidial.reconciliation import ReconciliationDenied, ReconciliationPolicy
+
+ALWAYS_FALSE_FLAGS = (
     "ENABLE_AGENT_SYNC",
     "ENABLE_LEAD_PUBLICATION",
     "ENABLE_IVR_CALLBACKS",
@@ -15,12 +17,31 @@ FALSE_FLAGS = (
     "ENABLE_PRODUCTION_DIALING",
 )
 
-for name in FALSE_FLAGS:
+for name in ALWAYS_FALSE_FLAGS:
     if os.environ.get(name, "").lower() != "false":
-        raise SystemExit("{} must be false in staging deployment".format(name))
+        raise SystemExit("{} must remain false".format(name))
 
-if os.environ.get("CODESTRA_ADAPTER_BACKEND") != "memory":
-    raise SystemExit("initial staging deployment requires memory backend")
+deployment = os.environ.get("CODESTRA_ADAPTER_DEPLOYMENT", "staging-read-only")
+if deployment == "staging-read-only":
+    if os.environ.get("CODESTRA_ADAPTER_BACKEND") != "memory":
+        raise SystemExit("staging deployment requires memory backend")
+    for name in ("ENABLE_VICIDIAL_WRITES", "ENABLE_PROVISIONING"):
+        if os.environ.get(name, "").lower() != "false":
+            raise SystemExit("{} must be false in staging deployment".format(name))
+elif deployment == "production-reconciliation":
+    if os.environ.get("CODESTRA_ADAPTER_BACKEND") != "mysql":
+        raise SystemExit("production reconciliation requires loopback mysql backend")
+    for name in ("ENABLE_VICIDIAL_WRITES", "ENABLE_PROVISIONING"):
+        if os.environ.get(name, "").lower() != "true":
+            raise SystemExit("{} must be true for approved reconciliation".format(name))
+    if os.environ.get("OWNER_FULL_AUTONOMY") != "YES":
+        raise SystemExit("owner reconciliation authorization missing")
+    try:
+        ReconciliationPolicy.from_file(Path(os.environ["CODESTRA_RECONCILIATION_POLICY_FILE"]))
+    except (KeyError, ReconciliationDenied, ValueError) as exc:
+        raise SystemExit("request-bound reconciliation policy invalid: {}".format(exc)) from exc
+else:
+    raise SystemExit("unsupported adapter deployment profile")
 if os.environ.get("AUTHORIZED_APPLICATION_SERVER_IP") != "65.109.65.169":
     raise SystemExit("authorized application identity mismatch")
 if os.environ.get("AUTHORIZED_PRIVATE_SOURCE_IP") != "10.40.0.1":

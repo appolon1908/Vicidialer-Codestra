@@ -25,3 +25,10 @@ The repository's existing top-level `tel_events/` package remains the compatible
 event-gateway source; it is not duplicated here. See
 `docs/ADAPTER_OPERATIONS.md` and `reports/vicidial/PRODUCTION_GATE.md` before a
 separately approved staging deployment.
+
+The temporary `production-reconciliation` profile exposes only the dedicated
+`telephony:reconcile` disabled-campaign endpoint. Every request must match the
+root-owned immutable policy file's exact campaign hash, plan digest, owner
+authorization reference, and validated backup reference. Backup evidence must
+be less than 24 hours old at both service startup and request time. Generic
+campaign, script, and disposition mutations remain denied in this profile.

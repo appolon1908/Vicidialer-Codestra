@@ -9,15 +9,17 @@ from fastapi.responses import JSONResponse
 from . import __version__
 from .models import (
     AgentCommand, CallbackCommand, CampaignCommand, DisableAgentCommand,
-    LeadCommand, TransferPolicyCommand,
+    LeadCommand, ReconciliationCampaignCommand, TransferPolicyCommand,
 )
+from .reconciliation import ReconciliationPolicy
 from .repository import CollisionError, MemoryRepository, MySQLRepository
 from .security import RequestAuthenticator
 from .service import AdapterService, FeatureFlags, ReadbackMismatch
 from .state import StateStore
 
 
-def create_app(service: AdapterService, authenticator: RequestAuthenticator) -> FastAPI:
+def create_app(service: AdapterService, authenticator: RequestAuthenticator,
+               reconciliation_policy: ReconciliationPolicy | None = None) -> FastAPI:
     app = FastAPI(title="Codestra restricted VICIdial adapter", version=__version__)
 
     @app.exception_handler(CollisionError)
@@ -76,6 +78,10 @@ def create_app(service: AdapterService, authenticator: RequestAuthenticator) -> 
         except ValueError as exc:
             raise HTTPException(status_code=422, detail=str(exc)) from exc
 
+    def deny_generic_reconciliation_mutation() -> None:
+        if reconciliation_policy is not None:
+            raise HTTPException(403, "generic mutation disabled in reconciliation profile")
+
     def headers(
         idempotency_key: str = Header(..., min_length=8, max_length=200),
         identity: str = Header(..., alias="X-Service-Identity"),
@@ -103,16 +109,19 @@ def create_app(service: AdapterService, authenticator: RequestAuthenticator) -> 
 
     @app.post("/v1/campaigns/provision-disabled")
     async def campaign_provision(request: Request, values=Depends(headers)):
+        deny_generic_reconciliation_mutation()
         return await mutation(request, CampaignCommand, service.provision_campaign,
                               "telephony:provision", *values)
 
     @app.post("/v1/campaigns/update-disabled")
     async def campaign_update(request: Request, values=Depends(headers)):
+        deny_generic_reconciliation_mutation()
         return await mutation(request, CampaignCommand, service.provision_campaign,
                               "telephony:provision", *values)
 
     @app.post("/v1/campaigns/disable")
     async def campaign_disable(request: Request, values=Depends(headers)):
+        deny_generic_reconciliation_mutation()
         return await mutation(request, CampaignCommand, service.disable_campaign,
                               "telephony:provision", *values)
 
@@ -172,13 +181,32 @@ def create_app(service: AdapterService, authenticator: RequestAuthenticator) -> 
 
     @app.post("/v1/scripts/sync")
     async def scripts_sync(request: Request, values=Depends(headers)):
+        deny_generic_reconciliation_mutation()
         return await mutation(request, CampaignCommand, service.provision_campaign,
                               "telephony:provision", *values)
 
     @app.post("/v1/dispositions/sync")
     async def dispositions_sync(request: Request, values=Depends(headers)):
+        deny_generic_reconciliation_mutation()
         return await mutation(request, CampaignCommand, service.provision_campaign,
                               "telephony:provision", *values)
+
+    @app.post("/v1/reconciliation/campaigns/provision-disabled")
+    async def reconciliation_campaign(request: Request, values=Depends(headers)):
+        if reconciliation_policy is None:
+            raise HTTPException(403, "production reconciliation profile is disabled")
+        key, identity, scopes, timestamp, nonce, signature = values
+        body = await authorize(
+            request, "telephony:reconcile", identity, scopes, timestamp, nonce, signature
+        )
+        try:
+            command = ReconciliationCampaignCommand.model_validate_json(body)
+            reconciliation_policy.authorize(command)
+            return service.provision_campaign(key, command)
+        except PermissionError as exc:
+            raise HTTPException(status_code=403, detail=str(exc)) from exc
+        except ValueError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
 
     @app.post("/v1/transfer-policies/sync")
     async def transfer_sync(request: Request, values=Depends(headers)):
@@ -248,7 +276,10 @@ def app_from_environment() -> FastAPI:
             "127.0.0.1",
         }),
     )
-    return create_app(service, auth)
+    policy = None
+    if os.environ.get("CODESTRA_ADAPTER_DEPLOYMENT") == "production-reconciliation":
+        policy = ReconciliationPolicy.from_file(Path(os.environ["CODESTRA_RECONCILIATION_POLICY_FILE"]))
+    return create_app(service, auth, policy)
 
 
 app = app_from_environment()

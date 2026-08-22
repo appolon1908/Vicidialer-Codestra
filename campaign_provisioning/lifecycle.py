@@ -132,6 +132,12 @@ class PrivateAdapterClient:
             scope="telephony:provision", body=command, idempotency_key=key,
         )
 
+    def reconcile_campaign(self, key: str, command: dict[str, Any]) -> dict[str, Any]:
+        return self._request(
+            "POST", "/v1/reconciliation/campaigns/provision-disabled",
+            scope="telephony:reconcile", body=command, idempotency_key=key,
+        )
+
     def campaign_actual(self, campaign_id: str) -> dict[str, Any]:
         return self._request(
             "GET", f"/v1/campaigns/{campaign_id}/actual-state",
