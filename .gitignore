@@ -26,6 +26,7 @@ reports/private/
 config/*.secret.env
 !.env.example
 *.sql
+!identity/migrations/20260822_klyrow_canonical_issuer.sql
 *.sql.gz
 *.dump
 *.backup
