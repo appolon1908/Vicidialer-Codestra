@@ -4,6 +4,7 @@ import json
 import subprocess
 import sys
 from datetime import datetime, timezone
+from pathlib import Path
 
 
 def environment(tmp_path, deployment):
@@ -93,3 +94,16 @@ def test_deprecated_or_incomplete_keycloak_issuer_is_denied(tmp_path):
         result = run(env)
         assert result.returncode != 0
         assert b"Keycloak issuer mismatch" in result.stderr
+
+
+def test_all_deployable_adapter_templates_use_canonical_realm_issuer():
+    expected = "KEYCLOAK_ISSUER_URL=https://auth.codestra.co/realms/codestra"
+    root = Path(__file__).parents[2]
+    templates = (
+        root / "vicidial/config/adapter.env.example",
+        root / "vicidial/config/vicidial-server.env.example",
+        root / "deploy/vicidial-restricted-adapter/adapter.env.example",
+    )
+    for template in templates:
+        lines = template.read_text(encoding="utf-8").splitlines()
+        assert [line for line in lines if line.startswith("KEYCLOAK_ISSUER_URL=")] == [expected]
