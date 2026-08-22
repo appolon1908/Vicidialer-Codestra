@@ -1,0 +1,8 @@
+-- Emergency rollback for the reconciliation-only write grants.
+REVOKE INSERT, UPDATE ON asterisk.vicidial_campaigns FROM 'codestra-adapter'@'localhost';
+REVOKE INSERT, UPDATE ON asterisk.vicidial_lists FROM 'codestra-adapter'@'localhost';
+REVOKE INSERT, UPDATE ON asterisk.vicidial_user_groups FROM 'codestra-adapter'@'localhost';
+REVOKE INSERT, UPDATE ON asterisk.vicidial_inbound_groups FROM 'codestra-adapter'@'localhost';
+REVOKE INSERT, UPDATE ON asterisk.vicidial_scripts FROM 'codestra-adapter'@'localhost';
+REVOKE INSERT ON asterisk.vicidial_campaign_statuses FROM 'codestra-adapter'@'localhost';
+
