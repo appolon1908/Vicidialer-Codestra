@@ -670,6 +670,19 @@ def test_transfer_target_requires_exact_campaign_and_business_unit(harness):
         service.sync_transfer_policy("transfer-cross-campaign", command)
 
 
+def test_user_group_ownership_allows_same_business_unit_sharing(tmp_path):
+    state = StateStore(tmp_path / "shared-groups.sqlite3")
+    state.put_group_ownership("CAL_AGENTS", "CAL00001", "CAL", "user")
+    state.put_group_ownership("CAL_AGENTS", "CAL00002", "CAL", "user")
+    owner = state.group_owner("CAL_AGENTS")
+    assert owner is not None
+    assert owner["campaign_id"] == "CAL00001"
+    with pytest.raises(ValueError, match="group ownership collision"):
+        state.put_group_ownership("CAL_AGENTS", "COD00001", "COD", "user")
+    with pytest.raises(ValueError, match="group ownership collision"):
+        state.put_group_ownership("CAL_AGENTS", "CAL00003", "CAL", "inbound")
+
+
 def test_callback_external_id_requires_identical_immutable_payload(harness):
     service, repo = harness
     payload = {

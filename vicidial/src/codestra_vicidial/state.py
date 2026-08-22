@@ -158,9 +158,13 @@ class StateStore:
             "SELECT campaign_id,business_unit,kind FROM group_ownership "
             "WHERE code=?", (code,)
         ).fetchone()
-        desired = (campaign_id, business_unit, kind)
-        if current and tuple(current) != desired:
-            raise ValueError("transfer target ownership collision")
+        # A VICIdial user group is intentionally shared by every campaign in
+        # one business unit.  Preserve its first campaign as provenance, while
+        # rejecting cross-business-unit or cross-kind reuse.
+        if current and (
+            current["business_unit"] != business_unit or current["kind"] != kind
+        ):
+            raise ValueError("group ownership collision")
         self.db.execute(
             "INSERT OR IGNORE INTO group_ownership VALUES(?,?,?,?)",
             (code, campaign_id, business_unit, kind),
