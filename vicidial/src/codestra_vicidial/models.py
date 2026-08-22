@@ -6,7 +6,7 @@ from typing import Annotated, Literal
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 StrictText = Annotated[str, Field(min_length=1, max_length=255)]
-CanonicalCampaign = Annotated[str, Field(pattern=r"^(MOY|COD|SCP|MBL|RLP|FTP|TRX|CAL|TEST)-[A-Z0-9]+-(OUT|IN)$", max_length=40)]
+CanonicalCampaign = Annotated[str, Field(pattern=r"^(?:TEST_SYN|(?:MOY|COD|SCP|MBL|RLP|FTP|TRX|CAL|TEST)-[A-Z0-9]+-(?:OUT|IN))$", max_length=40)]
 ActualCampaign = Annotated[str, Field(pattern=r"^[A-Z0-9_]{2,8}$")]
 ResourceCode = Annotated[str, Field(pattern=r"^[A-Z0-9_]{2,20}$")]
 
@@ -70,11 +70,14 @@ class CampaignSpec(StrictModel):
     transfer_targets: list[ResourceCode] = Field(default_factory=list, max_length=20)
     reporting_mapping: StrictText
     recording_policy_reference: StrictText
+    adopt_existing_sha256: Annotated[str, Field(pattern=r"^[a-f0-9]{64}$")] | None = None
 
     @model_validator(mode="after")
     def validate_ownership(self) -> "CampaignSpec":
-        if not self.canonical_id.startswith(self.business_unit + "-"):
+        if self.canonical_id != "TEST_SYN" and not self.canonical_id.startswith(self.business_unit + "-"):
             raise ValueError("campaign/business-unit mismatch")
+        if self.canonical_id == "TEST_SYN" and self.business_unit != "TEST":
+            raise ValueError("TEST_SYN requires TEST business unit")
         ids = [item.list_id for item in self.lists]
         if len(ids) != len(set(ids)):
             raise ValueError("duplicate list_id")

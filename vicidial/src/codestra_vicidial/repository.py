@@ -190,7 +190,10 @@ class MemoryRepository:
                 raise CollisionError(f"incompatible collision: {key}")
         for item in spec.groups:
             if item.kind == "user":
-                if not item.code.startswith(spec.business_unit + "_"):
+                certification_group = (
+                    spec.canonical_id == "TEST_SYN" and item.code == "WEBTEST_SYN"
+                )
+                if not certification_group and not item.code.startswith(spec.business_unit + "_"):
                     raise CollisionError(f"incompatible ownership: {item.code}")
                 current = self.groups.get((item.kind, item.code))
                 if current:
@@ -442,10 +445,25 @@ class MySQLRepository:
             "SELECT campaign_id,campaign_name,active,dial_method,local_call_time,"
             "campaign_recording,scheduled_callbacks,campaign_description "
             "FROM vicidial_campaigns WHERE campaign_id=%s", (spec.actual_id,))
-        adopted = self._check(current, desired_campaign,
-                              ("campaign_name", "active", "dial_method", "local_call_time",
-                               "campaign_recording", "scheduled_callbacks", "campaign_description"),
-                              spec.actual_id)
+        campaign_fields = (
+            "campaign_name", "active", "dial_method", "local_call_time",
+            "campaign_recording", "scheduled_callbacks", "campaign_description",
+        )
+        adopted = False
+        legacy_update = False
+        if current:
+            mismatches = [key for key in campaign_fields if current.get(key) != desired_campaign.get(key)]
+            if mismatches:
+                observed_hash = hashlib.sha256(
+                    json.dumps(current, sort_keys=True, separators=(",", ":")).encode()
+                ).hexdigest()
+                if spec.adopt_existing_sha256 != observed_hash:
+                    raise CollisionError(f"incompatible ownership: {spec.actual_id}")
+                if current.get("active") != "N":
+                    raise CollisionError(f"active campaign cannot be adopted: {spec.actual_id}")
+                legacy_update = True
+            else:
+                adopted = True
         # Complete collision preflight before the first MyISAM write. MyISAM
         # cannot provide transactional rollback, so a late ownership collision
         # must never be discovered after earlier resources were inserted.
@@ -501,7 +519,15 @@ class MySQLRepository:
                  "category": item.category},
                 ("status_name", "selectable", "human_answered", "category"), item.code,
             )
-        if not adopted:
+        if legacy_update:
+            self._execute(
+                "UPDATE vicidial_campaigns SET campaign_name=%s,active='N',dial_method=%s,"
+                "local_call_time=%s,campaign_recording=%s,scheduled_callbacks=%s,"
+                "campaign_description=%s,hopper_level=0,auto_dial_level='0' WHERE campaign_id=%s",
+                (spec.name, spec.dial_method, spec.call_time, spec.recording_policy,
+                 desired_campaign["scheduled_callbacks"], description, spec.actual_id),
+            )
+        elif not adopted:
             self._execute(
                 "INSERT INTO vicidial_campaigns"
                 "(campaign_id,campaign_name,active,dial_method,local_call_time,"
@@ -510,7 +536,7 @@ class MySQLRepository:
                 (spec.actual_id, spec.name, spec.dial_method, spec.call_time,
                  spec.recording_policy, desired_campaign["scheduled_callbacks"], description))
         results.append({"type": "campaign", "id": spec.actual_id,
-                        "result": "adopted" if adopted else "created"})
+                        "result": "updated" if legacy_update else ("adopted" if adopted else "created")})
         for item in spec.lists:
             desired = {"list_id": item.list_id, "list_name": item.code,
                        "campaign_id": spec.actual_id, "active": "N"}

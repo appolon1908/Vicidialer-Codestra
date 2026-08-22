@@ -189,7 +189,9 @@ class AdapterService:
              "desired_hash": mapping["payload_hash"]}
             if mapping else None
         )
-        desired_hash = self.state.digest(spec.model_dump(mode="json"))
+        desired_payload = spec.model_dump(mode="json")
+        desired_payload["adopt_existing_sha256"] = None
+        desired_hash = self.state.digest(desired_payload)
         results.append(self._comparison(
             "canonical_mapping", spec.canonical_id,
             {"canonical_id": spec.canonical_id, "actual_id": spec.actual_id,
@@ -212,8 +214,9 @@ class AdapterService:
         self._require(self.flags.provisioning, "campaign provisioning")
 
         def apply() -> dict:
-            desired_hash = self.state.digest(
-                command.campaign.model_dump(mode="json"))
+            desired_payload = command.campaign.model_dump(mode="json")
+            desired_payload["adopt_existing_sha256"] = None
+            desired_hash = self.state.digest(desired_payload)
             mapping = self.state.mapping(
                 "campaign", command.campaign.canonical_id)
             if mapping and (
@@ -234,8 +237,7 @@ class AdapterService:
                     "resources": before,
                     "campaign_policy": self.state.campaign_policy(
                         command.campaign.actual_id),
-                    "desired_hash": self.state.digest(
-                        command.campaign.model_dump(mode="json")),
+                    "desired_hash": desired_hash,
                 },
             )
             resources = self.repository.provision_campaign_disabled(command.campaign)
@@ -244,7 +246,7 @@ class AdapterService:
                 desired_hash)
             self.state.put_campaign_desired(
                 command.campaign.canonical_id, command.campaign.actual_id,
-                command.campaign.model_dump(mode="json"))
+                desired_payload)
             for group in command.campaign.groups:
                 self.state.put_group_ownership(
                     group.code, command.campaign.actual_id,
@@ -303,8 +305,9 @@ class AdapterService:
                 raise CollisionError("campaign ownership mapping missing")
             if mapping["actual_id"] != spec.actual_id:
                 raise CollisionError("campaign ownership mapping mismatch")
-            if mapping["payload_hash"] != self.state.digest(
-                    spec.model_dump(mode="json")):
+            desired_payload = spec.model_dump(mode="json")
+            desired_payload["adopt_existing_sha256"] = None
+            if mapping["payload_hash"] != self.state.digest(desired_payload):
                 raise CollisionError("campaign desired mapping changed")
             owner = self.repository.campaign_owner(spec.actual_id)
             if owner is None:
