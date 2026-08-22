@@ -4,6 +4,7 @@ import json
 import subprocess
 import sys
 from datetime import datetime, timezone
+from pathlib import Path
 
 
 def environment(tmp_path, deployment):
@@ -37,7 +38,7 @@ def environment(tmp_path, deployment):
         "AUTHORIZED_APPLICATION_SERVER_IP": "65.109.65.169",
         "AUTHORIZED_PRIVATE_SOURCE_IP": "10.40.0.1",
         "MIDDLEWARE_BASE_URL": "https://api.codestra.agency",
-        "KEYCLOAK_ISSUER_URL": "https://auth.codestra.co",
+        "KEYCLOAK_ISSUER_URL": "https://auth.codestra.co/realms/codestra",
         "CODESTRA_ADAPTER_HMAC_FILE": str(secret),
         "CODESTRA_RECONCILIATION_POLICY_FILE": str(policy),
     }
@@ -84,3 +85,25 @@ def test_staging_profile_stays_read_only(tmp_path):
     assert run(env).returncode == 0
     env["ENABLE_VICIDIAL_WRITES"] = "true"
     assert run(env).returncode != 0
+
+
+def test_deprecated_or_incomplete_keycloak_issuer_is_denied(tmp_path):
+    for issuer in ("https://auth.codestra.agency", "https://auth.codestra.co"):
+        env = environment(tmp_path, "staging-read-only")
+        env["KEYCLOAK_ISSUER_URL"] = issuer
+        result = run(env)
+        assert result.returncode != 0
+        assert b"Keycloak issuer mismatch" in result.stderr
+
+
+def test_all_deployable_adapter_templates_use_canonical_realm_issuer():
+    expected = "KEYCLOAK_ISSUER_URL=https://auth.codestra.co/realms/codestra"
+    root = Path(__file__).parents[2]
+    templates = (
+        root / "vicidial/config/adapter.env.example",
+        root / "vicidial/config/vicidial-server.env.example",
+        root / "deploy/vicidial-restricted-adapter/adapter.env.example",
+    )
+    for template in templates:
+        lines = template.read_text(encoding="utf-8").splitlines()
+        assert [line for line in lines if line.startswith("KEYCLOAK_ISSUER_URL=")] == [expected]
