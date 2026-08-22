@@ -48,9 +48,20 @@ def format_allowed_campaigns(campaigns: list[str]) -> str:
 
 def owned_user_group(canonical_id: str, business_unit: str, group_code: str) -> bool:
     """Accept the business-unit namespace or the one certified legacy fixture."""
-    return group_code.startswith(business_unit + "_") or (
-        canonical_id == "TEST_SYN" and group_code == "WEBTEST_SYN"
-    )
+    certified_fixtures = {
+        "CAL-TEST-OUT": "TST_CAL",
+        "COD-TEST-OUT": "TST_COD",
+        "FTP-TEST-OUT": "TST_FTP",
+        "MBL-TEST-OUT": "TST_MBL",
+        "MOY-TEST-OUT": "TST_MOY",
+        "RLP-TEST-OUT": "TST_RLP",
+        "SCP-TEST-OUT": "TST_SCP",
+        "TEST_SYN": "WEBTEST_SYN",
+        "TRX-TEST-OUT": "TST_TRX",
+    }
+    return group_code.startswith(business_unit + "_") or certified_fixtures.get(
+        canonical_id
+    ) == group_code
 
 
 def additive_campaign_membership(current: str, desired: str) -> tuple[str, bool]:

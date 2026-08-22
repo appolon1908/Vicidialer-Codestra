@@ -44,6 +44,27 @@ def test_user_group_namespace_has_only_exact_test_syn_exception() -> None:
     assert not owned_user_group("COD-SERVICE-OUT", "COD", "WEBTEST_SYN")
 
 
+@pytest.mark.parametrize(
+    ("canonical_id", "business_unit", "group_code"),
+    [
+        ("CAL-TEST-OUT", "CAL", "TST_CAL"),
+        ("COD-TEST-OUT", "COD", "TST_COD"),
+        ("FTP-TEST-OUT", "FTP", "TST_FTP"),
+        ("MBL-TEST-OUT", "MBL", "TST_MBL"),
+        ("MOY-TEST-OUT", "MOY", "TST_MOY"),
+        ("RLP-TEST-OUT", "RLP", "TST_RLP"),
+        ("SCP-TEST-OUT", "SCP", "TST_SCP"),
+        ("TRX-TEST-OUT", "TRX", "TST_TRX"),
+    ],
+)
+def test_certified_test_fixture_groups_are_exact(
+    canonical_id: str, business_unit: str, group_code: str
+) -> None:
+    assert owned_user_group(canonical_id, business_unit, group_code)
+    assert not owned_user_group(canonical_id, business_unit, group_code + "X")
+    assert not owned_user_group(canonical_id.replace("-TEST", "-LIVE"), business_unit, group_code)
+
+
 def campaign_payload() -> dict:
     return {
         "context": context(),
