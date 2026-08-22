@@ -22,4 +22,3 @@ ON asterisk.vicidial_scripts TO 'codestra-adapter'@'localhost';
 GRANT INSERT (campaign_id, status, status_name, selectable, human_answered,
               category)
 ON asterisk.vicidial_campaign_statuses TO 'codestra-adapter'@'localhost';
-
