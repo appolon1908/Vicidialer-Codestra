@@ -20,6 +20,7 @@ from codestra_vicidial.repository import (
     CollisionError,
     MemoryRepository,
     normalize_allowed_campaigns,
+    owned_user_group,
 )
 from codestra_vicidial.security import RequestAuthenticator
 from codestra_vicidial.service import AdapterService, FeatureFlags, ReadbackMismatch
@@ -33,6 +34,14 @@ def context() -> dict:
         "reason": "synthetic disabled provisioning test",
         "requested_at": "2026-07-27T20:00:00Z",
     }
+
+
+def test_user_group_namespace_has_only_exact_test_syn_exception() -> None:
+    assert owned_user_group("TEST_SYN", "TEST", "WEBTEST_SYN")
+    assert owned_user_group("COD-SERVICE-OUT", "COD", "COD_AGENTS")
+    assert not owned_user_group("TEST-SERVICE-OUT", "TEST", "WEBTEST_SYN")
+    assert not owned_user_group("TEST_SYN", "TEST", "WEBTEST_OTHER")
+    assert not owned_user_group("COD-SERVICE-OUT", "COD", "WEBTEST_SYN")
 
 
 def campaign_payload() -> dict:

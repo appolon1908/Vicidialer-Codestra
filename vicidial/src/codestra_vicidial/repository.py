@@ -46,6 +46,13 @@ def format_allowed_campaigns(campaigns: list[str]) -> str:
     return (" " + " ".join(campaigns) if campaigns else "") + " -"
 
 
+def owned_user_group(canonical_id: str, business_unit: str, group_code: str) -> bool:
+    """Accept the business-unit namespace or the one certified legacy fixture."""
+    return group_code.startswith(business_unit + "_") or (
+        canonical_id == "TEST_SYN" and group_code == "WEBTEST_SYN"
+    )
+
+
 def additive_campaign_membership(current: str, desired: str) -> tuple[str, bool]:
     campaigns = normalize_allowed_campaigns(current)
     if desired in campaigns:
@@ -190,10 +197,9 @@ class MemoryRepository:
                 raise CollisionError(f"incompatible collision: {key}")
         for item in spec.groups:
             if item.kind == "user":
-                certification_group = (
-                    spec.canonical_id == "TEST_SYN" and item.code == "WEBTEST_SYN"
-                )
-                if not certification_group and not item.code.startswith(spec.business_unit + "_"):
+                if not owned_user_group(
+                    spec.canonical_id, spec.business_unit, item.code
+                ):
                     raise CollisionError(f"incompatible ownership: {item.code}")
                 current = self.groups.get((item.kind, item.code))
                 if current:
@@ -218,7 +224,9 @@ class MemoryRepository:
         for item in spec.groups:
             desired = {"code": item.code, "name": item.name, "kind": item.kind, "active": "N"}
             if item.kind == "user":
-                if not item.code.startswith(spec.business_unit + "_"):
+                if not owned_user_group(
+                    spec.canonical_id, spec.business_unit, item.code
+                ):
                     raise CollisionError(f"incompatible ownership: {item.code}")
                 current = self.groups.get((item.kind, item.code))
                 if current is None:
@@ -478,7 +486,9 @@ class MySQLRepository:
             )
         for item in spec.groups:
             if item.kind == "user":
-                if not item.code.startswith(spec.business_unit + "_"):
+                if not owned_user_group(
+                    spec.canonical_id, spec.business_unit, item.code
+                ):
                     raise CollisionError(f"incompatible ownership: {item.code}")
                 current_group = self._one(
                     "SELECT user_group AS code,group_name AS name,allowed_campaigns "
