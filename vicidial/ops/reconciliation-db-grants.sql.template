@@ -1,0 +1,24 @@
+-- Least-privilege writes used only by the request-bound reconciliation profile.
+-- Apply with: mysql --binary-mode=0 < reconciliation-db-grants.sql.template
+GRANT INSERT (campaign_id, campaign_name, active, dial_method, local_call_time,
+              campaign_recording, scheduled_callbacks, campaign_description,
+              hopper_level, auto_dial_level),
+      UPDATE (campaign_name, active, dial_method, local_call_time,
+              campaign_recording, scheduled_callbacks, campaign_description,
+              hopper_level, auto_dial_level)
+ON asterisk.vicidial_campaigns TO 'codestra-adapter'@'localhost';
+GRANT INSERT (list_id, list_name, campaign_id, active, list_description),
+      UPDATE (active)
+ON asterisk.vicidial_lists TO 'codestra-adapter'@'localhost';
+GRANT INSERT (user_group, group_name, allowed_campaigns),
+      UPDATE (allowed_campaigns)
+ON asterisk.vicidial_user_groups TO 'codestra-adapter'@'localhost';
+GRANT INSERT (group_id, group_name, active, group_color, group_handling,
+              call_time_id), UPDATE (active)
+ON asterisk.vicidial_inbound_groups TO 'codestra-adapter'@'localhost';
+GRANT INSERT (script_id, script_name, script_comments, script_text, active),
+      UPDATE (active)
+ON asterisk.vicidial_scripts TO 'codestra-adapter'@'localhost';
+GRANT INSERT (campaign_id, status, status_name, selectable, human_answered,
+              category)
+ON asterisk.vicidial_campaign_statuses TO 'codestra-adapter'@'localhost';
