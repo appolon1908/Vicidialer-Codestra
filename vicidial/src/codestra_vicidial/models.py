@@ -6,7 +6,16 @@ from typing import Annotated, Literal
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 StrictText = Annotated[str, Field(min_length=1, max_length=255)]
-CanonicalCampaign = Annotated[str, Field(pattern=r"^(?:TEST_SYN|(?:MOY|COD|SCP|MBL|RLP|FTP|TRX|CAL|TEST)-[A-Z0-9]+-(?:OUT|IN))$", max_length=40)]
+CanonicalCampaign = Annotated[
+    str,
+    Field(
+        pattern=(
+            r"^(?:TEST_SYN|(?:MOY|COD|SCP|MBL|RLP|FTP|TRX|CAL|TEST)-"
+            r"[A-Z0-9]+(?:-[A-Z0-9]+)*-(?:OUT|IN))$"
+        ),
+        max_length=40,
+    ),
+]
 ActualCampaign = Annotated[str, Field(pattern=r"^[A-Z0-9_]{2,8}$")]
 ResourceCode = Annotated[str, Field(pattern=r"^[A-Z0-9_]{2,20}$")]
 

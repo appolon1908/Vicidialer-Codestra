@@ -64,6 +64,52 @@ def campaign_payload() -> dict:
     }
 
 
+@pytest.mark.parametrize("canonical_id", [
+    "COD-SERVICE-OUT",
+    "FTP-DONOR-SUPPORT-IN",
+    "COD-AI-OUT",
+    "CAL-WHOLESALE-OUT",
+    "TEST_SYN",
+])
+def test_canonical_campaign_accepts_approved_multi_segment_ids(canonical_id):
+    payload = campaign_payload()
+    payload["campaign"]["canonical_id"] = canonical_id
+    business_unit = "TEST" if canonical_id == "TEST_SYN" else canonical_id.split("-", 1)[0]
+    payload["campaign"]["business_unit"] = business_unit
+    payload["campaign"]["default_list_id"] = None
+    payload["campaign"]["lists"] = []
+    CampaignCommand.model_validate(payload)
+
+
+@pytest.mark.parametrize("canonical_id", [
+    "FTP--DONOR-IN", "FTP-DONOR-", "FTP-DONOR-LIVE", "ftp-DONOR-IN",
+    "FTP/DONOR/IN", "OTHER-DONOR-IN",
+])
+def test_canonical_campaign_still_rejects_unapproved_grammar(canonical_id):
+    payload = campaign_payload()
+    payload["campaign"]["canonical_id"] = canonical_id
+    payload["campaign"]["business_unit"] = "FTP"
+    with pytest.raises(ValidationError):
+        CampaignCommand.model_validate(payload)
+
+
+def test_all_certified_reconciliation_campaign_ids_match_contract():
+    report = Path(__file__).parents[1] / "reports/full-campaign-reconciliation.json"
+    rows = json.loads(report.read_text(encoding="utf-8"))["rows"]
+    assert len(rows) == 101
+    for row in rows:
+        payload = campaign_payload()
+        payload["campaign"].update({
+            "canonical_id": row["canonical"],
+            "actual_id": row["physical"],
+            "name": row["canonical"],
+            "business_unit": row["canonical"].split("-", 1)[0],
+            "default_list_id": None,
+            "lists": [],
+        })
+        CampaignCommand.model_validate(payload)
+
+
 @pytest.fixture
 def harness(tmp_path: Path):
     repo = MemoryRepository()
