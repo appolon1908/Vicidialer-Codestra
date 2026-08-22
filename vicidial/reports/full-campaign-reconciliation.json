@@ -1,0 +1,1428 @@
+{
+  "blocked_count": 101,
+  "desired_count": 101,
+  "legacy_unmanaged": [
+    {
+      "active": "Y",
+      "auto_dial_level": "0",
+      "campaign_description": "AI_INBOUND: AI inbound prequalification entry campaign",
+      "campaign_id": "AI_INBOU"
+    },
+    {
+      "active": "Y",
+      "auto_dial_level": "0",
+      "campaign_description": "AI_PREQUAL: AI prequalification campaign",
+      "campaign_id": "AI_PREQU"
+    },
+    {
+      "active": "N",
+      "auto_dial_level": "0",
+      "campaign_description": "",
+      "campaign_id": "CAMP1"
+    },
+    {
+      "active": "N",
+      "auto_dial_level": "0",
+      "campaign_description": "Codestra Odoo middleware sync campaign",
+      "campaign_id": "CAMP2"
+    },
+    {
+      "active": "N",
+      "auto_dial_level": "0",
+      "campaign_description": "Codestra Odoo middleware sync campaign",
+      "campaign_id": "CAMP3"
+    },
+    {
+      "active": "N",
+      "auto_dial_level": "0",
+      "campaign_description": "Codestra Odoo middleware sync campaign",
+      "campaign_id": "CAMP4"
+    },
+    {
+      "active": "Y",
+      "auto_dial_level": "0",
+      "campaign_description": "AI lead response campaign",
+      "campaign_id": "CODEAI"
+    },
+    {
+      "active": "Y",
+      "auto_dial_level": "0",
+      "campaign_description": "Callbacks and missed calls",
+      "campaign_id": "CODECBK"
+    },
+    {
+      "active": "Y",
+      "auto_dial_level": "0",
+      "campaign_description": "Inbound main campaign",
+      "campaign_id": "CODEIN"
+    },
+    {
+      "active": "Y",
+      "auto_dial_level": "0",
+      "campaign_description": "Codestra main outbound sales",
+      "campaign_id": "CODESTRA"
+    },
+    {
+      "active": "Y",
+      "auto_dial_level": "0",
+      "campaign_description": "Safe test campaign",
+      "campaign_id": "CODETST"
+    },
+    {
+      "active": "N",
+      "auto_dial_level": "0",
+      "campaign_description": "Codestra intro agent campaign",
+      "campaign_id": "INTRO_CA"
+    },
+    {
+      "active": "Y",
+      "auto_dial_level": "0",
+      "campaign_description": "",
+      "campaign_id": "LOAN"
+    },
+    {
+      "active": "N",
+      "auto_dial_level": "0",
+      "campaign_description": "Disabled synthetic fixture; no lists  leads  hopper  inbound  transfer  or recording",
+      "campaign_id": "P3SIP01"
+    },
+    {
+      "active": "N",
+      "auto_dial_level": "0",
+      "campaign_description": "NULL",
+      "campaign_id": "P3TST001"
+    },
+    {
+      "active": "N",
+      "auto_dial_level": "0",
+      "campaign_description": "Codestra safe middleware sync test campaign",
+      "campaign_id": "TEST_SYN"
+    },
+    {
+      "active": "Y",
+      "auto_dial_level": "0",
+      "campaign_description": "NULL",
+      "campaign_id": "TRANS"
+    }
+  ],
+  "legacy_unmanaged_count": 17,
+  "mode": "READ_ONLY",
+  "pass_count": 0,
+  "production_dialing": "DISABLED",
+  "rows": [
+    {
+      "active": false,
+      "canonical": "CAL-APPOINTMENT-IN",
+      "environment": "staging",
+      "middleware_present": false,
+      "physical": "CAL365FE",
+      "reasons": [
+        "MIDDLEWARE_MAPPING_MISSING",
+        "VICIDIAL_CAMPAIGN_MISSING"
+      ],
+      "status": "BLOCKED",
+      "vicidial_present": false
+    },
+    {
+      "active": false,
+      "canonical": "CAL-BUYERS-IN",
+      "environment": "staging",
+      "middleware_present": false,
+      "physical": "CAL6524C",
+      "reasons": [
+        "MIDDLEWARE_MAPPING_MISSING",
+        "VICIDIAL_CAMPAIGN_MISSING"
+      ],
+      "status": "BLOCKED",
+      "vicidial_present": false
+    },
+    {
+      "active": false,
+      "canonical": "CAL-CALLBACK-OUT",
+      "environment": "staging",
+      "middleware_present": false,
+      "physical": "CALEE0DB",
+      "reasons": [
+        "MIDDLEWARE_MAPPING_MISSING",
+        "VICIDIAL_CAMPAIGN_MISSING"
+      ],
+      "status": "BLOCKED",
+      "vicidial_present": false
+    },
+    {
+      "active": false,
+      "canonical": "CAL-EXPORT-IN",
+      "environment": "staging",
+      "middleware_present": false,
+      "physical": "CAL57B87",
+      "reasons": [
+        "MIDDLEWARE_MAPPING_MISSING",
+        "VICIDIAL_CAMPAIGN_MISSING"
+      ],
+      "status": "BLOCKED",
+      "vicidial_present": false
+    },
+    {
+      "active": false,
+      "canonical": "CAL-EXPORT-OUT",
+      "environment": "staging",
+      "middleware_present": false,
+      "physical": "CAL13BC2",
+      "reasons": [
+        "MIDDLEWARE_MAPPING_MISSING",
+        "VICIDIAL_CAMPAIGN_MISSING"
+      ],
+      "status": "BLOCKED",
+      "vicidial_present": false
+    },
+    {
+      "active": false,
+      "canonical": "CAL-PARTNERS-OUT",
+      "environment": "staging",
+      "middleware_present": false,
+      "physical": "CALB8233",
+      "reasons": [
+        "MIDDLEWARE_MAPPING_MISSING",
+        "VICIDIAL_CAMPAIGN_MISSING"
+      ],
+      "status": "BLOCKED",
+      "vicidial_present": false
+    },
+    {
+      "active": false,
+      "canonical": "CAL-REORDER-OUT",
+      "environment": "staging",
+      "middleware_present": false,
+      "physical": "CAL82A62",
+      "reasons": [
+        "MIDDLEWARE_MAPPING_MISSING",
+        "VICIDIAL_CAMPAIGN_MISSING"
+      ],
+      "status": "BLOCKED",
+      "vicidial_present": false
+    },
+    {
+      "active": false,
+      "canonical": "CAL-SUPPORT-IN",
+      "environment": "staging",
+      "middleware_present": false,
+      "physical": "CALB0CCB",
+      "reasons": [
+        "MIDDLEWARE_MAPPING_MISSING",
+        "VICIDIAL_CAMPAIGN_MISSING"
+      ],
+      "status": "BLOCKED",
+      "vicidial_present": false
+    },
+    {
+      "active": false,
+      "canonical": "CAL-TEST-OUT",
+      "environment": "staging",
+      "middleware_present": false,
+      "physical": "CALE1629",
+      "reasons": [
+        "MIDDLEWARE_MAPPING_MISSING",
+        "VICIDIAL_OWNERSHIP_MARKER_MISMATCH"
+      ],
+      "status": "BLOCKED",
+      "vicidial_present": true
+    },
+    {
+      "active": false,
+      "canonical": "CAL-WHOLESALE-OUT",
+      "environment": "staging",
+      "middleware_present": false,
+      "physical": "CAL072AF",
+      "reasons": [
+        "MIDDLEWARE_MAPPING_MISSING",
+        "VICIDIAL_CAMPAIGN_MISSING"
+      ],
+      "status": "BLOCKED",
+      "vicidial_present": false
+    },
+    {
+      "active": false,
+      "canonical": "COD-AI-IN",
+      "environment": "staging",
+      "middleware_present": false,
+      "physical": "CODCC660",
+      "reasons": [
+        "MIDDLEWARE_MAPPING_MISSING",
+        "VICIDIAL_CAMPAIGN_MISSING"
+      ],
+      "status": "BLOCKED",
+      "vicidial_present": false
+    },
+    {
+      "active": false,
+      "canonical": "COD-AI-OUT",
+      "environment": "staging",
+      "middleware_present": false,
+      "physical": "COD0C633",
+      "reasons": [
+        "MIDDLEWARE_MAPPING_MISSING",
+        "VICIDIAL_CAMPAIGN_MISSING"
+      ],
+      "status": "BLOCKED",
+      "vicidial_present": false
+    },
+    {
+      "active": false,
+      "canonical": "COD-APPOINTMENT-IN",
+      "environment": "staging",
+      "middleware_present": false,
+      "physical": "COD9FCAC",
+      "reasons": [
+        "MIDDLEWARE_MAPPING_MISSING",
+        "VICIDIAL_CAMPAIGN_MISSING"
+      ],
+      "status": "BLOCKED",
+      "vicidial_present": false
+    },
+    {
+      "active": false,
+      "canonical": "COD-AUTOMATION-OUT",
+      "environment": "staging",
+      "middleware_present": false,
+      "physical": "COD14371",
+      "reasons": [
+        "MIDDLEWARE_MAPPING_MISSING",
+        "VICIDIAL_CAMPAIGN_MISSING"
+      ],
+      "status": "BLOCKED",
+      "vicidial_present": false
+    },
+    {
+      "active": false,
+      "canonical": "COD-BILLING-IN",
+      "environment": "staging",
+      "middleware_present": false,
+      "physical": "COD3438B",
+      "reasons": [
+        "MIDDLEWARE_MAPPING_MISSING",
+        "VICIDIAL_CAMPAIGN_MISSING"
+      ],
+      "status": "BLOCKED",
+      "vicidial_present": false
+    },
+    {
+      "active": false,
+      "canonical": "COD-CALLBACK-OUT",
+      "environment": "staging",
+      "middleware_present": false,
+      "physical": "CODDA9C9",
+      "reasons": [
+        "MIDDLEWARE_MAPPING_MISSING",
+        "VICIDIAL_CAMPAIGN_MISSING"
+      ],
+      "status": "BLOCKED",
+      "vicidial_present": false
+    },
+    {
+      "active": false,
+      "canonical": "COD-HOSTING-OUT",
+      "environment": "staging",
+      "middleware_present": false,
+      "physical": "COD4A384",
+      "reasons": [
+        "MIDDLEWARE_MAPPING_MISSING",
+        "VICIDIAL_CAMPAIGN_MISSING"
+      ],
+      "status": "BLOCKED",
+      "vicidial_present": false
+    },
+    {
+      "active": false,
+      "canonical": "COD-MOBILE-IN",
+      "environment": "staging",
+      "middleware_present": false,
+      "physical": "CODDDA20",
+      "reasons": [
+        "MIDDLEWARE_MAPPING_MISSING",
+        "VICIDIAL_CAMPAIGN_MISSING"
+      ],
+      "status": "BLOCKED",
+      "vicidial_present": false
+    },
+    {
+      "active": false,
+      "canonical": "COD-MOBILE-OUT",
+      "environment": "staging",
+      "middleware_present": false,
+      "physical": "CODC7A37",
+      "reasons": [
+        "MIDDLEWARE_MAPPING_MISSING",
+        "VICIDIAL_CAMPAIGN_MISSING"
+      ],
+      "status": "BLOCKED",
+      "vicidial_present": false
+    },
+    {
+      "active": false,
+      "canonical": "COD-ODOO-IN",
+      "environment": "staging",
+      "middleware_present": false,
+      "physical": "COD4420B",
+      "reasons": [
+        "MIDDLEWARE_MAPPING_MISSING",
+        "VICIDIAL_CAMPAIGN_MISSING"
+      ],
+      "status": "BLOCKED",
+      "vicidial_present": false
+    },
+    {
+      "active": false,
+      "canonical": "COD-ODOO-OUT",
+      "environment": "staging",
+      "middleware_present": false,
+      "physical": "COD094F9",
+      "reasons": [
+        "MIDDLEWARE_MAPPING_MISSING",
+        "VICIDIAL_CAMPAIGN_MISSING"
+      ],
+      "status": "BLOCKED",
+      "vicidial_present": false
+    },
+    {
+      "active": false,
+      "canonical": "COD-RENEWAL-OUT",
+      "environment": "staging",
+      "middleware_present": false,
+      "physical": "CODE9637",
+      "reasons": [
+        "MIDDLEWARE_MAPPING_MISSING",
+        "VICIDIAL_CAMPAIGN_MISSING"
+      ],
+      "status": "BLOCKED",
+      "vicidial_present": false
+    },
+    {
+      "active": false,
+      "canonical": "COD-SUPPORT-IN",
+      "environment": "staging",
+      "middleware_present": false,
+      "physical": "COD858E7",
+      "reasons": [
+        "MIDDLEWARE_MAPPING_MISSING",
+        "VICIDIAL_CAMPAIGN_MISSING"
+      ],
+      "status": "BLOCKED",
+      "vicidial_present": false
+    },
+    {
+      "active": false,
+      "canonical": "COD-TEST-OUT",
+      "environment": "staging",
+      "middleware_present": false,
+      "physical": "CODABB8E",
+      "reasons": [
+        "MIDDLEWARE_MAPPING_MISSING",
+        "VICIDIAL_OWNERSHIP_MARKER_MISMATCH"
+      ],
+      "status": "BLOCKED",
+      "vicidial_present": true
+    },
+    {
+      "active": false,
+      "canonical": "COD-UPSELL-OUT",
+      "environment": "staging",
+      "middleware_present": false,
+      "physical": "COD06E7E",
+      "reasons": [
+        "MIDDLEWARE_MAPPING_MISSING",
+        "VICIDIAL_CAMPAIGN_MISSING"
+      ],
+      "status": "BLOCKED",
+      "vicidial_present": false
+    },
+    {
+      "active": false,
+      "canonical": "COD-WEB-IN",
+      "environment": "staging",
+      "middleware_present": false,
+      "physical": "COD55CE6",
+      "reasons": [
+        "MIDDLEWARE_MAPPING_MISSING",
+        "VICIDIAL_CAMPAIGN_MISSING"
+      ],
+      "status": "BLOCKED",
+      "vicidial_present": false
+    },
+    {
+      "active": false,
+      "canonical": "COD-WEB-OUT",
+      "environment": "staging",
+      "middleware_present": false,
+      "physical": "COD20821",
+      "reasons": [
+        "MIDDLEWARE_MAPPING_MISSING",
+        "VICIDIAL_CAMPAIGN_MISSING"
+      ],
+      "status": "BLOCKED",
+      "vicidial_present": false
+    },
+    {
+      "active": false,
+      "canonical": "FTP-APPOINTMENT-IN",
+      "environment": "staging",
+      "middleware_present": false,
+      "physical": "FTP90B29",
+      "reasons": [
+        "MIDDLEWARE_MAPPING_MISSING",
+        "VICIDIAL_CAMPAIGN_MISSING"
+      ],
+      "status": "BLOCKED",
+      "vicidial_present": false
+    },
+    {
+      "active": false,
+      "canonical": "FTP-CALLBACK-OUT",
+      "environment": "staging",
+      "middleware_present": false,
+      "physical": "FTPBB016",
+      "reasons": [
+        "MIDDLEWARE_MAPPING_MISSING",
+        "VICIDIAL_CAMPAIGN_MISSING"
+      ],
+      "status": "BLOCKED",
+      "vicidial_present": false
+    },
+    {
+      "active": false,
+      "canonical": "FTP-DONATIONS-IN",
+      "environment": "staging",
+      "middleware_present": false,
+      "physical": "FTP42C7E",
+      "reasons": [
+        "MIDDLEWARE_MAPPING_MISSING",
+        "VICIDIAL_CAMPAIGN_MISSING"
+      ],
+      "status": "BLOCKED",
+      "vicidial_present": false
+    },
+    {
+      "active": false,
+      "canonical": "FTP-DONOR-OUT",
+      "environment": "staging",
+      "middleware_present": false,
+      "physical": "FTP675F8",
+      "reasons": [
+        "MIDDLEWARE_MAPPING_MISSING",
+        "VICIDIAL_CAMPAIGN_MISSING"
+      ],
+      "status": "BLOCKED",
+      "vicidial_present": false
+    },
+    {
+      "active": false,
+      "canonical": "FTP-DONOR-SUPPORT-IN",
+      "environment": "staging",
+      "middleware_present": false,
+      "physical": "FTPB37CE",
+      "reasons": [
+        "MIDDLEWARE_MAPPING_MISSING",
+        "VICIDIAL_CAMPAIGN_MISSING"
+      ],
+      "status": "BLOCKED",
+      "vicidial_present": false
+    },
+    {
+      "active": false,
+      "canonical": "FTP-PLEDGE-OUT",
+      "environment": "staging",
+      "middleware_present": false,
+      "physical": "FTP16292",
+      "reasons": [
+        "MIDDLEWARE_MAPPING_MISSING",
+        "VICIDIAL_CAMPAIGN_MISSING"
+      ],
+      "status": "BLOCKED",
+      "vicidial_present": false
+    },
+    {
+      "active": false,
+      "canonical": "FTP-RETENTION-OUT",
+      "environment": "staging",
+      "middleware_present": false,
+      "physical": "FTP21878",
+      "reasons": [
+        "MIDDLEWARE_MAPPING_MISSING",
+        "VICIDIAL_CAMPAIGN_MISSING"
+      ],
+      "status": "BLOCKED",
+      "vicidial_present": false
+    },
+    {
+      "active": false,
+      "canonical": "FTP-SPONSOR-IN",
+      "environment": "staging",
+      "middleware_present": false,
+      "physical": "FTPA2892",
+      "reasons": [
+        "MIDDLEWARE_MAPPING_MISSING",
+        "VICIDIAL_CAMPAIGN_MISSING"
+      ],
+      "status": "BLOCKED",
+      "vicidial_present": false
+    },
+    {
+      "active": false,
+      "canonical": "FTP-SPONSOR-OUT",
+      "environment": "staging",
+      "middleware_present": false,
+      "physical": "FTPE5EC6",
+      "reasons": [
+        "MIDDLEWARE_MAPPING_MISSING",
+        "VICIDIAL_CAMPAIGN_MISSING"
+      ],
+      "status": "BLOCKED",
+      "vicidial_present": false
+    },
+    {
+      "active": false,
+      "canonical": "FTP-TEST-OUT",
+      "environment": "staging",
+      "middleware_present": false,
+      "physical": "FTPA2BD0",
+      "reasons": [
+        "MIDDLEWARE_MAPPING_MISSING",
+        "VICIDIAL_OWNERSHIP_MARKER_MISMATCH"
+      ],
+      "status": "BLOCKED",
+      "vicidial_present": true
+    },
+    {
+      "active": false,
+      "canonical": "MBL-APPOINTMENT-IN",
+      "environment": "staging",
+      "middleware_present": false,
+      "physical": "MBLDEE47",
+      "reasons": [
+        "MIDDLEWARE_MAPPING_MISSING",
+        "VICIDIAL_CAMPAIGN_MISSING"
+      ],
+      "status": "BLOCKED",
+      "vicidial_present": false
+    },
+    {
+      "active": false,
+      "canonical": "MBL-CALLBACK-OUT",
+      "environment": "staging",
+      "middleware_present": false,
+      "physical": "MBLF1D53",
+      "reasons": [
+        "MIDDLEWARE_MAPPING_MISSING",
+        "VICIDIAL_CAMPAIGN_MISSING"
+      ],
+      "status": "BLOCKED",
+      "vicidial_present": false
+    },
+    {
+      "active": false,
+      "canonical": "MBL-DOCUMENTS-IN",
+      "environment": "staging",
+      "middleware_present": false,
+      "physical": "MBL66AE9",
+      "reasons": [
+        "MIDDLEWARE_MAPPING_MISSING",
+        "VICIDIAL_CAMPAIGN_MISSING"
+      ],
+      "status": "BLOCKED",
+      "vicidial_present": false
+    },
+    {
+      "active": false,
+      "canonical": "MBL-DOCUMENTS-OUT",
+      "environment": "staging",
+      "middleware_present": false,
+      "physical": "MBL237C4",
+      "reasons": [
+        "MIDDLEWARE_MAPPING_MISSING",
+        "VICIDIAL_CAMPAIGN_MISSING"
+      ],
+      "status": "BLOCKED",
+      "vicidial_present": false
+    },
+    {
+      "active": false,
+      "canonical": "MBL-FUNDING-OUT",
+      "environment": "staging",
+      "middleware_present": false,
+      "physical": "MBL0EC19",
+      "reasons": [
+        "MIDDLEWARE_MAPPING_MISSING",
+        "VICIDIAL_CAMPAIGN_MISSING"
+      ],
+      "status": "BLOCKED",
+      "vicidial_present": false
+    },
+    {
+      "active": false,
+      "canonical": "MBL-LOAN-IN",
+      "environment": "staging",
+      "middleware_present": false,
+      "physical": "MBL199B0",
+      "reasons": [
+        "MIDDLEWARE_MAPPING_MISSING",
+        "VICIDIAL_CAMPAIGN_MISSING"
+      ],
+      "status": "BLOCKED",
+      "vicidial_present": false
+    },
+    {
+      "active": false,
+      "canonical": "MBL-NEW-LOAN-OUT",
+      "environment": "staging",
+      "middleware_present": false,
+      "physical": "MBLC325D",
+      "reasons": [
+        "MIDDLEWARE_MAPPING_MISSING",
+        "VICIDIAL_CAMPAIGN_MISSING"
+      ],
+      "status": "BLOCKED",
+      "vicidial_present": false
+    },
+    {
+      "active": false,
+      "canonical": "MBL-OFFER-OUT",
+      "environment": "staging",
+      "middleware_present": false,
+      "physical": "MBL21C91",
+      "reasons": [
+        "MIDDLEWARE_MAPPING_MISSING",
+        "VICIDIAL_CAMPAIGN_MISSING"
+      ],
+      "status": "BLOCKED",
+      "vicidial_present": false
+    },
+    {
+      "active": false,
+      "canonical": "MBL-RENEWAL-OUT",
+      "environment": "staging",
+      "middleware_present": false,
+      "physical": "MBL7E39A",
+      "reasons": [
+        "MIDDLEWARE_MAPPING_MISSING",
+        "VICIDIAL_CAMPAIGN_MISSING"
+      ],
+      "status": "BLOCKED",
+      "vicidial_present": false
+    },
+    {
+      "active": false,
+      "canonical": "MBL-STATUS-IN",
+      "environment": "staging",
+      "middleware_present": false,
+      "physical": "MBLCD5AD",
+      "reasons": [
+        "MIDDLEWARE_MAPPING_MISSING",
+        "VICIDIAL_CAMPAIGN_MISSING"
+      ],
+      "status": "BLOCKED",
+      "vicidial_present": false
+    },
+    {
+      "active": false,
+      "canonical": "MBL-SUPPORT-IN",
+      "environment": "staging",
+      "middleware_present": false,
+      "physical": "MBL852EB",
+      "reasons": [
+        "MIDDLEWARE_MAPPING_MISSING",
+        "VICIDIAL_CAMPAIGN_MISSING"
+      ],
+      "status": "BLOCKED",
+      "vicidial_present": false
+    },
+    {
+      "active": false,
+      "canonical": "MBL-TEST-OUT",
+      "environment": "staging",
+      "middleware_present": false,
+      "physical": "MBLC8349",
+      "reasons": [
+        "MIDDLEWARE_MAPPING_MISSING",
+        "VICIDIAL_OWNERSHIP_MARKER_MISMATCH"
+      ],
+      "status": "BLOCKED",
+      "vicidial_present": true
+    },
+    {
+      "active": false,
+      "canonical": "MOY-APPOINTMENT-IN",
+      "environment": "staging",
+      "middleware_present": false,
+      "physical": "MOYD2193",
+      "reasons": [
+        "MIDDLEWARE_MAPPING_MISSING",
+        "VICIDIAL_CAMPAIGN_MISSING"
+      ],
+      "status": "BLOCKED",
+      "vicidial_present": false
+    },
+    {
+      "active": false,
+      "canonical": "MOY-BILLING-IN",
+      "environment": "staging",
+      "middleware_present": false,
+      "physical": "MOYC2401",
+      "reasons": [
+        "MIDDLEWARE_MAPPING_MISSING",
+        "VICIDIAL_CAMPAIGN_MISSING"
+      ],
+      "status": "BLOCKED",
+      "vicidial_present": false
+    },
+    {
+      "active": false,
+      "canonical": "MOY-CALLBACK-OUT",
+      "environment": "staging",
+      "middleware_present": false,
+      "physical": "MOYEAF02",
+      "reasons": [
+        "MIDDLEWARE_MAPPING_MISSING",
+        "VICIDIAL_CAMPAIGN_MISSING"
+      ],
+      "status": "BLOCKED",
+      "vicidial_present": false
+    },
+    {
+      "active": false,
+      "canonical": "MOY-CARRIER-IN",
+      "environment": "staging",
+      "middleware_present": false,
+      "physical": "MOYB6057",
+      "reasons": [
+        "MIDDLEWARE_MAPPING_MISSING",
+        "VICIDIAL_CAMPAIGN_MISSING"
+      ],
+      "status": "BLOCKED",
+      "vicidial_present": false
+    },
+    {
+      "active": false,
+      "canonical": "MOY-CARRIER-OUT",
+      "environment": "staging",
+      "middleware_present": false,
+      "physical": "MOYA0534",
+      "reasons": [
+        "MIDDLEWARE_MAPPING_MISSING",
+        "VICIDIAL_CAMPAIGN_MISSING"
+      ],
+      "status": "BLOCKED",
+      "vicidial_present": false
+    },
+    {
+      "active": false,
+      "canonical": "MOY-DISPATCH-IN",
+      "environment": "staging",
+      "middleware_present": false,
+      "physical": "MOYC2211",
+      "reasons": [
+        "MIDDLEWARE_MAPPING_MISSING",
+        "VICIDIAL_CAMPAIGN_MISSING"
+      ],
+      "status": "BLOCKED",
+      "vicidial_present": false
+    },
+    {
+      "active": false,
+      "canonical": "MOY-DISPATCH-OUT",
+      "environment": "staging",
+      "middleware_present": false,
+      "physical": "MOY20DBF",
+      "reasons": [
+        "MIDDLEWARE_MAPPING_MISSING",
+        "VICIDIAL_CAMPAIGN_MISSING"
+      ],
+      "status": "BLOCKED",
+      "vicidial_present": false
+    },
+    {
+      "active": false,
+      "canonical": "MOY-PARTNER-OUT",
+      "environment": "staging",
+      "middleware_present": false,
+      "physical": "MOY34C2F",
+      "reasons": [
+        "MIDDLEWARE_MAPPING_MISSING",
+        "VICIDIAL_CAMPAIGN_MISSING"
+      ],
+      "status": "BLOCKED",
+      "vicidial_present": false
+    },
+    {
+      "active": false,
+      "canonical": "MOY-RETENTION-OUT",
+      "environment": "staging",
+      "middleware_present": false,
+      "physical": "MOYA6C3C",
+      "reasons": [
+        "MIDDLEWARE_MAPPING_MISSING",
+        "VICIDIAL_CAMPAIGN_MISSING"
+      ],
+      "status": "BLOCKED",
+      "vicidial_present": false
+    },
+    {
+      "active": false,
+      "canonical": "MOY-SHIPPER-IN",
+      "environment": "staging",
+      "middleware_present": false,
+      "physical": "MOYAE697",
+      "reasons": [
+        "MIDDLEWARE_MAPPING_MISSING",
+        "VICIDIAL_CAMPAIGN_MISSING"
+      ],
+      "status": "BLOCKED",
+      "vicidial_present": false
+    },
+    {
+      "active": false,
+      "canonical": "MOY-SHIPPER-OUT",
+      "environment": "staging",
+      "middleware_present": false,
+      "physical": "MOY6BF4E",
+      "reasons": [
+        "MIDDLEWARE_MAPPING_MISSING",
+        "VICIDIAL_CAMPAIGN_MISSING"
+      ],
+      "status": "BLOCKED",
+      "vicidial_present": false
+    },
+    {
+      "active": false,
+      "canonical": "MOY-SUPPORT-IN",
+      "environment": "staging",
+      "middleware_present": false,
+      "physical": "MOY230BB",
+      "reasons": [
+        "MIDDLEWARE_MAPPING_MISSING",
+        "VICIDIAL_CAMPAIGN_MISSING"
+      ],
+      "status": "BLOCKED",
+      "vicidial_present": false
+    },
+    {
+      "active": false,
+      "canonical": "MOY-TEST-OUT",
+      "environment": "staging",
+      "middleware_present": false,
+      "physical": "MOYDCB3B",
+      "reasons": [
+        "MIDDLEWARE_MAPPING_MISSING",
+        "VICIDIAL_OWNERSHIP_MARKER_MISMATCH"
+      ],
+      "status": "BLOCKED",
+      "vicidial_present": true
+    },
+    {
+      "active": false,
+      "canonical": "MOY-UPSELL-OUT",
+      "environment": "staging",
+      "middleware_present": false,
+      "physical": "MOY81E26",
+      "reasons": [
+        "MIDDLEWARE_MAPPING_MISSING",
+        "VICIDIAL_CAMPAIGN_MISSING"
+      ],
+      "status": "BLOCKED",
+      "vicidial_present": false
+    },
+    {
+      "active": false,
+      "canonical": "RLP-APPOINTMENT-IN",
+      "environment": "staging",
+      "middleware_present": false,
+      "physical": "RLP595DC",
+      "reasons": [
+        "MIDDLEWARE_MAPPING_MISSING",
+        "VICIDIAL_CAMPAIGN_MISSING"
+      ],
+      "status": "BLOCKED",
+      "vicidial_present": false
+    },
+    {
+      "active": false,
+      "canonical": "RLP-BUYERS-IN",
+      "environment": "staging",
+      "middleware_present": false,
+      "physical": "RLP95065",
+      "reasons": [
+        "MIDDLEWARE_MAPPING_MISSING",
+        "VICIDIAL_CAMPAIGN_MISSING"
+      ],
+      "status": "BLOCKED",
+      "vicidial_present": false
+    },
+    {
+      "active": false,
+      "canonical": "RLP-BUYERS-OUT",
+      "environment": "staging",
+      "middleware_present": false,
+      "physical": "RLP3A798",
+      "reasons": [
+        "MIDDLEWARE_MAPPING_MISSING",
+        "VICIDIAL_CAMPAIGN_MISSING"
+      ],
+      "status": "BLOCKED",
+      "vicidial_present": false
+    },
+    {
+      "active": false,
+      "canonical": "RLP-CALLBACK-OUT",
+      "environment": "staging",
+      "middleware_present": false,
+      "physical": "RLP17EC5",
+      "reasons": [
+        "MIDDLEWARE_MAPPING_MISSING",
+        "VICIDIAL_CAMPAIGN_MISSING"
+      ],
+      "status": "BLOCKED",
+      "vicidial_present": false
+    },
+    {
+      "active": false,
+      "canonical": "RLP-FOLLOWUP-OUT",
+      "environment": "staging",
+      "middleware_present": false,
+      "physical": "RLPC54AD",
+      "reasons": [
+        "MIDDLEWARE_MAPPING_MISSING",
+        "VICIDIAL_CAMPAIGN_MISSING"
+      ],
+      "status": "BLOCKED",
+      "vicidial_present": false
+    },
+    {
+      "active": false,
+      "canonical": "RLP-INVESTORS-IN",
+      "environment": "staging",
+      "middleware_present": false,
+      "physical": "RLP9685F",
+      "reasons": [
+        "MIDDLEWARE_MAPPING_MISSING",
+        "VICIDIAL_CAMPAIGN_MISSING"
+      ],
+      "status": "BLOCKED",
+      "vicidial_present": false
+    },
+    {
+      "active": false,
+      "canonical": "RLP-INVESTORS-OUT",
+      "environment": "staging",
+      "middleware_present": false,
+      "physical": "RLP6A4D6",
+      "reasons": [
+        "MIDDLEWARE_MAPPING_MISSING",
+        "VICIDIAL_CAMPAIGN_MISSING"
+      ],
+      "status": "BLOCKED",
+      "vicidial_present": false
+    },
+    {
+      "active": false,
+      "canonical": "RLP-PROPERTY-IN",
+      "environment": "staging",
+      "middleware_present": false,
+      "physical": "RLP02484",
+      "reasons": [
+        "MIDDLEWARE_MAPPING_MISSING",
+        "VICIDIAL_CAMPAIGN_MISSING"
+      ],
+      "status": "BLOCKED",
+      "vicidial_present": false
+    },
+    {
+      "active": false,
+      "canonical": "RLP-RENTALS-OUT",
+      "environment": "staging",
+      "middleware_present": false,
+      "physical": "RLP257D2",
+      "reasons": [
+        "MIDDLEWARE_MAPPING_MISSING",
+        "VICIDIAL_CAMPAIGN_MISSING"
+      ],
+      "status": "BLOCKED",
+      "vicidial_present": false
+    },
+    {
+      "active": false,
+      "canonical": "RLP-SELLERS-IN",
+      "environment": "staging",
+      "middleware_present": false,
+      "physical": "RLP7C377",
+      "reasons": [
+        "MIDDLEWARE_MAPPING_MISSING",
+        "VICIDIAL_CAMPAIGN_MISSING"
+      ],
+      "status": "BLOCKED",
+      "vicidial_present": false
+    },
+    {
+      "active": false,
+      "canonical": "RLP-SELLERS-OUT",
+      "environment": "staging",
+      "middleware_present": false,
+      "physical": "RLPA4FFE",
+      "reasons": [
+        "MIDDLEWARE_MAPPING_MISSING",
+        "VICIDIAL_CAMPAIGN_MISSING"
+      ],
+      "status": "BLOCKED",
+      "vicidial_present": false
+    },
+    {
+      "active": false,
+      "canonical": "RLP-TEST-OUT",
+      "environment": "staging",
+      "middleware_present": false,
+      "physical": "RLP0E661",
+      "reasons": [
+        "MIDDLEWARE_MAPPING_MISSING",
+        "VICIDIAL_OWNERSHIP_MARKER_MISMATCH"
+      ],
+      "status": "BLOCKED",
+      "vicidial_present": true
+    },
+    {
+      "active": false,
+      "canonical": "SCP-APPOINTMENT-IN",
+      "environment": "staging",
+      "middleware_present": false,
+      "physical": "SCP3EF0F",
+      "reasons": [
+        "MIDDLEWARE_MAPPING_MISSING",
+        "VICIDIAL_CAMPAIGN_MISSING"
+      ],
+      "status": "BLOCKED",
+      "vicidial_present": false
+    },
+    {
+      "active": false,
+      "canonical": "SCP-BILLING-IN",
+      "environment": "staging",
+      "middleware_present": false,
+      "physical": "SCP1B452",
+      "reasons": [
+        "MIDDLEWARE_MAPPING_MISSING",
+        "VICIDIAL_CAMPAIGN_MISSING"
+      ],
+      "status": "BLOCKED",
+      "vicidial_present": false
+    },
+    {
+      "active": false,
+      "canonical": "SCP-CALLBACK-OUT",
+      "environment": "staging",
+      "middleware_present": false,
+      "physical": "SCPF43DE",
+      "reasons": [
+        "MIDDLEWARE_MAPPING_MISSING",
+        "VICIDIAL_CAMPAIGN_MISSING"
+      ],
+      "status": "BLOCKED",
+      "vicidial_present": false
+    },
+    {
+      "active": false,
+      "canonical": "SCP-CAREGIVER-IN",
+      "environment": "staging",
+      "middleware_present": false,
+      "physical": "SCP7CB4B",
+      "reasons": [
+        "MIDDLEWARE_MAPPING_MISSING",
+        "VICIDIAL_CAMPAIGN_MISSING"
+      ],
+      "status": "BLOCKED",
+      "vicidial_present": false
+    },
+    {
+      "active": false,
+      "canonical": "SCP-CAREGIVER-OUT",
+      "environment": "staging",
+      "middleware_present": false,
+      "physical": "SCP83DB4",
+      "reasons": [
+        "MIDDLEWARE_MAPPING_MISSING",
+        "VICIDIAL_CAMPAIGN_MISSING"
+      ],
+      "status": "BLOCKED",
+      "vicidial_present": false
+    },
+    {
+      "active": false,
+      "canonical": "SCP-ORDER-IN",
+      "environment": "staging",
+      "middleware_present": false,
+      "physical": "SCP96527",
+      "reasons": [
+        "MIDDLEWARE_MAPPING_MISSING",
+        "VICIDIAL_CAMPAIGN_MISSING"
+      ],
+      "status": "BLOCKED",
+      "vicidial_present": false
+    },
+    {
+      "active": false,
+      "canonical": "SCP-PRODUCT-IN",
+      "environment": "staging",
+      "middleware_present": false,
+      "physical": "SCPB3934",
+      "reasons": [
+        "MIDDLEWARE_MAPPING_MISSING",
+        "VICIDIAL_CAMPAIGN_MISSING"
+      ],
+      "status": "BLOCKED",
+      "vicidial_present": false
+    },
+    {
+      "active": false,
+      "canonical": "SCP-PRODUCT-OUT",
+      "environment": "staging",
+      "middleware_present": false,
+      "physical": "SCP56D85",
+      "reasons": [
+        "MIDDLEWARE_MAPPING_MISSING",
+        "VICIDIAL_CAMPAIGN_MISSING"
+      ],
+      "status": "BLOCKED",
+      "vicidial_present": false
+    },
+    {
+      "active": false,
+      "canonical": "SCP-REORDER-OUT",
+      "environment": "staging",
+      "middleware_present": false,
+      "physical": "SCP29A2F",
+      "reasons": [
+        "MIDDLEWARE_MAPPING_MISSING",
+        "VICIDIAL_CAMPAIGN_MISSING"
+      ],
+      "status": "BLOCKED",
+      "vicidial_present": false
+    },
+    {
+      "active": false,
+      "canonical": "SCP-RETENTION-OUT",
+      "environment": "staging",
+      "middleware_present": false,
+      "physical": "SCPED2C5",
+      "reasons": [
+        "MIDDLEWARE_MAPPING_MISSING",
+        "VICIDIAL_CAMPAIGN_MISSING"
+      ],
+      "status": "BLOCKED",
+      "vicidial_present": false
+    },
+    {
+      "active": false,
+      "canonical": "SCP-SUPPORT-IN",
+      "environment": "staging",
+      "middleware_present": false,
+      "physical": "SCPEF244",
+      "reasons": [
+        "MIDDLEWARE_MAPPING_MISSING",
+        "VICIDIAL_CAMPAIGN_MISSING"
+      ],
+      "status": "BLOCKED",
+      "vicidial_present": false
+    },
+    {
+      "active": false,
+      "canonical": "SCP-TEST-OUT",
+      "environment": "staging",
+      "middleware_present": false,
+      "physical": "SCP93B8E",
+      "reasons": [
+        "MIDDLEWARE_MAPPING_MISSING",
+        "VICIDIAL_OWNERSHIP_MARKER_MISMATCH"
+      ],
+      "status": "BLOCKED",
+      "vicidial_present": true
+    },
+    {
+      "active": false,
+      "canonical": "SCP-UPSELL-OUT",
+      "environment": "staging",
+      "middleware_present": false,
+      "physical": "SCP54669",
+      "reasons": [
+        "MIDDLEWARE_MAPPING_MISSING",
+        "VICIDIAL_CAMPAIGN_MISSING"
+      ],
+      "status": "BLOCKED",
+      "vicidial_present": false
+    },
+    {
+      "active": false,
+      "canonical": "SCP-WARRANTY-IN",
+      "environment": "staging",
+      "middleware_present": false,
+      "physical": "SCP75B38",
+      "reasons": [
+        "MIDDLEWARE_MAPPING_MISSING",
+        "VICIDIAL_CAMPAIGN_MISSING"
+      ],
+      "status": "BLOCKED",
+      "vicidial_present": false
+    },
+    {
+      "active": false,
+      "canonical": "TRX-APPOINTMENT-IN",
+      "environment": "staging",
+      "middleware_present": false,
+      "physical": "TRX28A7D",
+      "reasons": [
+        "MIDDLEWARE_MAPPING_MISSING",
+        "VICIDIAL_CAMPAIGN_MISSING"
+      ],
+      "status": "BLOCKED",
+      "vicidial_present": false
+    },
+    {
+      "active": false,
+      "canonical": "TRX-BILLING-IN",
+      "environment": "staging",
+      "middleware_present": false,
+      "physical": "TRX07458",
+      "reasons": [
+        "MIDDLEWARE_MAPPING_MISSING",
+        "VICIDIAL_CAMPAIGN_MISSING"
+      ],
+      "status": "BLOCKED",
+      "vicidial_present": false
+    },
+    {
+      "active": false,
+      "canonical": "TRX-CALLBACK-OUT",
+      "environment": "staging",
+      "middleware_present": false,
+      "physical": "TRXF4EB2",
+      "reasons": [
+        "MIDDLEWARE_MAPPING_MISSING",
+        "VICIDIAL_CAMPAIGN_MISSING"
+      ],
+      "status": "BLOCKED",
+      "vicidial_present": false
+    },
+    {
+      "active": false,
+      "canonical": "TRX-DEMO-IN",
+      "environment": "staging",
+      "middleware_present": false,
+      "physical": "TRX824BD",
+      "reasons": [
+        "MIDDLEWARE_MAPPING_MISSING",
+        "VICIDIAL_CAMPAIGN_MISSING"
+      ],
+      "status": "BLOCKED",
+      "vicidial_present": false
+    },
+    {
+      "active": false,
+      "canonical": "TRX-DEMO-OUT",
+      "environment": "staging",
+      "middleware_present": false,
+      "physical": "TRX819C7",
+      "reasons": [
+        "MIDDLEWARE_MAPPING_MISSING",
+        "VICIDIAL_CAMPAIGN_MISSING"
+      ],
+      "status": "BLOCKED",
+      "vicidial_present": false
+    },
+    {
+      "active": false,
+      "canonical": "TRX-ONBOARDING-OUT",
+      "environment": "staging",
+      "middleware_present": false,
+      "physical": "TRX38511",
+      "reasons": [
+        "MIDDLEWARE_MAPPING_MISSING",
+        "VICIDIAL_CAMPAIGN_MISSING"
+      ],
+      "status": "BLOCKED",
+      "vicidial_present": false
+    },
+    {
+      "active": false,
+      "canonical": "TRX-RENEWAL-OUT",
+      "environment": "staging",
+      "middleware_present": false,
+      "physical": "TRX118EA",
+      "reasons": [
+        "MIDDLEWARE_MAPPING_MISSING",
+        "VICIDIAL_CAMPAIGN_MISSING"
+      ],
+      "status": "BLOCKED",
+      "vicidial_present": false
+    },
+    {
+      "active": false,
+      "canonical": "TRX-SALES-IN",
+      "environment": "staging",
+      "middleware_present": false,
+      "physical": "TRX1C4A4",
+      "reasons": [
+        "MIDDLEWARE_MAPPING_MISSING",
+        "VICIDIAL_CAMPAIGN_MISSING"
+      ],
+      "status": "BLOCKED",
+      "vicidial_present": false
+    },
+    {
+      "active": false,
+      "canonical": "TRX-SALES-OUT",
+      "environment": "staging",
+      "middleware_present": false,
+      "physical": "TRX22065",
+      "reasons": [
+        "MIDDLEWARE_MAPPING_MISSING",
+        "VICIDIAL_CAMPAIGN_MISSING"
+      ],
+      "status": "BLOCKED",
+      "vicidial_present": false
+    },
+    {
+      "active": false,
+      "canonical": "TRX-SUPPORT-IN",
+      "environment": "staging",
+      "middleware_present": false,
+      "physical": "TRX064E7",
+      "reasons": [
+        "MIDDLEWARE_MAPPING_MISSING",
+        "VICIDIAL_CAMPAIGN_MISSING"
+      ],
+      "status": "BLOCKED",
+      "vicidial_present": false
+    },
+    {
+      "active": false,
+      "canonical": "TRX-TEST-OUT",
+      "environment": "staging",
+      "middleware_present": false,
+      "physical": "TRX04B71",
+      "reasons": [
+        "MIDDLEWARE_MAPPING_MISSING",
+        "VICIDIAL_OWNERSHIP_MARKER_MISMATCH"
+      ],
+      "status": "BLOCKED",
+      "vicidial_present": true
+    },
+    {
+      "active": false,
+      "canonical": "TRX-TRIAL-OUT",
+      "environment": "staging",
+      "middleware_present": false,
+      "physical": "TRXD2798",
+      "reasons": [
+        "MIDDLEWARE_MAPPING_MISSING",
+        "VICIDIAL_CAMPAIGN_MISSING"
+      ],
+      "status": "BLOCKED",
+      "vicidial_present": false
+    }
+  ],
+  "schema": "codestra.campaign-reconciliation.v1"
+}
