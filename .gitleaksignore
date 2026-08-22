@@ -4,4 +4,17 @@ evidence/SYNTHETIC-IDENTITY-ACCEPTANCE-20260726T0225Z.md:generic-api-key:12
 tools/odoo_vertical_staging_acceptance.py:generic-api-key:108
 reports/github/SECRET_SCAN_FINDINGS.csv:generic-api-key:18
 reports/github/SECRET_SCAN_FINDINGS.csv:generic-api-key:27
+4613c7493016aceddf831f92df29c96024ef816b:reports/github/SECRET_SCAN_FINDINGS.csv:generic-api-key:6
+1ae61df7c93d2ab776b3dffbc07f2b088109d2ec:reports/github/SECRET_SCAN_FINDINGS.csv:generic-api-key:8
 07d8045b2e1d7483bf3e756999c0d797b272c5e8:scripts/reconcile_test_syn_odoo.py:generic-api-key:19
+7d2eda6f7f9cb81b1b713896bf03f585cb8c56bb:webphone_middleware/deploy/n8n/lead-automation/schemas/provenance-manifest-v1.json:generic-api-key:6
+7d2eda6f7f9cb81b1b713896bf03f585cb8c56bb:webphone_middleware/deploy/n8n/lead-automation/schema-provenance-v1.json:generic-api-key:6
+7d2eda6f7f9cb81b1b713896bf03f585cb8c56bb:webphone_middleware/deploy/n8n/lead-automation/workflow-manifest-v1.json:generic-api-key:10
+7d2eda6f7f9cb81b1b713896bf03f585cb8c56bb:webphone_middleware/deploy/n8n/lead-automation/callback-auth-manifest-v2.json:generic-api-key:26
+7d2eda6f7f9cb81b1b713896bf03f585cb8c56bb:webphone_middleware/deploy/n8n/lead-automation/lead-automation-generic-v1.json:generic-api-key:13
+7d2eda6f7f9cb81b1b713896bf03f585cb8c56bb:webphone_middleware/tests/test_agent_realtime.py:generic-api-key:16
+7d2eda6f7f9cb81b1b713896bf03f585cb8c56bb:webphone_middleware/tests/test_provider_adapters.py:generic-api-key:27
+7d2eda6f7f9cb81b1b713896bf03f585cb8c56bb:webphone_middleware/tests/test_notifications.py:generic-api-key:128
+7d2eda6f7f9cb81b1b713896bf03f585cb8c56bb:webphone_middleware/tests/test_telephony_command_client.py:generic-api-key:149
+7d2eda6f7f9cb81b1b713896bf03f585cb8c56bb:webphone_middleware/tests/test_telephony_command_client.py:generic-api-key:175
+70d28258ff9a3dd9a7eb5535e6998fca0e58e909:tests/test_campaign_email_provisioning.py:generic-api-key:64
