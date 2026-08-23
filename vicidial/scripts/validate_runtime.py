@@ -46,7 +46,7 @@ if os.environ.get("AUTHORIZED_APPLICATION_SERVER_IP") != "65.109.65.169":
     raise SystemExit("authorized application identity mismatch")
 if os.environ.get("AUTHORIZED_PRIVATE_SOURCE_IP") != "10.40.0.1":
     raise SystemExit("authorized private source mismatch")
-if os.environ.get("MIDDLEWARE_BASE_URL") != "https://api.codestra.agency":
+if os.environ.get("MIDDLEWARE_BASE_URL") != "https://api.codestra.co":
     raise SystemExit("middleware URL mismatch")
 if os.environ.get("KEYCLOAK_ISSUER_URL") != "https://auth.codestra.co/realms/codestra":
     raise SystemExit("Keycloak issuer mismatch")

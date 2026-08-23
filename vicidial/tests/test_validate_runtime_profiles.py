@@ -37,7 +37,7 @@ def environment(tmp_path, deployment):
         "ENABLE_PRODUCTION_DIALING": "false",
         "AUTHORIZED_APPLICATION_SERVER_IP": "65.109.65.169",
         "AUTHORIZED_PRIVATE_SOURCE_IP": "10.40.0.1",
-        "MIDDLEWARE_BASE_URL": "https://api.codestra.agency",
+        "MIDDLEWARE_BASE_URL": "https://api.codestra.co",
         "KEYCLOAK_ISSUER_URL": "https://auth.codestra.co/realms/codestra",
         "CODESTRA_ADAPTER_HMAC_FILE": str(secret),
         "CODESTRA_RECONCILIATION_POLICY_FILE": str(policy),
