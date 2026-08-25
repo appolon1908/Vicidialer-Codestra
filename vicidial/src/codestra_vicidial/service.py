@@ -28,6 +28,7 @@ class FeatureFlags:
     provisioning: bool = False
     agent_sync: bool = False
     lead_publication: bool = False
+    allowed_lead_list_ids: frozenset[int] = frozenset()
     callback_writes: bool = False
     transfer_policy_sync: bool = False
     production_dialing: bool = False
@@ -347,6 +348,9 @@ class AdapterService:
 
     def publish_lead(self, key: str, command: LeadCommand) -> dict:
         self._require(self.flags.lead_publication, "lead publication")
+
+        if command.lead.list_id not in self.flags.allowed_lead_list_ids:
+            raise PermissionError("lead list is not authorized")
 
         def apply() -> dict:
             actual = self.repository.publish_lead(command.lead)

@@ -1,0 +1,140 @@
+#!/usr/bin/env python3
+from __future__ import annotations
+
+import argparse
+import json
+import re
+import sys
+import time
+from pathlib import Path
+from typing import Any
+from urllib.error import HTTPError, URLError
+from urllib.request import Request, urlopen
+
+
+ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(ROOT / "src"))
+
+from codestra_vicidial import __version__
+
+
+APPLICATION = "codestra-vicidial-restricted-adapter"
+SHA_PATTERN = re.compile(r"^[0-9a-f]{40}$")
+
+
+def fetch_json(url: str, timeout: float = 2.0) -> dict[str, Any]:
+    request = Request(
+        url,
+        headers={
+            "User-Agent": "codestra-vicidial-r3-contract-check"
+        },
+    )
+    with urlopen(request, timeout=timeout) as response:
+        if response.status != 200:
+            raise RuntimeError(
+                f"{url} returned HTTP {response.status}"
+            )
+        document = json.loads(response.read().decode("utf-8"))
+    if not isinstance(document, dict):
+        raise RuntimeError(f"{url} did not return a JSON object")
+    return document
+
+
+def validate_documents(
+    *,
+    health: dict[str, Any],
+    ready: dict[str, Any],
+    version: dict[str, Any],
+    expected_sha: str,
+) -> None:
+    if not SHA_PATTERN.fullmatch(expected_sha):
+        raise ValueError(
+            "SOURCE.COMMIT is not a lowercase 40-character SHA"
+        )
+    if health.get("status") != "live":
+        raise ValueError("/health contract failed")
+    if ready.get("status") != "ready":
+        raise ValueError("/ready status contract failed")
+    if ready.get("writes_enabled") is not False:
+        raise ValueError("/ready reports writes enabled")
+    if ready.get("release_verified") is not True:
+        raise ValueError(
+            "/ready reports unverified release metadata"
+        )
+    if version.get("application") != APPLICATION:
+        raise ValueError("/version application mismatch")
+    if version.get("version") != __version__:
+        raise ValueError("/version package version mismatch")
+    if version.get("release") != "R3":
+        raise ValueError("/version release mismatch")
+    if version.get("verified") is not True:
+        raise ValueError("/version metadata is unverified")
+    if version.get("git_sha") != expected_sha:
+        raise ValueError("/version SHA mismatch")
+    if version.get("build_id") != f"vicidial-r3-{expected_sha[:12]}":
+        raise ValueError("/version build_id mismatch")
+    if version.get("python") != "3.11":
+        raise ValueError("/version Python contract mismatch")
+
+
+def main() -> int:
+    parser = argparse.ArgumentParser(
+        description=(
+            "Verify the canonical Codestra VICIdial R3 HTTP contract"
+        ),
+    )
+    parser.add_argument(
+        "--base-url",
+        default="http://127.0.0.1:8097",
+    )
+    parser.add_argument("--source-commit", required=True)
+    parser.add_argument("--attempts", type=int, default=5)
+    parser.add_argument("--delay", type=float, default=1.0)
+    args = parser.parse_args()
+
+    if args.attempts < 1:
+        raise SystemExit("attempts must be at least one")
+
+    expected_sha = (
+        Path(args.source_commit)
+        .read_text(encoding="utf-8")
+        .strip()
+    )
+    last_error: Exception | None = None
+
+    for attempt in range(1, args.attempts + 1):
+        try:
+            health = fetch_json(f"{args.base_url}/health")
+            ready = fetch_json(f"{args.base_url}/ready")
+            version = fetch_json(f"{args.base_url}/version")
+            validate_documents(
+                health=health,
+                ready=ready,
+                version=version,
+                expected_sha=expected_sha,
+            )
+            print("OPERATIONAL_CONTRACT=PASS")
+            print(f"GIT_SHA={expected_sha}")
+            print(f"BUILD_ID={version['build_id']}")
+            return 0
+        except (
+            HTTPError,
+            URLError,
+            TimeoutError,
+            json.JSONDecodeError,
+            OSError,
+            RuntimeError,
+            ValueError,
+        ) as exc:
+            last_error = exc
+            if attempt < args.attempts:
+                time.sleep(args.delay)
+
+    raise SystemExit(
+        "operational contract failed after "
+        f"{args.attempts} attempts: {last_error}"
+    )
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

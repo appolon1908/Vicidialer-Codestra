@@ -8,6 +8,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 from codestra_vicidial.reconciliation import ReconciliationDenied, ReconciliationPolicy
+from codestra_vicidial.release import load_release_info
 
 ALWAYS_FALSE_FLAGS = (
     "ENABLE_AGENT_SYNC",
@@ -50,6 +51,29 @@ if os.environ.get("MIDDLEWARE_BASE_URL") != "https://api.codestra.co":
     raise SystemExit("middleware URL mismatch")
 if os.environ.get("KEYCLOAK_ISSUER_URL") != "https://auth.codestra.co/realms/codestra":
     raise SystemExit("Keycloak issuer mismatch")
+
+
+for name, default in (
+    ("CODESTRA_ADAPTER_RATE_LIMIT_REQUESTS", "120"),
+    ("CODESTRA_ADAPTER_RATE_LIMIT_WINDOW_SECONDS", "60"),
+):
+    try:
+        value = int(os.environ.get(name, default))
+    except ValueError as exc:
+        raise SystemExit(f"{name} must be an integer") from exc
+    if value <= 0:
+        raise SystemExit(f"{name} must be greater than zero")
+
+if (
+    os.environ.get("CODESTRA_RELEASE_METADATA_REQUIRED", "false").lower()
+    == "true"
+):
+    try:
+        release_info = load_release_info(required=True)
+    except (OSError, ValueError, RuntimeError) as exc:
+        raise SystemExit(f"release metadata invalid: {exc}") from exc
+    if release_info.get("verified") is not True:
+        raise SystemExit("release metadata is not verified")
 
 secret = Path(os.environ["CODESTRA_ADAPTER_HMAC_FILE"])
 if not secret.is_file() or secret.stat().st_size < 32:

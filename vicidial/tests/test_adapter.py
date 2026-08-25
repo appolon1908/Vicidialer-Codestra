@@ -145,9 +145,16 @@ def harness(tmp_path: Path):
     repo = MemoryRepository()
     service = AdapterService(
         repo, StateStore(tmp_path / "state.sqlite3"),
-        FeatureFlags(writes=True, provisioning=True, agent_sync=True,
-                     lead_publication=True, callback_writes=True,
-                     transfer_policy_sync=True, production_dialing=False),
+        FeatureFlags(
+            writes=True,
+            provisioning=True,
+            agent_sync=True,
+            lead_publication=True,
+            allowed_lead_list_ids=frozenset({21001}),
+            callback_writes=True,
+            transfer_policy_sync=True,
+            production_dialing=False,
+        ),
     )
     return service, repo
 
@@ -155,9 +162,16 @@ def harness(tmp_path: Path):
 def service_for(repo: MemoryRepository, tmp_path: Path) -> AdapterService:
     return AdapterService(
         repo, StateStore(tmp_path / "state.sqlite3"),
-        FeatureFlags(writes=True, provisioning=True, agent_sync=True,
-                     lead_publication=True, callback_writes=True,
-                     transfer_policy_sync=True, production_dialing=False),
+        FeatureFlags(
+            writes=True,
+            provisioning=True,
+            agent_sync=True,
+            lead_publication=True,
+            allowed_lead_list_ids=frozenset({21001}),
+            callback_writes=True,
+            transfer_policy_sync=True,
+            production_dialing=False,
+        ),
     )
 
 

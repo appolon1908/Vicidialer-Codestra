@@ -1,9 +1,11 @@
 from __future__ import annotations
 
 import os
+from collections.abc import Mapping
 from pathlib import Path
 
 from fastapi import Depends, FastAPI, Header, HTTPException, Request
+from fastapi.openapi.utils import get_openapi
 from fastapi.responses import JSONResponse
 
 from . import __version__
@@ -12,15 +14,156 @@ from .models import (
     LeadCommand, ReconciliationCampaignCommand, TransferPolicyCommand,
 )
 from .reconciliation import ReconciliationPolicy
+from .release import load_release_info
 from .repository import CollisionError, MemoryRepository, MySQLRepository
 from .security import RequestAuthenticator
 from .service import AdapterService, FeatureFlags, ReadbackMismatch
 from .state import StateStore
 
 
-def create_app(service: AdapterService, authenticator: RequestAuthenticator,
-               reconciliation_policy: ReconciliationPolicy | None = None) -> FastAPI:
-    app = FastAPI(title="Codestra restricted VICIdial adapter", version=__version__)
+_AUTHENTICATION_HEADERS = (
+    "X-Service-Identity",
+    "X-Service-Scopes",
+    "X-Request-Timestamp",
+    "X-Request-Nonce",
+    "X-Request-Signature",
+)
+
+_PROTECTED_SCOPE_BY_ROUTE = {
+    ("post", "/v1/campaigns/validate"): "telephony:read",
+    ("post", "/v1/campaigns/provision-disabled"): "telephony:provision",
+    ("post", "/v1/campaigns/update-disabled"): "telephony:provision",
+    ("post", "/v1/campaigns/disable"): "telephony:provision",
+    ("get", "/v1/campaigns/{campaign_id}/actual-state"): "telephony:read",
+    ("post", "/v1/agents/sync"): "telephony:agent-sync",
+    ("post", "/v1/agents/disable"): "telephony:agent-sync",
+    ("get", "/v1/agents/{user_id}/actual-state"): "telephony:read",
+    ("post", "/v1/leads/publish"): "telephony:lead-publish",
+    ("get", "/v1/leads/by-idempotency/{key}"): "telephony:read",
+    ("post", "/v1/callbacks/create"): "telephony:callback-write",
+    ("get", "/v1/callbacks/{callback_id}"): "telephony:read",
+    ("post", "/v1/scripts/sync"): "telephony:provision",
+    ("post", "/v1/dispositions/sync"): "telephony:provision",
+    (
+        "post",
+        "/v1/reconciliation/campaigns/provision-disabled",
+    ): "telephony:reconcile",
+    ("post", "/v1/transfer-policies/sync"): "telephony:transfer-policy",
+    ("post", "/v1/reconciliation/run"): "telephony:read",
+    ("get", "/v1/reconciliation/{run_id}"): "telephony:read",
+}
+
+
+def parse_allowed_lead_list_ids(raw: str) -> frozenset[int]:
+    if not raw.strip():
+        return frozenset()
+
+    values: set[int] = set()
+    for item in raw.split(","):
+        token = item.strip()
+        if not token or not token.isdecimal():
+            raise ValueError(
+                "lead list allowlist contains a non-numeric value"
+            )
+        list_id = int(token)
+        if not 11000 <= list_id <= 91999:
+            raise ValueError(
+                "lead list allowlist value is outside the valid range"
+            )
+        values.add(list_id)
+    return frozenset(values)
+
+
+def install_openapi_contract(app: FastAPI) -> None:
+    def custom_openapi():
+        if app.openapi_schema is not None:
+            return app.openapi_schema
+
+        schema = get_openapi(
+            title=app.title,
+            version=app.version,
+            description=app.description,
+            routes=app.routes,
+        )
+        components = schema.setdefault("components", {})
+        schemes = components.setdefault("securitySchemes", {})
+        schemes.update({
+            "ServiceIdentity": {
+                "type": "apiKey",
+                "in": "header",
+                "name": "X-Service-Identity",
+                "description": (
+                    "Codestra machine identity; valid only with the "
+                    "signed-request scheme."
+                ),
+            },
+            "RequestSignature": {
+                "type": "apiKey",
+                "in": "header",
+                "name": "X-Request-Signature",
+                "description": (
+                    "HMAC-SHA256 signature over timestamp, nonce, and body."
+                ),
+            },
+        })
+
+        observed: set[tuple[str, str]] = set()
+        for route_path, path_item in schema.get("paths", {}).items():
+            if not route_path.startswith("/v1/"):
+                continue
+            for method, operation in path_item.items():
+                method_lower = method.lower()
+                if method_lower not in {
+                    "get", "post", "put", "patch", "delete"
+                }:
+                    continue
+                key = (method_lower, route_path)
+                observed.add(key)
+                scope = _PROTECTED_SCOPE_BY_ROUTE.get(key)
+                if scope is None:
+                    raise RuntimeError(
+                        "OpenAPI protected route has no scope contract: "
+                        f"{key}"
+                    )
+                operation["security"] = [{
+                    "ServiceIdentity": [],
+                    "RequestSignature": [],
+                }]
+                operation["x-codestra-authentication"] = "hmac-sha256"
+                operation["x-codestra-required-scope"] = scope
+                operation["x-codestra-required-headers"] = list(
+                    _AUTHENTICATION_HEADERS
+                )
+
+        expected = set(_PROTECTED_SCOPE_BY_ROUTE)
+        if observed != expected:
+            raise RuntimeError(
+                "OpenAPI protected route contract mismatch: "
+                f"missing={sorted(expected - observed)} "
+                f"unexpected={sorted(observed - expected)}"
+            )
+
+        app.openapi_schema = schema
+        return app.openapi_schema
+
+    app.openapi = custom_openapi
+
+
+def create_app(
+    service: AdapterService,
+    authenticator: RequestAuthenticator,
+    reconciliation_policy: ReconciliationPolicy | None = None,
+    release_info: Mapping[str, object] | None = None,
+) -> FastAPI:
+    release_document = dict(
+        release_info
+        if release_info is not None
+        else load_release_info(required=False)
+    )
+    app = FastAPI(
+        title="Codestra restricted VICIdial adapter",
+        version=__version__,
+    )
 
     @app.exception_handler(CollisionError)
     async def collision_handler(_request: Request, exc: CollisionError):
@@ -43,11 +186,15 @@ def create_app(service: AdapterService, authenticator: RequestAuthenticator,
 
     @app.get("/ready")
     def ready():
-        return {"status": "ready", "writes_enabled": service.flags.writes}
+        return {
+            "status": "ready",
+            "writes_enabled": service.flags.writes,
+            "release_verified": bool(release_document.get("verified")),
+        }
 
     @app.get("/version")
     def version():
-        return {"version": __version__}
+        return dict(release_document)
 
     async def authorize(
         request: Request, required_scope: str, identity: str, scopes: str,
@@ -224,6 +371,7 @@ def create_app(service: AdapterService, authenticator: RequestAuthenticator,
         await authorize(request, "telephony:read", *values)
         return {"run_id": run_id, **service.reconciliation()}
 
+    install_openapi_contract(app)
     return app
 
 
@@ -237,6 +385,9 @@ def app_from_environment() -> FastAPI:
         provisioning=os.environ.get("ENABLE_PROVISIONING") == "true",
         agent_sync=os.environ.get("ENABLE_AGENT_SYNC") == "true",
         lead_publication=os.environ.get("ENABLE_LEAD_PUBLICATION") == "true",
+        allowed_lead_list_ids=parse_allowed_lead_list_ids(
+            os.environ.get("CODESTRA_ALLOWED_LEAD_LIST_IDS", "")
+        ),
         callback_writes=os.environ.get("ENABLE_IVR_CALLBACKS") == "true",
         transfer_policy_sync=os.environ.get("ENABLE_WARM_TRANSFER") == "true",
         production_dialing=False,
@@ -312,7 +463,20 @@ def app_from_environment() -> FastAPI:
     policy = None
     if os.environ.get("CODESTRA_ADAPTER_DEPLOYMENT") == "production-reconciliation":
         policy = ReconciliationPolicy.from_file(Path(os.environ["CODESTRA_RECONCILIATION_POLICY_FILE"]))
-    return create_app(service, auth, policy)
+    return create_app(
+        service,
+        auth,
+        policy,
+        release_info=load_release_info(
+            required=(
+                os.environ.get(
+                    "CODESTRA_RELEASE_METADATA_REQUIRED",
+                    "false",
+                ).lower()
+                == "true"
+            )
+        ),
+    )
 
 
 app = app_from_environment()
