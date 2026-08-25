@@ -45,7 +45,12 @@ def environment(tmp_path, deployment):
 
 
 def run(env):
-    return subprocess.run([sys.executable, "vicidial/scripts/validate_runtime.py"], env=env, capture_output=True)
+    script = Path(__file__).resolve().parents[1] / "scripts" / "validate_runtime.py"
+    return subprocess.run(
+        [sys.executable, str(script)],
+        env=env,
+        capture_output=True,
+    )
 
 
 def test_production_reconciliation_profile_is_bounded(tmp_path):
