@@ -47,7 +47,101 @@ class StateStore:
           operation TEXT NOT NULL, target_hash TEXT NOT NULL, outcome TEXT NOT NULL,
           redacted_json TEXT NOT NULL);
         """)
+        self.db.executescript("""
+        CREATE TABLE IF NOT EXISTS auth_nonces(
+          nonce TEXT PRIMARY KEY,
+          expires_at INTEGER NOT NULL
+        );
+
+        CREATE INDEX IF NOT EXISTS auth_nonces_expiry
+          ON auth_nonces(expires_at);
+
+        CREATE TABLE IF NOT EXISTS auth_rate_events(
+          source TEXT NOT NULL,
+          occurred_at INTEGER NOT NULL
+        );
+
+        CREATE INDEX IF NOT EXISTS auth_rate_events_source_time
+          ON auth_rate_events(source, occurred_at);
+        """)
         self.db.commit()
+
+    def consume_nonce(
+        self,
+        nonce: str,
+        current: int,
+        expiry: int,
+    ) -> bool:
+        try:
+            self.db.execute("BEGIN IMMEDIATE")
+
+            self.db.execute(
+                "DELETE FROM auth_nonces "
+                "WHERE expires_at < ?",
+                (current,),
+            )
+
+            try:
+                self.db.execute(
+                    "INSERT INTO auth_nonces("
+                    "nonce,expires_at"
+                    ") VALUES(?,?)",
+                    (nonce, expiry),
+                )
+
+            except sqlite3.IntegrityError:
+                self.db.rollback()
+                return False
+
+            self.db.commit()
+            return True
+
+        except Exception:
+            self.db.rollback()
+            raise
+
+    def consume_rate_limit(
+        self,
+        source: str,
+        current: int,
+        window_seconds: int,
+        request_limit: int,
+    ) -> bool:
+        cutoff = current - window_seconds
+
+        try:
+            self.db.execute("BEGIN IMMEDIATE")
+
+            self.db.execute(
+                "DELETE FROM auth_rate_events "
+                "WHERE occurred_at <= ?",
+                (cutoff,),
+            )
+
+            row = self.db.execute(
+                "SELECT COUNT(*) AS count "
+                "FROM auth_rate_events "
+                "WHERE source=? AND occurred_at>?",
+                (source, cutoff),
+            ).fetchone()
+
+            if int(row["count"]) >= request_limit:
+                self.db.rollback()
+                return False
+
+            self.db.execute(
+                "INSERT INTO auth_rate_events("
+                "source,occurred_at"
+                ") VALUES(?,?)",
+                (source, current),
+            )
+
+            self.db.commit()
+            return True
+
+        except Exception:
+            self.db.rollback()
+            raise
 
     @staticmethod
     def digest(value: object) -> str:

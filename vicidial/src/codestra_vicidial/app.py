@@ -262,19 +262,52 @@ def app_from_environment() -> FastAPI:
         repository = MemoryRepository()
     else:
         raise RuntimeError("unsupported adapter backend")
+    state = StateStore(
+        Path(
+            os.environ.get(
+                "CODESTRA_ADAPTER_STATE",
+                "/var/lib/codestra-vicidial/state.sqlite3",
+            )
+        )
+    )
+
     service = AdapterService(
         repository,
-        StateStore(Path(os.environ.get("CODESTRA_ADAPTER_STATE", "/var/lib/codestra-vicidial/state.sqlite3"))),
+        state,
         flags,
     )
+
     auth = RequestAuthenticator(
-        identity=os.environ.get("CODESTRA_ADAPTER_IDENTITY", "codestra-middleware"),
+        identity=os.environ.get(
+            "CODESTRA_ADAPTER_IDENTITY",
+            "codestra-middleware",
+        ),
         key=key,
         authorized_sources=frozenset({
-            os.environ.get("AUTHORIZED_APPLICATION_SERVER_IP", "65.109.65.169"),
-            os.environ.get("AUTHORIZED_PRIVATE_SOURCE_IP", "10.40.0.1"),
+            os.environ.get(
+                "AUTHORIZED_APPLICATION_SERVER_IP",
+                "65.109.65.169",
+            ),
+            os.environ.get(
+                "AUTHORIZED_PRIVATE_SOURCE_IP",
+                "10.40.0.1",
+            ),
             "127.0.0.1",
         }),
+        nonce_store=state.consume_nonce,
+        rate_limit_store=state.consume_rate_limit,
+        rate_limit_requests=int(
+            os.environ.get(
+                "CODESTRA_ADAPTER_RATE_LIMIT_REQUESTS",
+                "120",
+            )
+        ),
+        rate_limit_window_seconds=int(
+            os.environ.get(
+                "CODESTRA_ADAPTER_RATE_LIMIT_WINDOW_SECONDS",
+                "60",
+            )
+        ),
     )
     policy = None
     if os.environ.get("CODESTRA_ADAPTER_DEPLOYMENT") == "production-reconciliation":
