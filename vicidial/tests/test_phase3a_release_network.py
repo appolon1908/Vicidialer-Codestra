@@ -112,8 +112,11 @@ def test_host_release_builder_is_ci_enforced() -> None:
 
 def test_oci_export_is_from_tested_build_and_verified() -> None:
     workflow = (ROOT / ".github/workflows/vicidial-adapter-container.yml").read_text()
-    assert "type=oci,dest=evidence/vicidial-adapter.oci.tar" in workflow
-    assert workflow.count("docker/build-push-action@v6") == 1
+    assert workflow.count("docker/build-push-action@v6") == 2
+    assert "Build runnable linux/amd64 review image" in workflow
+    assert "load: true" in workflow
+    assert "Export attested linux/amd64 OCI candidate" in workflow
+    assert "outputs: type=oci,dest=evidence/vicidial-adapter.oci.tar" in workflow
     assert "verify_oci_export.py" in workflow
 
 
