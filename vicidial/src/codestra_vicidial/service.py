@@ -326,8 +326,7 @@ class AdapterService:
             desired = command.agent.model_dump(mode="json") | {"active": False}
             desired_hash = self.state.digest(desired)
             mapping = self.state.mapping("agent", command.agent.user_id)
-            if mapping and (mapping["actual_id"] != command.agent.user_id
-                            or mapping["payload_hash"] != desired_hash):
+            if mapping and mapping["actual_id"] != command.agent.user_id:
                 raise CollisionError("agent ownership mapping collision")
             actual = self.repository.sync_agent_disabled(command.agent)
             mismatches = []
@@ -342,8 +341,9 @@ class AdapterService:
                 mismatches.append("inbound_groups")
             if mismatches:
                 raise RuntimeError("agent read-back mismatch: " + ",".join(mismatches))
-            self.state.put_mapping("agent", command.agent.user_id,
-                                   command.agent.user_id, desired_hash)
+            self.state.put_agent_mapping(
+                command.agent.user_id, command.agent.user_id, desired_hash
+            )
             self.state.put_agent_desired(command.agent.user_id, desired)
             return {"status": "disabled", "actual": actual}
 
@@ -469,11 +469,21 @@ class AdapterService:
             "resources": resources,
         }
 
-    def start_reconciliation(self) -> dict:
+    def start_reconciliation(self, idempotency_key: str) -> dict:
+        request_hash = self.state.digest({"operation": "reconciliation.run"})
+        prior = self.state.prior(
+            "reconciliation.run", idempotency_key, request_hash
+        )
+        if prior is not None:
+            return prior | {"idempotent_replay": True}
         run_id = str(uuid.uuid4())
         result = self.reconciliation()
         self.state.put_reconciliation_run(run_id, result)
-        return {"run_id": run_id, **result}
+        response = {"run_id": run_id, **result}
+        self.state.record(
+            "reconciliation.run", idempotency_key, request_hash, response
+        )
+        return response | {"idempotent_replay": False}
 
     def reconciliation_run(self, run_id: str) -> dict | None:
         return self.state.reconciliation_run(run_id)

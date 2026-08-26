@@ -362,9 +362,13 @@ def create_app(
                               "telephony:transfer-policy", *values)
 
     @app.post("/v1/reconciliation/run")
-    async def reconciliation_run(request: Request, values=Depends(read_headers)):
-        await authorize(request, "telephony:read", *values)
-        return service.start_reconciliation()
+    async def reconciliation_run(request: Request, values=Depends(headers)):
+        key, identity, scopes, timestamp, nonce, signature, signature_version = values
+        await authorize(
+            request, "telephony:read", identity, scopes, timestamp, nonce,
+            signature, signature_version, key,
+        )
+        return service.start_reconciliation(key)
 
     @app.get("/v1/reconciliation/{run_id}")
     async def reconciliation_get(request: Request, run_id: str,

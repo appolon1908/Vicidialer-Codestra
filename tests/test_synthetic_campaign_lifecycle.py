@@ -75,7 +75,7 @@ class FakeAdapter:
             "allowed_targets": sorted(command["policy"]["allowed_targets"]),
         }
 
-    def reconcile(self):
+    def reconcile(self, _key):
         return {
             "status": "complete",
             "inventory": {

@@ -37,7 +37,7 @@ class Adapter(Protocol):
     def sync_agent(self, key: str, command: dict[str, Any]) -> dict[str, Any]: ...
     def publish_lead(self, key: str, command: dict[str, Any]) -> dict[str, Any]: ...
     def sync_transfer_policy(self, key: str, command: dict[str, Any]) -> dict[str, Any]: ...
-    def reconcile(self) -> dict[str, Any]: ...
+    def reconcile(self, key: str) -> dict[str, Any]: ...
     def disable_campaign(self, key: str, command: dict[str, Any]) -> dict[str, Any]: ...
 
 
@@ -175,9 +175,10 @@ class PrivateAdapterClient:
             idempotency_key=key,
         )
 
-    def reconcile(self) -> dict[str, Any]:
+    def reconcile(self, key: str) -> dict[str, Any]:
         return self._request(
-            "POST", "/v1/reconciliation/run", scope="telephony:read"
+            "POST", "/v1/reconciliation/run", scope="telephony:read",
+            idempotency_key=key,
         )
 
     def disable_campaign(self, key: str, command: dict[str, Any]) -> dict[str, Any]:
@@ -446,7 +447,9 @@ def run_synthetic_lifecycle(
     )
     replay = adapter.provision_campaign(provision_key, command)
     lead_replay = adapter.publish_lead(lead_key, lead_command)
-    reconciliation = adapter.reconcile()
+    reconciliation = adapter.reconcile(
+        f"staging:{request.integration_uuid}:1:reconcile"
+    )
     rollback = adapter.disable_campaign(
         f"staging:{request.integration_uuid}:1:rollback", command
     )

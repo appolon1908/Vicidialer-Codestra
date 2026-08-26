@@ -308,10 +308,7 @@ class MemoryRepository:
         return deepcopy(self.agents.get(user_id))
 
     def sync_agent_disabled(self, spec: AgentSpec) -> dict:
-        current = self.agents.get(spec.user_id)
         desired = spec.model_dump(mode="json") | {"active": False}
-        if current and current.get("full_name") != spec.full_name:
-            raise CollisionError(f"incompatible collision: {spec.user_id}")
         self.agents[spec.user_id] = desired
         return deepcopy(desired)
 
@@ -765,12 +762,12 @@ class MySQLRepository:
 
     def sync_agent_disabled(self, spec: AgentSpec) -> dict:
         current = self.agent(spec.user_id)
-        if current and current["full_name"] != spec.full_name:
-            raise CollisionError(f"incompatible collision: {spec.user_id}")
         if current:
             self._execute(
-                "UPDATE vicidial_users SET active='N',user_group=%s,closer_campaigns=%s WHERE user=%s",
-                (spec.user_group, " " + " ".join(spec.inbound_groups) + " -", spec.user_id))
+                "UPDATE vicidial_users SET active='N',full_name=%s,user_group=%s,"
+                "closer_campaigns=%s WHERE user=%s",
+                (spec.full_name, spec.user_group,
+                 " " + " ".join(spec.inbound_groups) + " -", spec.user_id))
         else:
             raise ValueError("agent creation requires the supported VICIdial Non-Agent API")
         self.db.commit()

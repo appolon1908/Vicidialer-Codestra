@@ -91,13 +91,44 @@ def test_agent_desired_ownership_and_complete_readback_are_durable(tmp_path):
 
 def test_reconciliation_run_is_persisted_and_not_recomputed(tmp_path):
     service, repo = enabled_service(tmp_path)
-    run = service.start_reconciliation()
+    run = service.start_reconciliation("reconciliation-run-1")
     assert run["status"] == "blocked"
     repo.campaigns["LATER"] = {"campaign_id": "LATER"}
     stored = service.reconciliation_run(run["run_id"])
     assert stored is not None
     assert stored["inventory"]["campaigns"] == 0
     assert service.reconciliation_run("missing") is None
+
+
+def test_reconciliation_run_retry_returns_original_persisted_run(tmp_path):
+    service, _ = enabled_service(tmp_path)
+    first = service.start_reconciliation("reconciliation-run-retry")
+    replay = service.start_reconciliation("reconciliation-run-retry")
+    assert replay["run_id"] == first["run_id"]
+    assert first["idempotent_replay"] is False
+    assert replay["idempotent_replay"] is True
+
+
+def test_owned_agent_accepts_desired_state_update_after_readback(tmp_path):
+    service, _ = enabled_service(tmp_path)
+    payload = {
+        "context": context(),
+        "agent": {
+            "user_id": "COD1001", "full_name": "Synthetic Agent",
+            "user_group": "COD_TEST_SDR", "campaigns": ["CODT0001"],
+            "inbound_groups": ["COD_TEST_CLOSERS"], "active": False,
+        },
+    }
+    service.sync_agent("agent-version-1", AgentCommand.model_validate(payload))
+    payload["agent"]["full_name"] = "Updated Synthetic Agent"
+    payload["agent"]["campaigns"] = ["CODT0001", "CODT0002"]
+    result = service.sync_agent(
+        "agent-version-2", AgentCommand.model_validate(payload)
+    )
+    assert result["actual"]["full_name"] == "Updated Synthetic Agent"
+    assert service.state.agent_desired("COD1001")["desired"]["campaigns"] == [
+        "CODT0001", "CODT0002"
+    ]
 
 
 def test_test_syn_transfer_uses_test_business_unit(tmp_path):

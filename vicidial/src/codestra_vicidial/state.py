@@ -218,6 +218,29 @@ class StateStore:
             self.db.rollback()
             raise
 
+    def put_agent_mapping(
+        self, external_id: str, actual_id: str, payload_hash: str
+    ) -> None:
+        """Update agent desired state while preserving stable ownership."""
+        try:
+            self.db.execute("BEGIN IMMEDIATE")
+            current = self.mapping("agent", external_id)
+            if current is not None and current["actual_id"] != actual_id:
+                raise ValueError("ownership collision: agent mapping changed")
+            claimed = self.mapping_for_actual("agent", actual_id)
+            if claimed is not None and claimed["external_id"] != external_id:
+                raise ValueError("ownership collision: agent already claimed")
+            self.db.execute(
+                "INSERT INTO mappings(kind,external_id,actual_id,payload_hash) "
+                "VALUES('agent',?,?,?) ON CONFLICT(kind,external_id) DO UPDATE SET "
+                "payload_hash=excluded.payload_hash",
+                (external_id, actual_id, payload_hash),
+            )
+            self.db.commit()
+        except Exception:
+            self.db.rollback()
+            raise
+
     def put_campaign_desired(self, canonical_id: str, actual_id: str,
                              desired: dict) -> None:
         payload_hash = self.digest(desired)
@@ -254,11 +277,6 @@ class StateStore:
 
     def put_agent_desired(self, user_id: str, desired: dict) -> None:
         payload_hash = self.digest(desired)
-        current = self.db.execute(
-            "SELECT desired_hash FROM agent_desired WHERE user_id=?", (user_id,)
-        ).fetchone()
-        if current and current["desired_hash"] != payload_hash:
-            raise ValueError("agent desired ownership conflict")
         self.db.execute(
             "INSERT INTO agent_desired VALUES(?,?,?,?) "
             "ON CONFLICT(user_id) DO UPDATE SET desired_json=excluded.desired_json,"
