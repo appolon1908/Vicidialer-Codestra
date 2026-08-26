@@ -47,7 +47,7 @@ jobs:
           mkdir -p "${RUNNER_TEMP}/mysqld"
           export VICIDIAL_ADAPTER_IMAGE_DIGEST="sha256:0000000000000000000000000000000000000000000000000000000000000000"
           export CODESTRA_ADAPTER_HMAC_SECRET_FILE="${RUNNER_TEMP}/adapter-hmac"
-          export VICIDIAL_DB_SECRET_FILE="${RUNNER_TEMP}/vicidial-db.json"
+          export CODESTRA_VICIDIAL_DB_SECRET_FILE="${RUNNER_TEMP}/vicidial-db.json"
           export VICIDIAL_DB_SOCKET_DIR="${RUNNER_TEMP}/mysqld"
           docker compose -f vicidial/docker/compose.shadow.yml config --quiet
           docker compose -f vicidial/docker/compose.production.yml config --quiet
