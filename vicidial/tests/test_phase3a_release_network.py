@@ -91,13 +91,30 @@ def test_installed_layout_manifest_is_flattened_and_tamper_evident(tmp_path: Pat
         target = tmp_path / directory
         target.mkdir()
         (target / "controlled.txt").write_text(directory + "\n")
+    for name in generator.INCLUDED_FILES:
+        (tmp_path / name).write_text(name + "\n")
     document = generator.build(tmp_path, SHA, "2026-08-25T00:00:00Z")
     paths = {item["path"] for item in document["files"]}
     assert "src/controlled.txt" in paths
+    assert ".venv/controlled.txt" in paths
+    assert "requirements.lock" in paths
     assert all(not path.startswith("vicidial/") for path in paths)
     unit = (VICIDIAL / "ops/codestra-vicidial-restricted-adapter.service").read_text()
     assert "scripts/verify_installed_manifest.py" in unit
     assert "INSTALLED_MANIFEST.json" in unit
+
+
+def test_host_release_builder_is_ci_enforced() -> None:
+    workflow = (ROOT / ".github/workflows/vicidial-adapter-container.yml").read_text()
+    assert "build_host_release.py" in workflow
+    assert "vicidial-host-release.tar.gz" in workflow
+
+
+def test_oci_export_is_from_tested_build_and_verified() -> None:
+    workflow = (ROOT / ".github/workflows/vicidial-adapter-container.yml").read_text()
+    assert "type=oci,dest=evidence/vicidial-adapter.oci.tar" in workflow
+    assert workflow.count("docker/build-push-action@v6") == 1
+    assert "verify_oci_export.py" in workflow
 
 
 def test_release_tuple_requires_every_identity(tmp_path: Path) -> None:

@@ -73,6 +73,16 @@ jobs:
           PYTHONPATH=vicidial/src python -m pytest -q --junitxml=evidence/test-results/phase3c.xml vicidial/tests/test_phase3c_domains.py
           PYTHONPATH=vicidial/src python -m pytest -q --junitxml=evidence/test-results/phase3d.xml vicidial/tests/test_phase3d_container.py
           PYTHONPATH=vicidial/src python -m pytest -q --junitxml=evidence/test-results/full.xml vicidial/tests
+      - name: Build and verify manifest-bound host release
+        run: |
+          release_root="${RUNNER_TEMP}/host-release/${SOURCE_SHA}"
+          python vicidial/scripts/build_host_release.py \
+            --source vicidial \
+            --output "${release_root}" \
+            --source-sha "${SOURCE_SHA}" \
+            --generated-at 2026-01-01T00:00:00Z
+          tar -C "${RUNNER_TEMP}/host-release" -czf evidence/vicidial-host-release.tar.gz "${SOURCE_SHA}"
+          sha256sum evidence/vicidial-host-release.tar.gz > evidence/vicidial-host-release.tar.gz.sha256
       - uses: docker/setup-buildx-action@v3
       - name: Build linux/amd64 locally with provenance and SBOM attestations
         uses: docker/build-push-action@v6
@@ -81,13 +91,15 @@ jobs:
           file: vicidial/docker/Dockerfile
           platforms: linux/amd64
           push: false
-          load: true
+          outputs: |
+            type=docker
+            type=oci,dest=evidence/vicidial-adapter.oci.tar
           tags: codestra/vicidial-restricted-adapter:${{ env.SOURCE_SHA }}
           build-args: |
             SOURCE_SHA=${{ env.SOURCE_SHA }}
             BUILD_DATE=2026-01-01T00:00:00Z
-          sbom: false
-          provenance: false
+          sbom: true
+          provenance: mode=max
       - name: Test container contract
         env:
           VICIDIAL_CONTAINER_TEST_IMAGE: codestra/vicidial-restricted-adapter:${{ env.SOURCE_SHA }}
@@ -99,6 +111,14 @@ jobs:
           docker image inspect codestra/vicidial-restricted-adapter:${SOURCE_SHA} > evidence/IMAGE_METADATA.json
           docker run --rm --entrypoint python codestra/vicidial-restricted-adapter:${SOURCE_SHA} \
             /usr/local/libexec/codestra-security-regression > evidence/PYTHON_SECURITY_REGRESSION.json
+      - name: Verify exported OCI is the tested exact image
+        run: |
+          python vicidial/scripts/verify_oci_export.py \
+            --archive evidence/vicidial-adapter.oci.tar \
+            --metadata evidence/IMAGE_METADATA.json \
+            --source-sha "${SOURCE_SHA}" \
+            --output evidence/OCI_EXPORT_VERIFICATION.json
+          sha256sum evidence/vicidial-adapter.oci.tar > evidence/vicidial-adapter.oci.tar.sha256
       - name: Generate and verify source manifest
         run: |
           python vicidial/scripts/generate_release_manifest.py --root . \
@@ -163,6 +183,7 @@ jobs:
              evidence/vicidial-adapter-provenance.intoto.json \
              evidence/VULNERABILITY_ADJUDICATION.json \
              evidence/PYTHON_SECURITY_REGRESSION.json \
+             evidence/OCI_EXPORT_VERIFICATION.json \
              evidence/IMAGE_SECRET_SCAN.json "${export_dir}/"
           cp -R evidence/test-results "${export_dir}/test-results"
           jq 'walk(if type == "object" then del(.description,.Description,.created_by,.CreatedBy,.config,.urls,.URLs) else . end)' \
@@ -179,19 +200,6 @@ jobs:
           "${RUNNER_TEMP}/gitleaks-bin" dir --no-banner --redact --exit-code 1 \
             --report-format json --report-path evidence/EVIDENCE_SECRET_SCAN.json \
             "${export_dir}"
-      - name: Export attested linux/amd64 OCI candidate
-        uses: docker/build-push-action@v6
-        with:
-          context: .
-          file: vicidial/docker/Dockerfile
-          platforms: linux/amd64
-          push: false
-          outputs: type=oci,dest=evidence/vicidial-adapter.oci.tar
-          build-args: |
-            SOURCE_SHA=${{ env.SOURCE_SHA }}
-            BUILD_DATE=2026-01-01T00:00:00Z
-          sbom: true
-          provenance: mode=max
       - uses: actions/upload-artifact@v4
         if: always()
         with:
