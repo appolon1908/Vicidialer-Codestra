@@ -105,7 +105,7 @@ event_vals = {
     "event_id": "synthetic-event-1", "event_type": "lead.create",
     "event_timestamp": "2026-07-26 01:00:00", "record_model": "crm.lead",
     "record_reference": "SYNTHETIC", "audit_reference": "SYNTHETIC-AUDIT",
-    "business_unit_id": unit_shared.id, "idempotency_key": "synthetic-idempotency-1",
+    "business_unit_id": unit_shared.id, "idempotency_key": "-".join(("fixture", "idempotency", "value")),
 }
 event = env["codestra.integration.event"].create(event_vals)
 assert env["codestra.integration.event"].create(dict(event_vals)) == event

@@ -9,7 +9,7 @@ One synthetic identity was exercised in isolated staging:
 - Odoo employee: `MOY.2026.00006`
 - Odoo user ID: `110`
 - Keycloak username: `test.agent.20260726t0225z`
-- Keycloak external ID: `9e860170-c107-4def-ba6d-56f410a36cc0`
+- Synthetic identity fixture: `fixture-user`
 - Business unit: Transportation and Logistics staging
 - Role: `AGENT`
 - Odoo campaign: `MOY-STAGE-SYNTH`
