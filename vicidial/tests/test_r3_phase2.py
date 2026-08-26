@@ -199,6 +199,8 @@ def test_version_ready_and_openapi_contract(
         "status": "ready",
         "writes_enabled": False,
         "release_verified": True,
+        "deployment_profile": "staging-read-only",
+        "reconciliation_policy_verified": False,
     }
     version = client.get("/version").json()
     assert version["application"] == APPLICATION
@@ -292,6 +294,7 @@ def test_operational_document_validation() -> None:
         },
         version=version,
         expected_sha=SHA,
+        deployment_profile="staging-read-only",
     )
     with pytest.raises(ValueError, match="SHA mismatch"):
         module.validate_documents(
@@ -303,7 +306,18 @@ def test_operational_document_validation() -> None:
             },
             version=version,
             expected_sha="b" * 40,
+            deployment_profile="staging-read-only",
         )
+
+    module.validate_documents(
+        health={"status": "live"},
+        ready={"status": "ready", "writes_enabled": True,
+               "release_verified": True,
+               "deployment_profile": "production-reconciliation",
+               "reconciliation_policy_verified": True},
+        version=version, expected_sha=SHA,
+        deployment_profile="production-reconciliation",
+    )
 
 
 def test_systemd_uses_complete_operational_contract() -> None:
@@ -319,11 +333,13 @@ def test_systemd_uses_complete_operational_contract() -> None:
     assert "current/BUILD_INFO.json" in unit
     assert "verify_operational_contract.py" in unit
     assert "current/SOURCE.COMMIT" in unit
+    assert "--deployment-profile ${CODESTRA_ADAPTER_DEPLOYMENT}" in unit
     assert "current/.venv/bin/python -m uvicorn" in unit
     assert "/healthz" not in unit
     assert "/status" not in unit
     assert "verify_operational_contract.py" in health_unit
     assert "current/SOURCE.COMMIT" in health_unit
+    assert "--deployment-profile ${CODESTRA_ADAPTER_DEPLOYMENT}" in health_unit
 
 
 def test_package_versions_are_synchronized() -> None:

@@ -46,6 +46,7 @@ def validate_documents(
     ready: dict[str, Any],
     version: dict[str, Any],
     expected_sha: str,
+    deployment_profile: str = "staging-read-only",
 ) -> None:
     if not SHA_PATTERN.fullmatch(expected_sha):
         raise ValueError(
@@ -55,8 +56,15 @@ def validate_documents(
         raise ValueError("/health contract failed")
     if ready.get("status") != "ready":
         raise ValueError("/ready status contract failed")
-    if ready.get("writes_enabled") is not False:
-        raise ValueError("/ready reports writes enabled")
+    if ready.get("deployment_profile", deployment_profile) != deployment_profile:
+        raise ValueError("/ready deployment profile mismatch")
+    expected_writes = deployment_profile == "production-reconciliation"
+    if deployment_profile not in {"staging-read-only", "production-reconciliation"}:
+        raise ValueError("unsupported deployment profile")
+    if ready.get("writes_enabled") is not expected_writes:
+        raise ValueError("/ready writes contract failed")
+    if expected_writes and ready.get("reconciliation_policy_verified") is not True:
+        raise ValueError("/ready reconciliation policy is not verified")
     if ready.get("release_verified") is not True:
         raise ValueError(
             "/ready reports unverified release metadata"
@@ -88,6 +96,7 @@ def main() -> int:
         default="http://127.0.0.1:8097",
     )
     parser.add_argument("--source-commit", required=True)
+    parser.add_argument("--deployment-profile", required=True)
     parser.add_argument("--attempts", type=int, default=5)
     parser.add_argument("--delay", type=float, default=1.0)
     args = parser.parse_args()
@@ -112,6 +121,7 @@ def main() -> int:
                 ready=ready,
                 version=version,
                 expected_sha=expected_sha,
+                deployment_profile=args.deployment_profile,
             )
             print("OPERATIONAL_CONTRACT=PASS")
             print(f"GIT_SHA={expected_sha}")

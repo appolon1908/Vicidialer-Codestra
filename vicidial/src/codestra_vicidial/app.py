@@ -190,6 +190,10 @@ def create_app(
             "status": "ready",
             "writes_enabled": service.flags.writes,
             "release_verified": bool(release_document.get("verified")),
+            "deployment_profile": os.environ.get(
+                "CODESTRA_ADAPTER_DEPLOYMENT", "staging-read-only"
+            ),
+            "reconciliation_policy_verified": reconciliation_policy is not None,
         }
 
     @app.get("/version")
