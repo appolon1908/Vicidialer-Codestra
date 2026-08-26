@@ -138,6 +138,28 @@ def test_owned_agent_accepts_desired_state_update_after_readback(tmp_path):
     ]
 
 
+def test_unowned_existing_agent_is_rejected_before_mutation(tmp_path):
+    service, repository = enabled_service(tmp_path)
+    repository.agents["COD1001"] = {
+        "user_id": "COD1001", "full_name": "Legacy Agent",
+        "user_group": "LEGACY", "campaigns": ["LEGACY01"],
+        "inbound_groups": [], "active": True,
+    }
+    command = AgentCommand.model_validate({
+        "context": context(),
+        "agent": {
+            "user_id": "COD1001", "full_name": "Codestra Agent",
+            "user_group": "COD_TEST_SDR", "campaigns": ["CODT0001"],
+            "inbound_groups": ["COD_TEST_CLOSERS"], "active": False,
+        },
+    })
+    with pytest.raises(CollisionError, match="lacks Codestra ownership"):
+        service.sync_agent("unowned-agent", command)
+    assert repository.agents["COD1001"]["full_name"] == "Legacy Agent"
+    assert repository.agents["COD1001"]["active"] is True
+    assert service.state.mapping("agent", "COD1001") is None
+
+
 def test_test_syn_transfer_uses_test_business_unit(tmp_path):
     service, repo = enabled_service(tmp_path)
     payload = campaign_payload()

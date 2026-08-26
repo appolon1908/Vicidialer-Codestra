@@ -326,6 +326,9 @@ class AdapterService:
             desired = command.agent.model_dump(mode="json") | {"active": False}
             desired_hash = self.state.digest(desired)
             mapping = self.state.mapping("agent", command.agent.user_id)
+            existing = self.repository.agent(command.agent.user_id)
+            if mapping is None and existing is not None:
+                raise CollisionError("existing agent lacks Codestra ownership")
             if mapping and mapping["actual_id"] != command.agent.user_id:
                 raise CollisionError("agent ownership mapping collision")
             actual = self.repository.sync_agent_disabled(command.agent)
