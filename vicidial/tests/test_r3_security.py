@@ -91,6 +91,29 @@ def test_nonce_replay_survives_authenticator_restart(
         )
 
 
+def test_future_skew_nonce_is_retained_through_latest_acceptance() -> None:
+    auth = RequestAuthenticator(
+        identity=IDENTITY,
+        key=KEY,
+        authorized_sources=frozenset({SOURCE}),
+        max_clock_skew_seconds=60,
+    )
+    current = 1_800_000_000
+    timestamp = current + 60
+    nonce = "nonce-future-skew-replay-0001"
+    body = b'{"synthetic":true}'
+    signature = auth.sign(timestamp, nonce, body, scopes={"telephony:read"})
+    arguments = {
+        "source": SOURCE, "identity": IDENTITY,
+        "scopes": {"telephony:read"}, "timestamp": timestamp,
+        "nonce": nonce, "body": body, "signature": signature,
+        "required_scope": "telephony:read",
+    }
+    auth.verify(**arguments, now=current)
+    with pytest.raises(PermissionError, match="request replay"):
+        auth.verify(**arguments, now=current + 61)
+
+
 def test_rate_limit_is_shared_in_state_store(
     tmp_path: Path,
 ) -> None:

@@ -114,8 +114,9 @@ class RequestAuthenticator:
         self,
         nonce: str,
         current: int,
+        timestamp: int,
     ) -> None:
-        expiry = current + self.max_clock_skew_seconds
+        expiry = timestamp + self.max_clock_skew_seconds
 
         if self.nonce_store is not None:
             if not self.nonce_store(
@@ -210,4 +211,5 @@ class RequestAuthenticator:
         self._consume_nonce(
             nonce,
             current,
+            timestamp,
         )
