@@ -47,6 +47,12 @@ def test_production_port_and_process_contract() -> None:
     assert "Require ip 10.40.0.1" in apache
 
 
+def test_staging_unit_tolerates_absent_optional_reconciliation_policy() -> None:
+    unit = (VICIDIAL / "ops/codestra-vicidial-restricted-adapter.service").read_text()
+    assert "ReadOnlyPaths=-/etc/codestra/reconciliation-policy.json" in unit
+    assert "ReadOnlyPaths=/etc/codestra/reconciliation-policy.json" not in unit
+
+
 def test_certificate_renewal_pins_python_311() -> None:
     unit = (VICIDIAL / "ops/certificate-renewal/codestra-vicidial-certificate-renewal.service").read_text()
     assert unit.count("ExecStart=/usr/bin/python3.11 ") == 2
