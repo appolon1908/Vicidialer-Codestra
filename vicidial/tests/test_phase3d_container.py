@@ -80,11 +80,11 @@ def test_vulnerability_policy_is_exact_and_verifier_fails_closed(tmp_path):
                  "imageID": f"sha256:{image_id}", "manifestDigest": f"sha256:{'c' * 64}"}},
              "descriptor": {"name": "grype", "version": "0.104.0",
                             "timestamp": "2026-08-26T00:00:00Z"}}
-    trivy = {"SchemaVersion": 2, "Trivy": "0.66.0",
-             "CreatedAt": "2026-08-26T00:00:00Z", "ArtifactID": f"sha256:{'d' * 64}",
+    trivy = {"SchemaVersion": 2, "ArtifactName": "codestra/vicidial:test",
+             "ArtifactType": "container_image", "CreatedAt": "2026-08-26T00:00:00Z",
              "Metadata": {"ImageID": f"sha256:{image_id}"},
              "Results": [{"Target": "runtime", "Class": "os-pkgs", "Type": "alpine",
-                          "Packages": [], "Vulnerabilities": []}]}
+                          "Vulnerabilities": []}]}
     assert verify(policy, grype, metadata, regression, "a" * 40,
                   today=__import__("datetime").date(2026, 8, 26),
                   trivy=trivy)["status"] == "PASS"
