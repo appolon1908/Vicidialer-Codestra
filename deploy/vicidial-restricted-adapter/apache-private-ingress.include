@@ -1,5 +1,4 @@
-# Include inside the accepted edge.internal.codestra.agency
-# 10.40.0.2:8443 mTLS VirtualHost. The adapter stays loopback-only.
+# Include inside the accepted 10.40.0.2:8443 mTLS VirtualHost.
 <LocationMatch "^/restricted-vicidial/(?:health|ready|version)$">
     <RequireAll>
         Require method GET

@@ -144,6 +144,7 @@ def test_release_document_round_trip(
         json.dumps(document),
         encoding="utf-8",
     )
+    (tmp_path / "SOURCE.COMMIT").write_text(SHA + "\n", encoding="utf-8")
     monkeypatch.delenv("CODESTRA_BUILD_INFO_FILE", raising=False)
     monkeypatch.delenv(
         "CODESTRA_RELEASE_METADATA_REQUIRED",

@@ -131,6 +131,11 @@ def load_release_info(
             metadata_file.read_text(encoding="utf-8")
         )
         result = validate_release_document(document)
+        source_commit_file = metadata_file.with_name("SOURCE.COMMIT")
+        if required:
+            source_commit = source_commit_file.read_text(encoding="utf-8").strip()
+            if source_commit != result["git_sha"]:
+                raise ValueError("SOURCE.COMMIT and BUILD_INFO git_sha mismatch")
         result["verified"] = True
         result["metadata_source"] = "BUILD_INFO.json"
         return result
