@@ -27,6 +27,30 @@ jobs:
         run: |
           test "$(git rev-parse HEAD)" = "${SOURCE_SHA}"
           test -z "$(git status --porcelain --untracked-files=all)"
+      - name: Install checksum-verified Gitleaks
+        env:
+          GITLEAKS_VERSION: "8.30.1"
+          GITLEAKS_SHA256: "551f6fc83ea457d62a0d98237cbad105af8d557003051f41f3e7ca7b3f2470eb"
+        run: |
+          archive="${RUNNER_TEMP}/gitleaks.tar.gz"
+          curl --fail --silent --show-error --location \
+            "https://github.com/gitleaks/gitleaks/releases/download/v${GITLEAKS_VERSION}/gitleaks_${GITLEAKS_VERSION}_linux_x64.tar.gz" \
+            --output "${archive}"
+          echo "${GITLEAKS_SHA256}  ${archive}" | sha256sum --check -
+          tar -xzf "${archive}" -C "${RUNNER_TEMP}" gitleaks
+          install -m 0755 "${RUNNER_TEMP}/gitleaks" "${RUNNER_TEMP}/gitleaks-bin"
+      - name: Enforce exact source secret gate
+        run: '"${RUNNER_TEMP}/gitleaks-bin" dir --no-banner --redact --exit-code 1 .'
+      - name: Validate production and shadow Compose contracts
+        run: |
+          touch "${RUNNER_TEMP}/adapter-hmac" "${RUNNER_TEMP}/vicidial-db.json"
+          mkdir -p "${RUNNER_TEMP}/mysqld"
+          export VICIDIAL_ADAPTER_IMAGE_DIGEST="sha256:0000000000000000000000000000000000000000000000000000000000000000"
+          export CODESTRA_ADAPTER_HMAC_SECRET_FILE="${RUNNER_TEMP}/adapter-hmac"
+          export VICIDIAL_DB_SECRET_FILE="${RUNNER_TEMP}/vicidial-db.json"
+          export VICIDIAL_DB_SOCKET_DIR="${RUNNER_TEMP}/mysqld"
+          docker compose -f vicidial/docker/compose.shadow.yml config --quiet
+          docker compose -f vicidial/docker/compose.production.yml config --quiet
       - uses: actions/setup-python@v5
         with:
           python-version: "3.11"
@@ -104,6 +128,14 @@ jobs:
           severity: CRITICAL,HIGH,MEDIUM,LOW,UNKNOWN
           exit-code: "0"
           ignore-unfixed: false
+      - name: Enforce exact-image secret gate
+        uses: aquasecurity/trivy-action@v0.36.0
+        with:
+          image-ref: codestra/vicidial-restricted-adapter:${{ env.SOURCE_SHA }}
+          scanners: secret
+          format: json
+          output: evidence/IMAGE_SECRET_SCAN.json
+          exit-code: "1"
       - name: Generate complete Grype vulnerability report
         uses: anchore/scan-action@v7.4.0
         with:
@@ -122,6 +154,31 @@ jobs:
             --regression evidence/PYTHON_SECURITY_REGRESSION.json \
             --expected-sha "${SOURCE_SHA}" \
             --output evidence/VULNERABILITY_ADJUDICATION.json
+      - name: Build and scan minimal evidence export
+        run: |
+          export_dir="evidence/evidence-export"
+          mkdir -p "${export_dir}"
+          cp evidence/RELEASE_MANIFEST.json \
+             evidence/vicidial-adapter-sbom.spdx.json \
+             evidence/vicidial-adapter-provenance.intoto.json \
+             evidence/VULNERABILITY_ADJUDICATION.json \
+             evidence/PYTHON_SECURITY_REGRESSION.json \
+             evidence/IMAGE_SECRET_SCAN.json "${export_dir}/"
+          cp -R evidence/test-results "${export_dir}/test-results"
+          jq 'walk(if type == "object" then del(.description,.Description,.created_by,.CreatedBy,.config,.urls,.URLs) else . end)' \
+            evidence/GRYPE_REPORT.json > "${export_dir}/GRYPE_REPORT.json"
+          jq '{SchemaVersion,ArtifactName,ArtifactType,Metadata:{OS:.Metadata.OS,ImageID:.Metadata.ImageID,RepoDigests:.Metadata.RepoDigests},Results:[.Results[]?|{Target,Class,Type,Vulnerabilities:[.Vulnerabilities[]?|{VulnerabilityID,PkgName,InstalledVersion,FixedVersion,Status,Severity,CVSS}]}]}' \
+            evidence/VULNERABILITY_REPORT.json > "${export_dir}/TRIVY_REPORT.json"
+          jq '{SchemaVersion,ArtifactName,ArtifactType,Metadata:{OS:.Metadata.OS,ImageID:.Metadata.ImageID,RepoDigests:.Metadata.RepoDigests},Results:[.Results[]?|{Target,Class,Type,Secrets:(.Secrets//[])}]}' \
+            evidence/IMAGE_SECRET_SCAN.json > "${export_dir}/IMAGE_SECRET_SCAN.json"
+          jq 'map({Id,Digest,RepoDigests,Architecture,Os,Config:{User:.Config.User,Labels:.Config.Labels}})' \
+            evidence/IMAGE_METADATA.json > "${export_dir}/IMAGE_METADATA.json"
+          find "${export_dir}" -type f -exec chmod 0600 {} +
+          (cd "${export_dir}" && find . -type f -print0 | sort -z | xargs -0 sha256sum) \
+            > evidence/EVIDENCE_EXPORT_CHECKSUMS.sha256
+          "${RUNNER_TEMP}/gitleaks-bin" dir --no-banner --redact --exit-code 1 \
+            --report-format json --report-path evidence/EVIDENCE_SECRET_SCAN.json \
+            "${export_dir}"
       - name: Export attested linux/amd64 OCI candidate
         uses: docker/build-push-action@v6
         with:

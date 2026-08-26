@@ -116,6 +116,10 @@ def test_workflow_builds_without_push_and_generates_evidence():
     assert "persist-credentials: false" in text
     assert 'git rev-parse HEAD)\" = \"${SOURCE_SHA}' in text
     assert "git status --porcelain --untracked-files=all" in text
+    assert "Enforce exact source secret gate" in text
+    assert "Enforce exact-image secret gate" in text
+    assert "EVIDENCE_SECRET_SCAN.json" in text
+    assert text.count("docker compose -f vicidial/docker/compose.") == 2
 
 
 @pytest.mark.skipif(not os.environ.get("VICIDIAL_CONTAINER_TEST_IMAGE"),
