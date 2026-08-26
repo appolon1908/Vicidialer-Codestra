@@ -51,6 +51,12 @@ def test_runtime_security_regression_is_bounded_and_version_pinned():
     assert "Morsel" in text and "pickle" in text and "js_output" in text
 
 
+def test_provenance_build_type_records_selected_engine():
+    text = (DOCKER / "generate_provenance.py").read_text()
+    assert 'buildtypes/{engine}/v1' in text
+    assert 'buildtypes/podman/v1' not in text
+
+
 def test_vulnerability_policy_is_exact_and_verifier_fails_closed(tmp_path):
     from vicidial.scripts.verify_vulnerability_adjudication import verify
     policy = json.loads((ROOT / "vicidial/config/vulnerability-adjudication.json").read_text())

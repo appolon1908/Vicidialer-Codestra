@@ -25,7 +25,7 @@ def main() -> int:
         "predicateType": "https://slsa.dev/provenance/v1",
         "predicate": {
             "buildDefinition": {
-                "buildType": "https://codestra.example/buildtypes/podman/v1",
+                "buildType": f"https://codestra.example/buildtypes/{engine}/v1",
                 "externalParameters": {"platform": "linux/amd64"},
                 "resolvedDependencies": [{
                     "uri": "git+https://github.com/appolon1908-hue/codestra-production-platform",
