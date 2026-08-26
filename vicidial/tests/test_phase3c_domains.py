@@ -211,15 +211,15 @@ def test_first_agent_adoption_recovers_after_mysql_commit_before_mapping(
         },
     }
     command = AgentCommand.model_validate(payload)
-    original_put = service.state.put_agent_mapping
+    original_finalize = service.state.finalize_agent_adoption
     monkeypatch.setattr(
-        service.state, "put_agent_mapping",
+        service.state, "finalize_agent_adoption",
         lambda *args: (_ for _ in ()).throw(RuntimeError("simulated crash")),
     )
     with pytest.raises(RuntimeError, match="simulated crash"):
         service.sync_agent("adopt-crash", command)
     assert service.state.agent_adoption_intent("COD1001") is not None
-    monkeypatch.setattr(service.state, "put_agent_mapping", original_put)
+    monkeypatch.setattr(service.state, "finalize_agent_adoption", original_finalize)
     recovered = service.sync_agent("adopt-retry", command)
     assert recovered["actual"]["full_name"] == "Codestra Agent"
     assert service.state.mapping("agent", "COD1001")["actual_id"] == "COD1001"

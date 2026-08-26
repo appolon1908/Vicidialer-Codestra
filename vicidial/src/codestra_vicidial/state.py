@@ -324,6 +324,39 @@ class StateStore:
         )
         self.db.commit()
 
+    def finalize_agent_adoption(
+        self, user_id: str, actual_id: str, desired_hash: str, desired: dict
+    ) -> None:
+        """Atomically publish ownership, desired state, and intent completion."""
+        try:
+            self.db.execute("BEGIN IMMEDIATE")
+            intent = self.db.execute(
+                "SELECT desired_hash FROM agent_adoption_intents WHERE user_id=?",
+                (user_id,),
+            ).fetchone()
+            if intent is None or intent["desired_hash"] != desired_hash:
+                raise ValueError("agent adoption intent missing or changed")
+            self.db.execute(
+                "INSERT INTO mappings(kind,external_id,actual_id,payload_hash) "
+                "VALUES('agent',?,?,?) ON CONFLICT(kind,external_id) DO UPDATE SET "
+                "payload_hash=excluded.payload_hash",
+                (user_id, actual_id, desired_hash),
+            )
+            self.db.execute(
+                "INSERT INTO agent_desired VALUES(?,?,?,?) "
+                "ON CONFLICT(user_id) DO UPDATE SET desired_json=excluded.desired_json,"
+                "desired_hash=excluded.desired_hash,updated_at=excluded.updated_at",
+                (user_id, json.dumps(desired, sort_keys=True), desired_hash,
+                 datetime.now(timezone.utc).isoformat()),
+            )
+            self.db.execute(
+                "DELETE FROM agent_adoption_intents WHERE user_id=?", (user_id,)
+            )
+            self.db.commit()
+        except Exception:
+            self.db.rollback()
+            raise
+
     def persist_reconciliation_run(
         self,
         run_id: str,

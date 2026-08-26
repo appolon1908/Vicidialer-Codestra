@@ -353,11 +353,10 @@ class AdapterService:
                     == set(desired["inbound_groups"])
                 )
                 if intent is not None and controlled_match:
-                    self.state.put_agent_mapping(
-                        command.agent.user_id, command.agent.user_id, desired_hash
+                    self.state.finalize_agent_adoption(
+                        command.agent.user_id, command.agent.user_id,
+                        desired_hash, desired,
                     )
-                    self.state.put_agent_desired(command.agent.user_id, desired)
-                    self.state.clear_agent_adoption_intent(command.agent.user_id)
                     return {"status": "disabled", "actual": existing}
             if mapping and mapping["actual_id"] != command.agent.user_id:
                 raise CollisionError("agent ownership mapping collision")
@@ -381,11 +380,16 @@ class AdapterService:
                     raise RuntimeError(
                         "agent read-back mismatch: " + ",".join(mismatches)
                     )
-                self.state.put_agent_mapping(
-                    command.agent.user_id, command.agent.user_id, desired_hash
-                )
-                self.state.put_agent_desired(command.agent.user_id, desired)
-                self.state.clear_agent_adoption_intent(command.agent.user_id)
+                if command.agent.adopt_existing_sha256:
+                    self.state.finalize_agent_adoption(
+                        command.agent.user_id, command.agent.user_id,
+                        desired_hash, desired,
+                    )
+                else:
+                    self.state.put_agent_mapping(
+                        command.agent.user_id, command.agent.user_id, desired_hash
+                    )
+                    self.state.put_agent_desired(command.agent.user_id, desired)
                 return {"status": "disabled", "actual": actual}
             finally:
                 release_lock = getattr(
