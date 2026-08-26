@@ -9,6 +9,7 @@ from codestra_vicidial.repository import MemoryRepository
 from codestra_vicidial.security import RequestAuthenticator
 from codestra_vicidial.service import AdapterService, FeatureFlags
 from codestra_vicidial.state import StateStore
+from campaign_provisioning.lifecycle import PrivateAdapterClient
 from test_adapter import campaign_payload
 
 
@@ -50,6 +51,23 @@ def verify(auth: RequestAuthenticator, signature: str, **changes) -> None:
 def test_signature_v2_accepts_exact_request() -> None:
     auth = authenticator()
     verify(auth, signed(auth))
+
+
+@pytest.mark.parametrize("method,path,body,key,scopes", [
+    ("GET", "/v1/campaigns/TEST/actual-state", b"", "", {"telephony:read"}),
+    ("POST", "/v1/campaigns/validate", BODY, IDEMPOTENCY_KEY,
+     {"telephony:read", "telephony:provision"}),
+])
+def test_gateway_and_adapter_share_signature_v2_vectors(method, path, body, key, scopes):
+    client = PrivateAdapterClient.__new__(PrivateAdapterClient)
+    client.identity = IDENTITY
+    client.key = KEY
+    gateway = client._signature(method, path, scopes, NOW, NONCE, key, body)
+    adapter = authenticator().sign(
+        NOW, NONCE, body, method=method, path=path, identity=IDENTITY,
+        scopes=scopes, idempotency_key=key,
+    )
+    assert gateway == adapter
 
 
 @pytest.mark.parametrize("change", [
