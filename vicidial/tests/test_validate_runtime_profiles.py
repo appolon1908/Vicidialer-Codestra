@@ -12,15 +12,28 @@ def environment(tmp_path, deployment):
     secret.write_bytes(b"x" * 32)
     secret.chmod(0o600)
     campaigns = {}
+    backup = tmp_path / "backup.tar"
+    backup.write_bytes(b"synthetic backup evidence")
+    source_sha = "a" * 40
+    build_info = tmp_path / "BUILD_INFO.json"
+    build_info.write_text(json.dumps({
+        "application": "codestra-vicidial-restricted-adapter",
+        "version": "0.2.0rc1", "release": "R3",
+        "git_sha": source_sha, "build_id": "vicidial-r3-" + source_sha[:12],
+        "built_at": "2026-08-25T20:00:00Z",
+        "environment": "production-candidate", "python": "3.11",
+    }))
+    (tmp_path / "SOURCE.COMMIT").write_text(source_sha + "\n")
     policy = tmp_path / "reconciliation-policy.json"
     policy.write_text(json.dumps({
-        "protected_sha": "a" * 40,
+        "protected_sha": source_sha,
         "plan_sha256": hashlib.sha256(b"{}").hexdigest(),
         "authorization_reference": "CHG-20260821-CAMPAIGN-RECONCILIATION",
         "backup": {
-            "reference": "backup/20260822T120000Z",
+            "reference": "backup/20260822T120000Z", "artifact": str(backup),
             "created_at": datetime.now(timezone.utc).isoformat(),
-            "checksums": "PASS", "validation": "PASS",
+            "sha256": hashlib.sha256(backup.read_bytes()).hexdigest(),
+            "validation": "PASS",
         },
         "campaigns": campaigns,
     }))
@@ -41,11 +54,20 @@ def environment(tmp_path, deployment):
         "KEYCLOAK_ISSUER_URL": "https://auth.codestra.co/realms/codestra",
         "CODESTRA_ADAPTER_HMAC_FILE": str(secret),
         "CODESTRA_RECONCILIATION_POLICY_FILE": str(policy),
+        "CODESTRA_RELEASE_METADATA_REQUIRED": (
+            "true" if deployment == "production-reconciliation" else "false"
+        ),
+        "CODESTRA_BUILD_INFO_FILE": str(build_info),
     }
 
 
 def run(env):
-    return subprocess.run([sys.executable, "vicidial/scripts/validate_runtime.py"], env=env, capture_output=True)
+    script = Path(__file__).resolve().parents[1] / "scripts" / "validate_runtime.py"
+    return subprocess.run(
+        [sys.executable, str(script)],
+        env=env,
+        capture_output=True,
+    )
 
 
 def test_production_reconciliation_profile_is_bounded(tmp_path):
@@ -68,7 +90,7 @@ def test_production_reconciliation_requires_verified_backup_and_exact_plan(tmp_p
     env = environment(tmp_path, "production-reconciliation")
     policy = env["CODESTRA_RECONCILIATION_POLICY_FILE"]
     document = json.loads(open(policy, encoding="utf-8").read())
-    document["backup"]["checksums"] = "FAIL"
+    document["backup"]["sha256"] = "0" * 64
     open(policy, "w", encoding="utf-8").write(json.dumps(document))
     assert run(env).returncode != 0
 

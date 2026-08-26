@@ -42,12 +42,112 @@ class StateStore:
           campaign_id TEXT PRIMARY KEY, transfer_targets TEXT NOT NULL,
           recording_policy_reference TEXT NOT NULL, reporting_mapping TEXT NOT NULL,
           callback_enabled INTEGER NOT NULL, updated_at TEXT NOT NULL);
+        CREATE TABLE IF NOT EXISTS agent_desired(
+          user_id TEXT PRIMARY KEY, desired_json TEXT NOT NULL,
+          desired_hash TEXT NOT NULL, updated_at TEXT NOT NULL);
+        CREATE TABLE IF NOT EXISTS reconciliation_runs(
+          run_id TEXT PRIMARY KEY, result_json TEXT NOT NULL,
+          created_at TEXT NOT NULL);
         CREATE TABLE IF NOT EXISTS evidence(
           evidence_id INTEGER PRIMARY KEY AUTOINCREMENT, occurred_at TEXT NOT NULL,
           operation TEXT NOT NULL, target_hash TEXT NOT NULL, outcome TEXT NOT NULL,
           redacted_json TEXT NOT NULL);
         """)
+        self.db.executescript("""
+        CREATE TABLE IF NOT EXISTS auth_nonces(
+          nonce TEXT PRIMARY KEY,
+          expires_at INTEGER NOT NULL
+        );
+
+        CREATE INDEX IF NOT EXISTS auth_nonces_expiry
+          ON auth_nonces(expires_at);
+
+        CREATE TABLE IF NOT EXISTS auth_rate_events(
+          source TEXT NOT NULL,
+          occurred_at INTEGER NOT NULL
+        );
+
+        CREATE INDEX IF NOT EXISTS auth_rate_events_source_time
+          ON auth_rate_events(source, occurred_at);
+        """)
         self.db.commit()
+
+    def consume_nonce(
+        self,
+        nonce: str,
+        current: int,
+        expiry: int,
+    ) -> bool:
+        try:
+            self.db.execute("BEGIN IMMEDIATE")
+
+            self.db.execute(
+                "DELETE FROM auth_nonces "
+                "WHERE expires_at < ?",
+                (current,),
+            )
+
+            try:
+                self.db.execute(
+                    "INSERT INTO auth_nonces("
+                    "nonce,expires_at"
+                    ") VALUES(?,?)",
+                    (nonce, expiry),
+                )
+
+            except sqlite3.IntegrityError:
+                self.db.rollback()
+                return False
+
+            self.db.commit()
+            return True
+
+        except Exception:
+            self.db.rollback()
+            raise
+
+    def consume_rate_limit(
+        self,
+        source: str,
+        current: int,
+        window_seconds: int,
+        request_limit: int,
+    ) -> bool:
+        cutoff = current - window_seconds
+
+        try:
+            self.db.execute("BEGIN IMMEDIATE")
+
+            self.db.execute(
+                "DELETE FROM auth_rate_events "
+                "WHERE occurred_at <= ?",
+                (cutoff,),
+            )
+
+            row = self.db.execute(
+                "SELECT COUNT(*) AS count "
+                "FROM auth_rate_events "
+                "WHERE source=? AND occurred_at>?",
+                (source, cutoff),
+            ).fetchone()
+
+            if int(row["count"]) >= request_limit:
+                self.db.rollback()
+                return False
+
+            self.db.execute(
+                "INSERT INTO auth_rate_events("
+                "source,occurred_at"
+                ") VALUES(?,?)",
+                (source, current),
+            )
+
+            self.db.commit()
+            return True
+
+        except Exception:
+            self.db.rollback()
+            raise
 
     @staticmethod
     def digest(value: object) -> str:
@@ -118,6 +218,29 @@ class StateStore:
             self.db.rollback()
             raise
 
+    def put_agent_mapping(
+        self, external_id: str, actual_id: str, payload_hash: str
+    ) -> None:
+        """Update agent desired state while preserving stable ownership."""
+        try:
+            self.db.execute("BEGIN IMMEDIATE")
+            current = self.mapping("agent", external_id)
+            if current is not None and current["actual_id"] != actual_id:
+                raise ValueError("ownership collision: agent mapping changed")
+            claimed = self.mapping_for_actual("agent", actual_id)
+            if claimed is not None and claimed["external_id"] != external_id:
+                raise ValueError("ownership collision: agent already claimed")
+            self.db.execute(
+                "INSERT INTO mappings(kind,external_id,actual_id,payload_hash) "
+                "VALUES('agent',?,?,?) ON CONFLICT(kind,external_id) DO UPDATE SET "
+                "payload_hash=excluded.payload_hash",
+                (external_id, actual_id, payload_hash),
+            )
+            self.db.commit()
+        except Exception:
+            self.db.rollback()
+            raise
+
     def put_campaign_desired(self, canonical_id: str, actual_id: str,
                              desired: dict) -> None:
         payload_hash = self.digest(desired)
@@ -151,6 +274,78 @@ class StateStore:
                 "FROM campaign_desired ORDER BY canonical_id"
             ).fetchall()
         ]
+
+    def put_agent_desired(self, user_id: str, desired: dict) -> None:
+        payload_hash = self.digest(desired)
+        self.db.execute(
+            "INSERT INTO agent_desired VALUES(?,?,?,?) "
+            "ON CONFLICT(user_id) DO UPDATE SET desired_json=excluded.desired_json,"
+            "desired_hash=excluded.desired_hash,updated_at=excluded.updated_at",
+            (user_id, json.dumps(desired, sort_keys=True), payload_hash,
+             datetime.now(timezone.utc).isoformat()),
+        )
+        self.db.commit()
+
+    def agent_desired(self, user_id: str) -> dict | None:
+        row = self.db.execute(
+            "SELECT desired_json,desired_hash FROM agent_desired WHERE user_id=?",
+            (user_id,),
+        ).fetchone()
+        return (
+            {"desired": json.loads(row["desired_json"]),
+             "desired_hash": row["desired_hash"]}
+            if row else None
+        )
+
+    def persist_reconciliation_run(
+        self,
+        run_id: str,
+        result: dict,
+        idempotency_key: str,
+        request_hash: str,
+    ) -> dict | None:
+        """Atomically persist the run and its replay authority."""
+        try:
+            self.db.execute("BEGIN IMMEDIATE")
+            prior = self.db.execute(
+                "SELECT request_hash,result FROM requests "
+                "WHERE operation=? AND idempotency_key=?",
+                ("reconciliation.run", idempotency_key),
+            ).fetchone()
+            if prior is not None:
+                if prior["request_hash"] != request_hash:
+                    raise ValueError("idempotency conflict")
+                self.db.commit()
+                return json.loads(prior["result"])
+            created_at = datetime.now(timezone.utc).isoformat()
+            self.db.execute(
+                "INSERT INTO reconciliation_runs VALUES(?,?,?)",
+                (run_id, json.dumps(result, sort_keys=True), created_at),
+            )
+            response = {"run_id": run_id, **result}
+            self.db.execute(
+                "INSERT INTO requests VALUES(?,?,?,?,?)",
+                (
+                    "reconciliation.run", idempotency_key, request_hash,
+                    json.dumps(response, sort_keys=True), created_at,
+                ),
+            )
+            self.db.commit()
+            return None
+        except Exception:
+            self.db.rollback()
+            raise
+
+    def reconciliation_run(self, run_id: str) -> dict | None:
+        row = self.db.execute(
+            "SELECT result_json,created_at FROM reconciliation_runs WHERE run_id=?",
+            (run_id,),
+        ).fetchone()
+        return (
+            {"run_id": run_id, "created_at": row["created_at"],
+             **json.loads(row["result_json"])}
+            if row else None
+        )
 
     def put_group_ownership(self, code: str, campaign_id: str,
                             business_unit: str, kind: str) -> None:

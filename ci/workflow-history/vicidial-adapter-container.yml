@@ -1,0 +1,142 @@
+name: VICIdial restricted adapter container
+
+on:
+  pull_request:
+    paths:
+      - "campaign_provisioning/**"
+      - "vicidial/**"
+      - "deploy/vicidial-restricted-adapter/**"
+      - ".github/workflows/vicidial-adapter-container.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build-test-evidence:
+    runs-on: ubuntu-24.04
+    env:
+      SOURCE_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ env.SOURCE_SHA }}
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Verify exact clean source checkout
+        run: |
+          test "$(git rev-parse HEAD)" = "${SOURCE_SHA}"
+          test -z "$(git status --porcelain --untracked-files=all)"
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Install locked runtime and bounded test dependencies
+        run: |
+          python -m pip install --requirement vicidial/docker/requirements.lock
+          python -m pip install "httpx2==2.12.0" "pytest>=8,<10" "PyYAML>=6,<7"
+      - name: Prove TestClient uses httpx2 without classic httpx
+        run: |
+          test -z "$(python -m pip show httpx 2>/dev/null)"
+          PYTHONPATH=vicidial/src python -m pytest -q \
+            vicidial/tests/test_httpx2_testclient.py
+      - name: Run Phase 3 and complete VICIdial suites
+        env:
+          CODESTRA_ADAPTER_STATE: "${{ runner.temp }}/vicidial-container-test-state.sqlite3"
+        run: |
+          mkdir -p evidence/test-results
+          PYTHONPATH=vicidial/src python -m pytest -q --junitxml=evidence/test-results/phase3a.xml vicidial/tests/test_phase3a_release_network.py
+          PYTHONPATH=vicidial/src python -m pytest -q --junitxml=evidence/test-results/phase3b.xml vicidial/tests/test_phase3b_security.py
+          PYTHONPATH=vicidial/src python -m pytest -q --junitxml=evidence/test-results/phase3c.xml vicidial/tests/test_phase3c_domains.py
+          PYTHONPATH=vicidial/src python -m pytest -q --junitxml=evidence/test-results/phase3d.xml vicidial/tests/test_phase3d_container.py
+          PYTHONPATH=vicidial/src python -m pytest -q --junitxml=evidence/test-results/full.xml vicidial/tests
+      - uses: docker/setup-buildx-action@v3
+      - name: Build linux/amd64 locally with provenance and SBOM attestations
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: vicidial/docker/Dockerfile
+          platforms: linux/amd64
+          push: false
+          load: true
+          tags: codestra/vicidial-restricted-adapter:${{ env.SOURCE_SHA }}
+          build-args: |
+            SOURCE_SHA=${{ env.SOURCE_SHA }}
+            BUILD_DATE=2026-01-01T00:00:00Z
+          sbom: false
+          provenance: false
+      - name: Test container contract
+        env:
+          VICIDIAL_CONTAINER_TEST_IMAGE: codestra/vicidial-restricted-adapter:${{ env.SOURCE_SHA }}
+          VICIDIAL_CONTAINER_ENGINE: docker
+        run: python -m pytest -q vicidial/tests/test_phase3d_container.py
+      - name: Capture exact image metadata and runtime regression
+        run: |
+          mkdir -p evidence
+          docker image inspect codestra/vicidial-restricted-adapter:${SOURCE_SHA} > evidence/IMAGE_METADATA.json
+          docker run --rm --entrypoint python codestra/vicidial-restricted-adapter:${SOURCE_SHA} \
+            /usr/local/libexec/codestra-security-regression > evidence/PYTHON_SECURITY_REGRESSION.json
+      - name: Generate and verify source manifest
+        run: |
+          python vicidial/scripts/generate_release_manifest.py --root . \
+            --source-sha "${SOURCE_SHA}" --generated-at 2026-01-01T00:00:00Z \
+            --output evidence/RELEASE_MANIFEST.json
+          python vicidial/scripts/verify_release_manifest.py --root . \
+            --manifest evidence/RELEASE_MANIFEST.json
+      - name: Generate reviewable SBOM
+        uses: anchore/sbom-action@v0
+        with:
+          image: codestra/vicidial-restricted-adapter:${{ env.SOURCE_SHA }}
+          format: spdx-json
+          output-file: evidence/vicidial-adapter-sbom.spdx.json
+      - name: Generate local provenance statement
+        run: |
+          mkdir -p evidence
+          python vicidial/docker/generate_provenance.py \
+            --image codestra/vicidial-restricted-adapter:${SOURCE_SHA} \
+            --source-sha "${SOURCE_SHA}" \
+            --output evidence/vicidial-adapter-provenance.intoto.json
+      - name: Generate complete Trivy vulnerability report
+        uses: aquasecurity/trivy-action@v0.36.0
+        with:
+          image-ref: codestra/vicidial-restricted-adapter:${{ env.SOURCE_SHA }}
+          format: json
+          output: evidence/VULNERABILITY_REPORT.json
+          severity: CRITICAL,HIGH,MEDIUM,LOW,UNKNOWN
+          exit-code: "0"
+          ignore-unfixed: false
+      - name: Generate complete Grype vulnerability report
+        uses: anchore/scan-action@v7.4.0
+        with:
+          image: codestra/vicidial-restricted-adapter:${{ env.SOURCE_SHA }}
+          output-format: json
+          output-file: evidence/GRYPE_REPORT.json
+          severity-cutoff: negligible
+          fail-build: false
+      - name: Verify exact-image vulnerability adjudication
+        run: |
+          python vicidial/scripts/verify_vulnerability_adjudication.py \
+            --policy vicidial/config/vulnerability-adjudication.json \
+            --grype evidence/GRYPE_REPORT.json \
+            --trivy evidence/VULNERABILITY_REPORT.json \
+            --metadata evidence/IMAGE_METADATA.json \
+            --regression evidence/PYTHON_SECURITY_REGRESSION.json \
+            --expected-sha "${SOURCE_SHA}" \
+            --output evidence/VULNERABILITY_ADJUDICATION.json
+      - name: Export attested linux/amd64 OCI candidate
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: vicidial/docker/Dockerfile
+          platforms: linux/amd64
+          push: false
+          outputs: type=oci,dest=evidence/vicidial-adapter.oci.tar
+          build-args: |
+            SOURCE_SHA=${{ env.SOURCE_SHA }}
+            BUILD_DATE=2026-01-01T00:00:00Z
+          sbom: true
+          provenance: mode=max
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: vicidial-adapter-container-evidence
+          path: evidence/

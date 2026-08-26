@@ -1,0 +1,56 @@
+services:
+  restricted-adapter:
+    image: codestra/vicidial-restricted-adapter@${VICIDIAL_ADAPTER_IMAGE_DIGEST:?immutable image digest required}
+    ports:
+      - "127.0.0.1:8097:8097"
+    user: "10001:10001"
+    read_only: true
+    cap_drop: [ALL]
+    security_opt:
+      - no-new-privileges:true
+    init: true
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,nodev,size=16m,uid=10001,gid=10001
+      - /run/codestra:rw,noexec,nosuid,nodev,size=4m,uid=10001,gid=10001
+    volumes:
+      - adapter-state:/var/lib/codestra-vicidial
+      - ${VICIDIAL_DB_SOCKET_DIR:?MariaDB socket directory required}:/run/mysqld:ro
+    secrets:
+      - source: adapter-hmac
+        target: adapter-hmac
+      - source: vicidial-db
+        target: vicidial-db.json
+    environment:
+      CODESTRA_ADAPTER_BACKEND: mysql
+      CODESTRA_ADAPTER_DEPLOYMENT: production-candidate
+      CODESTRA_ADAPTER_HMAC_FILE: /run/secrets/adapter-hmac
+      CODESTRA_VICIDIAL_DB_FILE: /run/secrets/vicidial-db.json
+      AUTHORIZED_PRIVATE_SOURCE_IP: 10.40.0.1
+      ENABLE_VICIDIAL_WRITES: "false"
+      ENABLE_PROVISIONING: "false"
+      ENABLE_AGENT_SYNC: "false"
+      ENABLE_LEAD_PUBLICATION: "false"
+      ENABLE_CALLBACK_WRITES: "false"
+      ENABLE_TRANSFER_POLICY_SYNC: "false"
+      ENABLE_PSTN_DIALING: "false"
+      ENABLE_SMS_DELIVERY: "false"
+      ENABLE_EMAIL_DELIVERY: "false"
+      ENABLE_EXTERNAL_DELIVERY: "false"
+    restart: unless-stopped
+    stop_grace_period: 20s
+    pids_limit: 128
+    mem_limit: 512m
+    cpus: 1.0
+    ulimits:
+      nofile:
+        soft: 1024
+        hard: 4096
+
+volumes:
+  adapter-state:
+
+secrets:
+  adapter-hmac:
+    file: ${CODESTRA_ADAPTER_HMAC_SECRET_FILE:?HMAC secret file required}
+  vicidial-db:
+    file: ${CODESTRA_VICIDIAL_DB_SECRET_FILE:?database secret file required}

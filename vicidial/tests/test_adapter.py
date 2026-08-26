@@ -145,9 +145,16 @@ def harness(tmp_path: Path):
     repo = MemoryRepository()
     service = AdapterService(
         repo, StateStore(tmp_path / "state.sqlite3"),
-        FeatureFlags(writes=True, provisioning=True, agent_sync=True,
-                     lead_publication=True, callback_writes=True,
-                     transfer_policy_sync=True, production_dialing=False),
+        FeatureFlags(
+            writes=True,
+            provisioning=True,
+            agent_sync=True,
+            lead_publication=True,
+            allowed_lead_list_ids=frozenset({21001}),
+            callback_writes=True,
+            transfer_policy_sync=True,
+            production_dialing=False,
+        ),
     )
     return service, repo
 
@@ -155,9 +162,16 @@ def harness(tmp_path: Path):
 def service_for(repo: MemoryRepository, tmp_path: Path) -> AdapterService:
     return AdapterService(
         repo, StateStore(tmp_path / "state.sqlite3"),
-        FeatureFlags(writes=True, provisioning=True, agent_sync=True,
-                     lead_publication=True, callback_writes=True,
-                     transfer_policy_sync=True, production_dialing=False),
+        FeatureFlags(
+            writes=True,
+            provisioning=True,
+            agent_sync=True,
+            lead_publication=True,
+            allowed_lead_list_ids=frozenset({21001}),
+            callback_writes=True,
+            transfer_policy_sync=True,
+            production_dialing=False,
+        ),
     )
 
 
@@ -177,19 +191,25 @@ def test_route_contract_is_present(harness):
         ("GET", "/health"), ("GET", "/ready"), ("GET", "/version"),
         ("POST", "/v1/campaigns/validate"),
         ("POST", "/v1/campaigns/provision-disabled"),
-        ("POST", "/v1/campaigns/update-disabled"),
         ("POST", "/v1/campaigns/disable"),
         ("POST", "/v1/reconciliation/campaigns/provision-disabled"),
         ("GET", "/v1/campaigns/{campaign_id}/actual-state"),
         ("POST", "/v1/agents/sync"), ("POST", "/v1/agents/disable"),
         ("GET", "/v1/agents/{user_id}/actual-state"),
-        ("POST", "/v1/leads/publish"), ("GET", "/v1/leads/by-idempotency/{key}"),
+        ("POST", "/v1/leads/publish"),
+        ("GET", "/v1/leads/by-external-id/{external_id}"),
         ("POST", "/v1/callbacks/create"), ("GET", "/v1/callbacks/{callback_id}"),
-        ("POST", "/v1/scripts/sync"), ("POST", "/v1/dispositions/sync"),
         ("POST", "/v1/transfer-policies/sync"),
         ("POST", "/v1/reconciliation/run"), ("GET", "/v1/reconciliation/{run_id}"),
     }
     assert required <= routes
+    removed = {
+        ("POST", "/v1/campaigns/update-disabled"),
+        ("POST", "/v1/scripts/sync"),
+        ("POST", "/v1/dispositions/sync"),
+        ("GET", "/v1/leads/by-idempotency/{key}"),
+    }
+    assert routes.isdisjoint(removed)
     prohibited_fragments = {"/sql", "/shell", "/command", "/files", "/exec"}
     assert not any(any(fragment in path for fragment in prohibited_fragments)
                    for _method, path in routes)
@@ -202,7 +222,10 @@ def test_auth_source_identity_scope_signature_and_replay():
     )
     body = b'{"safe":true}'
     now = int(time.time())
-    signature = auth.sign(now, "nonce-1234567890", body)
+    signature = auth.sign(
+        now, "nonce-1234567890", body,
+        scopes={"telephony:provision"},
+    )
     auth.verify(source="65.109.65.169", identity="codestra-middleware",
                 scopes={"telephony:provision"}, timestamp=now,
                 nonce="nonce-1234567890", body=body, signature=signature,
@@ -211,7 +234,9 @@ def test_auth_source_identity_scope_signature_and_replay():
     auth.verify(
         source="10.40.0.1", identity="codestra-middleware",
         scopes={"telephony:provision"}, timestamp=now, nonce=private_nonce,
-        body=body, signature=auth.sign(now, private_nonce, body),
+        body=body, signature=auth.sign(
+            now, private_nonce, body, scopes={"telephony:provision"}
+        ),
         required_scope="telephony:provision", now=now,
     )
     with pytest.raises(PermissionError, match="replay"):
@@ -232,7 +257,10 @@ def test_auth_source_identity_scope_signature_and_replay():
             "signature": signature, "required_scope": "telephony:provision", "now": now,
         } | override
         if "nonce" not in override:
-            values["signature"] = auth.sign(now, values["nonce"], body) if message != "signature" else "0" * 64
+            values["signature"] = auth.sign(
+                now, values["nonce"], body,
+                identity=values["identity"], scopes=values["scopes"],
+            ) if message != "signature" else "0" * 64
         with pytest.raises(PermissionError, match=message):
             auth.verify(**values)
 

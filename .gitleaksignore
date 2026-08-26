@@ -18,3 +18,4 @@ reports/github/SECRET_SCAN_FINDINGS.csv:generic-api-key:27
 7d2eda6f7f9cb81b1b713896bf03f585cb8c56bb:webphone_middleware/tests/test_telephony_command_client.py:generic-api-key:149
 7d2eda6f7f9cb81b1b713896bf03f585cb8c56bb:webphone_middleware/tests/test_telephony_command_client.py:generic-api-key:175
 70d28258ff9a3dd9a7eb5535e6998fca0e58e909:tests/test_campaign_email_provisioning.py:generic-api-key:64
+f99f26d2484e6cb215b827143bee73fcb2f35908:vicidial/tests/test_phase3b_security.py:generic-api-key:23

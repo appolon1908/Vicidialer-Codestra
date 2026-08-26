@@ -74,6 +74,7 @@ def additive_campaign_membership(current: str, desired: str) -> tuple[str, bool]
 class Repository(Protocol):
     def campaign(self, actual_id: str) -> dict | None: ...
     def campaign_resources(self, spec: CampaignSpec) -> dict: ...
+    def validate_campaign(self, spec: CampaignSpec) -> dict: ...
     def provision_campaign_disabled(self, spec: CampaignSpec) -> list[dict]: ...
     def disable_campaign_resources(self, spec: CampaignSpec) -> None: ...
     def disable_campaign(self, actual_id: str) -> None: ...
@@ -162,6 +163,14 @@ class MemoryRepository:
                 if item.code in self.scripts
             ],
         }
+
+    def validate_campaign(self, spec: CampaignSpec) -> dict:
+        # Exercise the exact provisioning preflight against an isolated copy.
+        # This keeps validation non-mutating without maintaining a weaker,
+        # second collision algorithm.
+        candidate = deepcopy(self)
+        candidate.provision_campaign_disabled(spec)
+        return {"valid": True, "collision": self.campaign(spec.actual_id) is not None}
 
     def provision_campaign_disabled(self, spec: CampaignSpec) -> list[dict]:
         # Preflight every possible collision before the first mutation. This is
@@ -299,10 +308,7 @@ class MemoryRepository:
         return deepcopy(self.agents.get(user_id))
 
     def sync_agent_disabled(self, spec: AgentSpec) -> dict:
-        current = self.agents.get(spec.user_id)
         desired = spec.model_dump(mode="json") | {"active": False}
-        if current and current.get("full_name") != spec.full_name:
-            raise CollisionError(f"incompatible collision: {spec.user_id}")
         self.agents[spec.user_id] = desired
         return deepcopy(desired)
 
@@ -439,6 +445,74 @@ class MySQLRepository:
             "scripts": scripts,
         }
 
+    def validate_campaign(self, spec: CampaignSpec) -> dict:
+        """Run the complete MyISAM-safe provisioning preflight without writes."""
+        description = f"CODESTRA:{spec.canonical_id}"
+        desired_campaign = {
+            "campaign_name": spec.name, "active": "N",
+            "dial_method": spec.dial_method, "local_call_time": spec.call_time,
+            "campaign_recording": spec.recording_policy,
+            "scheduled_callbacks": "Y" if spec.callback_enabled else "N",
+            "campaign_description": description,
+        }
+        current = self._one(
+            "SELECT campaign_id,campaign_name,active,dial_method,local_call_time,"
+            "campaign_recording,scheduled_callbacks,campaign_description "
+            "FROM vicidial_campaigns WHERE campaign_id=%s", (spec.actual_id,))
+        if current:
+            fields = tuple(desired_campaign)
+            mismatches = [key for key in fields if current.get(key) != desired_campaign[key]]
+            if mismatches:
+                observed_hash = hashlib.sha256(json.dumps(
+                    current, sort_keys=True, separators=(",", ":")
+                ).encode()).hexdigest()
+                if spec.adopt_existing_sha256 != observed_hash:
+                    raise CollisionError(f"incompatible ownership: {spec.actual_id}")
+                if current.get("active") != "N":
+                    raise CollisionError(f"active campaign cannot be adopted: {spec.actual_id}")
+        for item in spec.lists:
+            row = self._one(
+                "SELECT list_id,list_name,campaign_id,active FROM vicidial_lists WHERE list_id=%s",
+                (item.list_id,))
+            self._check(row, {"list_name": item.code, "campaign_id": spec.actual_id,
+                              "active": "N"},
+                        ("list_name", "campaign_id", "active"), str(item.list_id))
+        for item in spec.groups:
+            if item.kind == "user":
+                if not owned_user_group(spec.canonical_id, spec.business_unit, item.code):
+                    raise CollisionError(f"incompatible ownership: {item.code}")
+                row = self._one(
+                    "SELECT user_group AS code,group_name AS name,allowed_campaigns "
+                    "FROM vicidial_user_groups WHERE user_group=%s", (item.code,))
+                self._check(row, {"name": item.name}, ("name",), item.code)
+                if row:
+                    additive_campaign_membership(row.get("allowed_campaigns"), spec.actual_id)
+            else:
+                row = self._one(
+                    "SELECT group_id AS code,group_name AS name,active "
+                    "FROM vicidial_inbound_groups WHERE group_id=%s", (item.code,))
+                self._check(row, {"name": item.name, "active": "N"},
+                            ("name", "active"), item.code)
+        for item in spec.scripts:
+            row = self._one(
+                "SELECT script_id,script_name,script_text,active FROM vicidial_scripts "
+                "WHERE script_id=%s", (item.code,))
+            self._check(row, {"script_name": item.name, "script_text": item.text,
+                              "active": "N"},
+                        ("script_name", "script_text", "active"), item.code)
+        for item in spec.dispositions:
+            row = self._one(
+                "SELECT status_name,selectable,human_answered,category "
+                "FROM vicidial_campaign_statuses WHERE campaign_id=%s AND status=%s",
+                (spec.actual_id, item.code))
+            self._check(row, {
+                "status_name": item.name,
+                "selectable": "Y" if item.selectable else "N",
+                "human_answered": "Y" if item.human_answered else "N",
+                "category": item.category,
+            }, ("status_name", "selectable", "human_answered", "category"), item.code)
+        return {"valid": True, "collision": current is not None}
+
     @staticmethod
     def _check(current: dict | None, desired: dict, fields: tuple[str, ...], target: str) -> bool:
         if current is None:
@@ -451,6 +525,7 @@ class MySQLRepository:
         # Tables are MyISAM on this host. Each creation is disabled immediately;
         # on a later failure, created campaign/list/script/ingroup rows are retained
         # disabled as evidence and safe retry targets rather than deleted.
+        self.validate_campaign(spec)
         results: list[dict] = []
         description = f"CODESTRA:{spec.canonical_id}"
         desired_campaign = {
@@ -674,18 +749,25 @@ class MySQLRepository:
         self.db.commit()
 
     def agent(self, user_id: str) -> dict | None:
-        return self._one(
-            "SELECT user AS user_id,full_name,user_group,active,closer_campaigns "
-            "FROM vicidial_users WHERE user=%s", (user_id,))
+        row = self._one(
+            "SELECT u.user AS user_id,u.full_name,u.user_group,u.active,"
+            "u.closer_campaigns,g.allowed_campaigns FROM vicidial_users u "
+            "JOIN vicidial_user_groups g ON g.user_group=u.user_group WHERE u.user=%s",
+            (user_id,))
+        if row is None:
+            return None
+        row["campaigns"] = normalize_allowed_campaigns(row.pop("allowed_campaigns"))
+        row["inbound_groups"] = normalize_allowed_campaigns(row.pop("closer_campaigns"))
+        return row
 
     def sync_agent_disabled(self, spec: AgentSpec) -> dict:
         current = self.agent(spec.user_id)
-        if current and current["full_name"] != spec.full_name:
-            raise CollisionError(f"incompatible collision: {spec.user_id}")
         if current:
             self._execute(
-                "UPDATE vicidial_users SET active='N',user_group=%s,closer_campaigns=%s WHERE user=%s",
-                (spec.user_group, " " + " ".join(spec.inbound_groups) + " -", spec.user_id))
+                "UPDATE vicidial_users SET active='N',full_name=%s,user_group=%s,"
+                "closer_campaigns=%s WHERE user=%s",
+                (spec.full_name, spec.user_group,
+                 " " + " ".join(spec.inbound_groups) + " -", spec.user_id))
         else:
             raise ValueError("agent creation requires the supported VICIdial Non-Agent API")
         self.db.commit()
@@ -744,7 +826,8 @@ class MySQLRepository:
             "INSERT INTO vicidial_callbacks(lead_id,campaign_id,status,entry_time,callback_time,"
             "user,recipient,comments) VALUES(%s,%s,'ACTIVE',%s,%s,%s,%s,%s)",
             (spec.lead_id, spec.campaign_id, datetime.now(timezone.utc).replace(tzinfo=None),
-             spec.callback_time.replace(tzinfo=None), spec.user_id, spec.recipient, comments))
+             spec.callback_time.astimezone(timezone.utc).replace(tzinfo=None),
+             spec.user_id, spec.recipient, comments))
         self.db.commit()
         return self.callback_by_external_id(spec.external_id) or {}
 
