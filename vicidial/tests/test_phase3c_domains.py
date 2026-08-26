@@ -191,12 +191,16 @@ def test_disabled_existing_agent_requires_and_accepts_exact_adoption_proof(tmp_p
     assert service.state.mapping("agent", "COD1001")["actual_id"] == "COD1001"
 
 
-def test_mysql_agent_adoption_revalidates_under_row_lock():
+def test_mysql_agent_adoption_uses_myisam_table_lock_through_ownership():
     source = inspect.getsource(MySQLRepository.sync_agent_disabled)
-    assert "for_update=True" in source
+    service_source = inspect.getsource(AdapterService.sync_agent)
+    assert "LOCK TABLES" in source
+    assert "vicidial_users AS u WRITE" in source
+    assert "vicidial_user_groups AS g READ" in source
     assert "adoption proof became stale" in source
     assert "AND active='N'" in source
-    assert "self.db.rollback()" in source
+    assert "release_agent_adoption_lock" in service_source
+    assert "finally:" in service_source
 
 
 def test_test_syn_transfer_uses_test_business_unit(tmp_path):

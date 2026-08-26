@@ -341,24 +341,37 @@ class AdapterService:
                     )
             if mapping and mapping["actual_id"] != command.agent.user_id:
                 raise CollisionError("agent ownership mapping collision")
-            actual = self.repository.sync_agent_disabled(command.agent)
-            mismatches = []
-            for field in ("user_id", "full_name", "user_group"):
-                if actual.get(field) != desired[field]:
-                    mismatches.append(field)
-            if actual.get("active") not in (False, "N"):
-                mismatches.append("active")
-            if not set(desired["campaigns"]).issubset(set(actual.get("campaigns", []))):
-                mismatches.append("campaigns")
-            if set(actual.get("inbound_groups", [])) != set(desired["inbound_groups"]):
-                mismatches.append("inbound_groups")
-            if mismatches:
-                raise RuntimeError("agent read-back mismatch: " + ",".join(mismatches))
-            self.state.put_agent_mapping(
-                command.agent.user_id, command.agent.user_id, desired_hash
-            )
-            self.state.put_agent_desired(command.agent.user_id, desired)
-            return {"status": "disabled", "actual": actual}
+            try:
+                actual = self.repository.sync_agent_disabled(command.agent)
+                mismatches = []
+                for field in ("user_id", "full_name", "user_group"):
+                    if actual.get(field) != desired[field]:
+                        mismatches.append(field)
+                if actual.get("active") not in (False, "N"):
+                    mismatches.append("active")
+                if not set(desired["campaigns"]).issubset(
+                    set(actual.get("campaigns", []))
+                ):
+                    mismatches.append("campaigns")
+                if set(actual.get("inbound_groups", [])) != set(
+                    desired["inbound_groups"]
+                ):
+                    mismatches.append("inbound_groups")
+                if mismatches:
+                    raise RuntimeError(
+                        "agent read-back mismatch: " + ",".join(mismatches)
+                    )
+                self.state.put_agent_mapping(
+                    command.agent.user_id, command.agent.user_id, desired_hash
+                )
+                self.state.put_agent_desired(command.agent.user_id, desired)
+                return {"status": "disabled", "actual": actual}
+            finally:
+                release_lock = getattr(
+                    self.repository, "release_agent_adoption_lock", None
+                )
+                if command.agent.adopt_existing_sha256 and release_lock:
+                    release_lock()
 
         return self._execute("agent.sync", key, command, command.agent.user_id, apply)
 

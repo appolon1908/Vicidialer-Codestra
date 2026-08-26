@@ -749,12 +749,12 @@ class MySQLRepository:
                 (item.code,))
         self.db.commit()
 
-    def _agent(self, user_id: str, *, for_update: bool = False) -> dict | None:
+    def _agent(self, user_id: str) -> dict | None:
         row = self._one(
             "SELECT u.user AS user_id,u.full_name,u.user_group,u.active,"
             "u.closer_campaigns,g.allowed_campaigns FROM vicidial_users u "
             "JOIN vicidial_user_groups g ON g.user_group=u.user_group "
-            "WHERE u.user=%s" + (" FOR UPDATE" if for_update else ""),
+            "WHERE u.user=%s",
             (user_id,))
         if row is None:
             return None
@@ -766,13 +766,20 @@ class MySQLRepository:
         return self._agent(user_id)
 
     def sync_agent_disabled(self, spec: AgentSpec) -> dict:
+        adopting = spec.adopt_existing_sha256 is not None
+        adoption_lock_held = False
         try:
-            current = self._agent(spec.user_id, for_update=True)
+            if adopting:
+                self._execute(
+                    "LOCK TABLES vicidial_users WRITE, vicidial_users AS u WRITE, "
+                    "vicidial_user_groups AS g READ"
+                )
+                adoption_lock_held = True
+            current = self._agent(spec.user_id)
             if current is None:
                 raise ValueError(
                     "agent creation requires the supported VICIdial Non-Agent API"
                 )
-            adopting = spec.adopt_existing_sha256 is not None
             if adopting:
                 current_hash = hashlib.sha256(
                     json.dumps(current, sort_keys=True, default=str).encode()
@@ -792,8 +799,13 @@ class MySQLRepository:
             self.db.commit()
         except Exception:
             self.db.rollback()
+            if adoption_lock_held:
+                self.release_agent_adoption_lock()
             raise
         return self.agent(spec.user_id) or {}
+
+    def release_agent_adoption_lock(self) -> None:
+        self._execute("UNLOCK TABLES")
 
     def disable_agent(self, user_id: str) -> dict:
         if not self.agent(user_id):
