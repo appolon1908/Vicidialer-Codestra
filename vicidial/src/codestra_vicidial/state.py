@@ -297,13 +297,44 @@ class StateStore:
             if row else None
         )
 
-    def put_reconciliation_run(self, run_id: str, result: dict) -> None:
-        self.db.execute(
-            "INSERT INTO reconciliation_runs VALUES(?,?,?)",
-            (run_id, json.dumps(result, sort_keys=True),
-             datetime.now(timezone.utc).isoformat()),
-        )
-        self.db.commit()
+    def persist_reconciliation_run(
+        self,
+        run_id: str,
+        result: dict,
+        idempotency_key: str,
+        request_hash: str,
+    ) -> dict | None:
+        """Atomically persist the run and its replay authority."""
+        try:
+            self.db.execute("BEGIN IMMEDIATE")
+            prior = self.db.execute(
+                "SELECT request_hash,result FROM requests "
+                "WHERE operation=? AND idempotency_key=?",
+                ("reconciliation.run", idempotency_key),
+            ).fetchone()
+            if prior is not None:
+                if prior["request_hash"] != request_hash:
+                    raise ValueError("idempotency conflict")
+                self.db.commit()
+                return json.loads(prior["result"])
+            created_at = datetime.now(timezone.utc).isoformat()
+            self.db.execute(
+                "INSERT INTO reconciliation_runs VALUES(?,?,?)",
+                (run_id, json.dumps(result, sort_keys=True), created_at),
+            )
+            response = {"run_id": run_id, **result}
+            self.db.execute(
+                "INSERT INTO requests VALUES(?,?,?,?,?)",
+                (
+                    "reconciliation.run", idempotency_key, request_hash,
+                    json.dumps(response, sort_keys=True), created_at,
+                ),
+            )
+            self.db.commit()
+            return None
+        except Exception:
+            self.db.rollback()
+            raise
 
     def reconciliation_run(self, run_id: str) -> dict | None:
         row = self.db.execute(

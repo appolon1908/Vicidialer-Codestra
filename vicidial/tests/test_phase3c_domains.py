@@ -107,6 +107,13 @@ def test_reconciliation_run_retry_returns_original_persisted_run(tmp_path):
     assert replay["run_id"] == first["run_id"]
     assert first["idempotent_replay"] is False
     assert replay["idempotent_replay"] is True
+    run_count = service.state.db.execute(
+        "SELECT COUNT(*) FROM reconciliation_runs"
+    ).fetchone()[0]
+    ledger_count = service.state.db.execute(
+        "SELECT COUNT(*) FROM requests WHERE operation='reconciliation.run'"
+    ).fetchone()[0]
+    assert (run_count, ledger_count) == (1, 1)
 
 
 def test_owned_agent_accepts_desired_state_update_after_readback(tmp_path):

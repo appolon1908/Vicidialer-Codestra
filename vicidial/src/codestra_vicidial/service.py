@@ -478,11 +478,12 @@ class AdapterService:
             return prior | {"idempotent_replay": True}
         run_id = str(uuid.uuid4())
         result = self.reconciliation()
-        self.state.put_reconciliation_run(run_id, result)
         response = {"run_id": run_id, **result}
-        self.state.record(
-            "reconciliation.run", idempotency_key, request_hash, response
+        concurrent_prior = self.state.persist_reconciliation_run(
+            run_id, result, idempotency_key, request_hash
         )
+        if concurrent_prior is not None:
+            return concurrent_prior | {"idempotent_replay": True}
         return response | {"idempotent_replay": False}
 
     def reconciliation_run(self, run_id: str) -> dict | None:
