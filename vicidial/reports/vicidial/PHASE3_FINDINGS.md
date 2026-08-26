@@ -15,3 +15,13 @@ remediated file; Git history retains the reviewed starting lines.
 | Mutable feature branch was deployment authority | Confirmed | Modified: configuration requires immutable merged SHA and artifact digest | `config/vicidial-server.env.example` |
 | Release manifest was incomplete/non-reproducible | Confirmed | Modified: complete sorted R3 file manifest with SHA-256 generation and verification | `scripts/generate_release_manifest.py` |
 | Release identity components were not all cross-checked | Confirmed | Modified: source file, release directory, build info, version response, and manifest must agree | `scripts/verify_release_tuple.py`, `src/codestra_vicidial/release.py` |
+
+## Phase 3B
+
+| Finding | Verification | Disposition | Evidence |
+|---|---|---|---|
+| HMAC did not bind route, method, identity, scopes, or idempotency | Confirmed | Modified: signature v2 binds every requested field and the body digest | `src/codestra_vicidial/security.py`, `tests/test_phase3b_security.py` |
+| Signature v1 remained usable | Confirmed | Modified: only signature version `v2` is accepted | `src/codestra_vicidial/security.py` |
+| Known fallback key was available outside a named development profile | Confirmed | Modified: fallback exists only in `development-loopback`, whose source allowlist is loopback-only | `src/codestra_vicidial/app.py` |
+| Reconciliation `protected_sha` was parsed but not enforced | Confirmed | Modified: policy SHA must equal verified loaded release SHA | `src/codestra_vicidial/reconciliation.py` |
+| Backup verification trusted status strings | Confirmed | Modified: policy identifies an absolute regular artifact and binds its actual SHA-256 | `src/codestra_vicidial/reconciliation.py`, `tests/test_reconciliation_policy.py` |

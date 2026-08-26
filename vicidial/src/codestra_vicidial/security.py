@@ -4,12 +4,24 @@ import hashlib
 import hmac
 import ipaddress
 import time
+import re
 from collections.abc import Callable
 from dataclasses import dataclass, field
 
 
 NonceStore = Callable[[str, int, int], bool]
 RateLimitStore = Callable[[str, int, int, int], bool]
+SIGNATURE_VERSION = "v2"
+_PATH_PATTERN = re.compile(r"^/[A-Za-z0-9._~!$&'()*+,;=:@%{}/-]*$")
+
+
+def normalize_request_path(path: str) -> str:
+    if not _PATH_PATTERN.fullmatch(path) or "//" in path:
+        raise PermissionError("invalid request path")
+    segments = path.split("/")
+    if any(segment in {".", ".."} for segment in segments):
+        raise PermissionError("invalid request path")
+    return path
 
 
 @dataclass
@@ -28,13 +40,30 @@ class RequestAuthenticator:
     _nonces: dict[str, int] = field(default_factory=dict)
     _requests: dict[str, list[int]] = field(default_factory=dict)
 
-    def sign(self, timestamp: int, nonce: str, body: bytes) -> str:
+    def sign(
+        self, timestamp: int, nonce: str, body: bytes, *,
+        method: str = "POST", path: str = "/", identity: str | None = None,
+        scopes: set[str] | frozenset[str] = frozenset(),
+        idempotency_key: str = "", signature_version: str = SIGNATURE_VERSION,
+    ) -> str:
+        if signature_version != SIGNATURE_VERSION:
+            raise PermissionError("unsupported signature version")
         digest = hashlib.sha256(body).hexdigest()
-        payload = f"{timestamp}\n{nonce}\n{digest}".encode()
+        canonical = "\n".join((
+            signature_version,
+            method.upper(),
+            normalize_request_path(path),
+            identity if identity is not None else self.identity,
+            " ".join(sorted(scopes)),
+            str(timestamp),
+            nonce,
+            idempotency_key,
+            digest,
+        ))
 
         return hmac.new(
             self.key,
-            payload,
+            canonical.encode(),
             hashlib.sha256,
         ).hexdigest()
 
@@ -120,6 +149,10 @@ class RequestAuthenticator:
         body: bytes,
         signature: str,
         required_scope: str,
+        method: str = "POST",
+        path: str = "/",
+        idempotency_key: str = "",
+        signature_version: str = SIGNATURE_VERSION,
         now: int | None = None,
     ) -> None:
         normalized = self._verify_source(source)
@@ -153,6 +186,12 @@ class RequestAuthenticator:
             timestamp,
             nonce,
             body,
+            method=method,
+            path=path,
+            identity=identity,
+            scopes=scopes,
+            idempotency_key=idempotency_key,
+            signature_version=signature_version,
         )
 
         if not hmac.compare_digest(

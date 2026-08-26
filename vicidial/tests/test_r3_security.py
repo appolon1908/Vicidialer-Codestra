@@ -47,6 +47,7 @@ def verify(
         now,
         nonce,
         body,
+        scopes={"telephony:read"},
     )
 
     auth.verify(

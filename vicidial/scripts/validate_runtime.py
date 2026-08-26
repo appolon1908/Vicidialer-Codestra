@@ -23,6 +23,17 @@ for name in ALWAYS_FALSE_FLAGS:
         raise SystemExit("{} must remain false".format(name))
 
 deployment = os.environ.get("CODESTRA_ADAPTER_DEPLOYMENT", "staging-read-only")
+release_info = None
+if (
+    os.environ.get("CODESTRA_RELEASE_METADATA_REQUIRED", "false").lower()
+    == "true"
+):
+    try:
+        release_info = load_release_info(required=True)
+    except (OSError, ValueError, RuntimeError) as exc:
+        raise SystemExit(f"release metadata invalid: {exc}") from exc
+    if release_info.get("verified") is not True:
+        raise SystemExit("release metadata is not verified")
 if deployment == "staging-read-only":
     if os.environ.get("CODESTRA_ADAPTER_BACKEND") != "memory":
         raise SystemExit("staging deployment requires memory backend")
@@ -37,8 +48,13 @@ elif deployment == "production-reconciliation":
             raise SystemExit("{} must be true for approved reconciliation".format(name))
     if os.environ.get("OWNER_FULL_AUTONOMY") != "YES":
         raise SystemExit("owner reconciliation authorization missing")
+    if release_info is None or not isinstance(release_info.get("git_sha"), str):
+        raise SystemExit("verified release metadata required for reconciliation")
     try:
-        ReconciliationPolicy.from_file(Path(os.environ["CODESTRA_RECONCILIATION_POLICY_FILE"]))
+        ReconciliationPolicy.from_file(
+            Path(os.environ["CODESTRA_RECONCILIATION_POLICY_FILE"]),
+            expected_release_sha=release_info["git_sha"],
+        )
     except (KeyError, ReconciliationDenied, ValueError) as exc:
         raise SystemExit("request-bound reconciliation policy invalid: {}".format(exc)) from exc
 else:
@@ -63,17 +79,6 @@ for name, default in (
         raise SystemExit(f"{name} must be an integer") from exc
     if value <= 0:
         raise SystemExit(f"{name} must be greater than zero")
-
-if (
-    os.environ.get("CODESTRA_RELEASE_METADATA_REQUIRED", "false").lower()
-    == "true"
-):
-    try:
-        release_info = load_release_info(required=True)
-    except (OSError, ValueError, RuntimeError) as exc:
-        raise SystemExit(f"release metadata invalid: {exc}") from exc
-    if release_info.get("verified") is not True:
-        raise SystemExit("release metadata is not verified")
 
 secret = Path(os.environ["CODESTRA_ADAPTER_HMAC_FILE"])
 if not secret.is_file() or secret.stat().st_size < 32:

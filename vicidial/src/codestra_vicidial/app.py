@@ -27,6 +27,7 @@ _AUTHENTICATION_HEADERS = (
     "X-Request-Timestamp",
     "X-Request-Nonce",
     "X-Request-Signature",
+    "X-Signature-Version",
 )
 
 _PROTECTED_SCOPE_BY_ROUTE = {
@@ -102,7 +103,9 @@ def install_openapi_contract(app: FastAPI) -> None:
                 "in": "header",
                 "name": "X-Request-Signature",
                 "description": (
-                    "HMAC-SHA256 signature over timestamp, nonce, and body."
+                    "Version 2 HMAC-SHA256 signature bound to method, path, "
+                    "identity, sorted scopes, timestamp, nonce, idempotency "
+                    "key, and body digest."
                 ),
             },
         })
@@ -198,7 +201,8 @@ def create_app(
 
     async def authorize(
         request: Request, required_scope: str, identity: str, scopes: str,
-        timestamp: int, nonce: str, signature: str,
+        timestamp: int, nonce: str, signature: str, signature_version: str,
+        idempotency_key: str = "",
     ) -> bytes:
         body = await request.body()
         source = request.client.host if request.client else ""
@@ -208,6 +212,9 @@ def create_app(
                 scopes={scope for scope in scopes.split(" ") if scope},
                 timestamp=timestamp, nonce=nonce, body=body, signature=signature,
                 required_scope=required_scope,
+                method=request.method, path=request.url.path,
+                idempotency_key=idempotency_key,
+                signature_version=signature_version,
             )
         except PermissionError as exc:
             raise HTTPException(status_code=403, detail=str(exc)) from exc
@@ -215,8 +222,12 @@ def create_app(
 
     async def mutation(request: Request, model, handler, scope: str,
                        idempotency_key: str, identity: str, scopes: str,
-                       timestamp: int, nonce: str, signature: str):
-        body = await authorize(request, scope, identity, scopes, timestamp, nonce, signature)
+                       timestamp: int, nonce: str, signature: str,
+                       signature_version: str):
+        body = await authorize(
+            request, scope, identity, scopes, timestamp, nonce, signature,
+            signature_version, idempotency_key,
+        )
         try:
             command = model.model_validate_json(body)
             return handler(idempotency_key, command)
@@ -236,8 +247,9 @@ def create_app(
         timestamp: int = Header(..., alias="X-Request-Timestamp"),
         nonce: str = Header(..., alias="X-Request-Nonce", min_length=16, max_length=128),
         signature: str = Header(..., alias="X-Request-Signature", min_length=64, max_length=64),
+        signature_version: str = Header(..., alias="X-Signature-Version"),
     ):
-        return idempotency_key, identity, scopes, timestamp, nonce, signature
+        return idempotency_key, identity, scopes, timestamp, nonce, signature, signature_version
 
     def read_headers(
         identity: str = Header(..., alias="X-Service-Identity"),
@@ -245,13 +257,17 @@ def create_app(
         timestamp: int = Header(..., alias="X-Request-Timestamp"),
         nonce: str = Header(..., alias="X-Request-Nonce", min_length=16, max_length=128),
         signature: str = Header(..., alias="X-Request-Signature", min_length=64, max_length=64),
+        signature_version: str = Header(..., alias="X-Signature-Version"),
     ):
-        return identity, scopes, timestamp, nonce, signature
+        return identity, scopes, timestamp, nonce, signature, signature_version
 
     @app.post("/v1/campaigns/validate")
     async def campaign_validate(request: Request, values=Depends(headers)):
-        key, identity, scopes, timestamp, nonce, signature = values
-        body = await authorize(request, "telephony:read", identity, scopes, timestamp, nonce, signature)
+        key, identity, scopes, timestamp, nonce, signature, signature_version = values
+        body = await authorize(
+            request, "telephony:read", identity, scopes, timestamp, nonce,
+            signature, signature_version, key,
+        )
         return service.validate_campaign(CampaignCommand.model_validate_json(body))
 
     @app.post("/v1/campaigns/provision-disabled")
@@ -342,9 +358,10 @@ def create_app(
     async def reconciliation_campaign(request: Request, values=Depends(headers)):
         if reconciliation_policy is None:
             raise HTTPException(403, "production reconciliation profile is disabled")
-        key, identity, scopes, timestamp, nonce, signature = values
+        key, identity, scopes, timestamp, nonce, signature, signature_version = values
         body = await authorize(
-            request, "telephony:reconcile", identity, scopes, timestamp, nonce, signature
+            request, "telephony:reconcile", identity, scopes, timestamp, nonce,
+            signature, signature_version, key,
         )
         try:
             command = ReconciliationCampaignCommand.model_validate_json(body)
@@ -378,8 +395,14 @@ def create_app(
 def app_from_environment() -> FastAPI:
     # No environment variable contains a credential value. The MySQL backend
     # accepts only a loopback host and a protected JSON secret file.
+    deployment = os.environ.get("CODESTRA_ADAPTER_DEPLOYMENT", "development-loopback")
     secret_file = Path(os.environ.get("CODESTRA_ADAPTER_HMAC_FILE", "/run/secrets/adapter-hmac"))
-    key = secret_file.read_bytes().strip() if secret_file.exists() else b"development-disabled"
+    if secret_file.exists():
+        key = secret_file.read_bytes().strip()
+    elif deployment == "development-loopback":
+        key = b"development-disabled"
+    else:
+        raise RuntimeError("adapter HMAC credential is required")
     flags = FeatureFlags(
         writes=os.environ.get("ENABLE_VICIDIAL_WRITES") == "true",
         provisioning=os.environ.get("ENABLE_PROVISIONING") == "true",
@@ -428,23 +451,20 @@ def app_from_environment() -> FastAPI:
         flags,
     )
 
+    configured_sources = {
+        os.environ.get("AUTHORIZED_APPLICATION_SERVER_IP", "65.109.65.169"),
+        os.environ.get("AUTHORIZED_PRIVATE_SOURCE_IP", "10.40.0.1"),
+        "127.0.0.1",
+    }
+    if deployment == "development-loopback":
+        configured_sources = {"127.0.0.1"}
     auth = RequestAuthenticator(
         identity=os.environ.get(
             "CODESTRA_ADAPTER_IDENTITY",
             "codestra-middleware",
         ),
         key=key,
-        authorized_sources=frozenset({
-            os.environ.get(
-                "AUTHORIZED_APPLICATION_SERVER_IP",
-                "65.109.65.169",
-            ),
-            os.environ.get(
-                "AUTHORIZED_PRIVATE_SOURCE_IP",
-                "10.40.0.1",
-            ),
-            "127.0.0.1",
-        }),
+        authorized_sources=frozenset(configured_sources),
         nonce_store=state.consume_nonce,
         rate_limit_store=state.consume_rate_limit,
         rate_limit_requests=int(
@@ -460,22 +480,26 @@ def app_from_environment() -> FastAPI:
             )
         ),
     )
+    release_info = load_release_info(
+        required=(
+            os.environ.get("CODESTRA_RELEASE_METADATA_REQUIRED", "false").lower()
+            == "true"
+        )
+    )
     policy = None
-    if os.environ.get("CODESTRA_ADAPTER_DEPLOYMENT") == "production-reconciliation":
-        policy = ReconciliationPolicy.from_file(Path(os.environ["CODESTRA_RECONCILIATION_POLICY_FILE"]))
+    if deployment == "production-reconciliation":
+        release_sha = release_info.get("git_sha")
+        if release_info.get("verified") is not True or not isinstance(release_sha, str):
+            raise RuntimeError("verified release metadata required for reconciliation")
+        policy = ReconciliationPolicy.from_file(
+            Path(os.environ["CODESTRA_RECONCILIATION_POLICY_FILE"]),
+            expected_release_sha=release_sha,
+        )
     return create_app(
         service,
         auth,
         policy,
-        release_info=load_release_info(
-            required=(
-                os.environ.get(
-                    "CODESTRA_RELEASE_METADATA_REQUIRED",
-                    "false",
-                ).lower()
-                == "true"
-            )
-        ),
+        release_info=release_info,
     )
 
 

@@ -216,7 +216,10 @@ def test_auth_source_identity_scope_signature_and_replay():
     )
     body = b'{"safe":true}'
     now = int(time.time())
-    signature = auth.sign(now, "nonce-1234567890", body)
+    signature = auth.sign(
+        now, "nonce-1234567890", body,
+        scopes={"telephony:provision"},
+    )
     auth.verify(source="65.109.65.169", identity="codestra-middleware",
                 scopes={"telephony:provision"}, timestamp=now,
                 nonce="nonce-1234567890", body=body, signature=signature,
@@ -225,7 +228,9 @@ def test_auth_source_identity_scope_signature_and_replay():
     auth.verify(
         source="10.40.0.1", identity="codestra-middleware",
         scopes={"telephony:provision"}, timestamp=now, nonce=private_nonce,
-        body=body, signature=auth.sign(now, private_nonce, body),
+        body=body, signature=auth.sign(
+            now, private_nonce, body, scopes={"telephony:provision"}
+        ),
         required_scope="telephony:provision", now=now,
     )
     with pytest.raises(PermissionError, match="replay"):
@@ -246,7 +251,10 @@ def test_auth_source_identity_scope_signature_and_replay():
             "signature": signature, "required_scope": "telephony:provision", "now": now,
         } | override
         if "nonce" not in override:
-            values["signature"] = auth.sign(now, values["nonce"], body) if message != "signature" else "0" * 64
+            values["signature"] = auth.sign(
+                now, values["nonce"], body,
+                identity=values["identity"], scopes=values["scopes"],
+            ) if message != "signature" else "0" * 64
         with pytest.raises(PermissionError, match=message):
             auth.verify(**values)
 

@@ -21,19 +21,33 @@ def canonical_sha256(value: object) -> str:
 class ReconciliationPolicy:
     """An exact, file-backed plan and fresh-backup authorization boundary."""
 
-    def __init__(self, document: dict, *, now: datetime | None = None):
+    def __init__(
+        self, document: dict, *, expected_release_sha: str,
+        now: datetime | None = None,
+    ):
         required = {
             "protected_sha", "plan_sha256", "authorization_reference",
             "backup", "campaigns",
         }
         if set(document) != required:
             raise ReconciliationDenied("reconciliation policy schema mismatch")
+        if document["protected_sha"] != expected_release_sha:
+            raise ReconciliationDenied("reconciliation policy/release SHA mismatch")
         if canonical_sha256(document["campaigns"]) != document["plan_sha256"]:
             raise ReconciliationDenied("reconciliation plan digest mismatch")
         backup = document["backup"]
-        if set(backup) != {"reference", "created_at", "checksums", "validation"}:
+        if set(backup) != {"reference", "created_at", "artifact", "sha256", "validation"}:
             raise ReconciliationDenied("backup evidence schema mismatch")
-        if backup["checksums"] != "PASS" or backup["validation"] != "PASS":
+        artifact = Path(backup["artifact"])
+        expected_checksum = backup["sha256"]
+        if (
+            not artifact.is_absolute()
+            or artifact.is_symlink()
+            or not artifact.is_file()
+            or len(expected_checksum) != 64
+            or hashlib.sha256(artifact.read_bytes()).hexdigest() != expected_checksum
+            or backup["validation"] != "PASS"
+        ):
             raise ReconciliationDenied("fresh verified backup evidence required")
         created = datetime.fromisoformat(backup["created_at"].replace("Z", "+00:00"))
         current = now or datetime.now(timezone.utc)
@@ -43,13 +57,16 @@ class ReconciliationPolicy:
         self.backup_created_at = created
 
     @classmethod
-    def from_file(cls, path: Path) -> "ReconciliationPolicy":
+    def from_file(cls, path: Path, *, expected_release_sha: str) -> "ReconciliationPolicy":
         if path.is_symlink() or not path.is_file():
             raise ReconciliationDenied("reconciliation policy file unavailable")
         stat = path.stat()
         if stat.st_uid != 0 or stat.st_mode & 0o022 or stat.st_mode & 0o007:
             raise ReconciliationDenied("reconciliation policy ownership or mode unsafe")
-        return cls(json.loads(path.read_text(encoding="utf-8")))
+        return cls(
+            json.loads(path.read_text(encoding="utf-8")),
+            expected_release_sha=expected_release_sha,
+        )
 
     def authorize(self, command: ReconciliationCampaignCommand) -> None:
         policy = self.document
