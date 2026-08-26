@@ -765,6 +765,14 @@ class MySQLRepository:
     def agent(self, user_id: str) -> dict | None:
         return self._agent(user_id)
 
+    def _agent_disable_view(self, user_id: str) -> dict | None:
+        """Read only fields needed to prove disablement, without parsing legacy ACLs."""
+        return self._one(
+            "SELECT user AS user_id,full_name,user_group,active "
+            "FROM vicidial_users WHERE user=%s",
+            (user_id,),
+        )
+
     def sync_agent_disabled(self, spec: AgentSpec) -> dict:
         adopting = spec.adopt_existing_sha256 is not None
         adoption_lock_held = False
@@ -808,11 +816,11 @@ class MySQLRepository:
         self._execute("UNLOCK TABLES")
 
     def disable_agent(self, user_id: str) -> dict:
-        if not self.agent(user_id):
+        if not self._agent_disable_view(user_id):
             raise ValueError("agent missing")
         self._execute("UPDATE vicidial_users SET active='N' WHERE user=%s", (user_id,))
         self.db.commit()
-        return self.agent(user_id) or {}
+        return self._agent_disable_view(user_id) or {}
 
     def lead_by_external_id(self, external_id: str) -> dict | None:
         return self._one(

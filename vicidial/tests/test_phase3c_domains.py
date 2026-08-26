@@ -203,6 +203,15 @@ def test_mysql_agent_adoption_uses_myisam_table_lock_through_ownership():
     assert "finally:" in service_source
 
 
+def test_mysql_agent_disable_does_not_parse_legacy_campaign_membership():
+    source = inspect.getsource(MySQLRepository.disable_agent)
+    view_source = inspect.getsource(MySQLRepository._agent_disable_view)
+    assert "self.agent(" not in source
+    assert "_agent_disable_view" in source
+    assert "allowed_campaigns" not in view_source
+    assert "closer_campaigns" not in view_source
+
+
 def test_test_syn_transfer_uses_test_business_unit(tmp_path):
     service, repo = enabled_service(tmp_path)
     payload = campaign_payload()
