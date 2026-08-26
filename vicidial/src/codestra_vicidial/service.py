@@ -201,13 +201,8 @@ class AdapterService:
         return actual, results
 
     def validate_campaign(self, command: CampaignCommand) -> dict:
-        actual = self.repository.campaign(command.campaign.actual_id)
-        compatible = actual is None or (
-            actual.get("campaign_name") == command.campaign.name
-            and actual.get("active") == "N"
-            and actual.get("dial_method") == command.campaign.dial_method
-        )
-        return {"valid": compatible, "collision": actual is not None,
+        preflight = self.repository.validate_campaign(command.campaign)
+        return {"valid": True, "collision": preflight["collision"],
                 "actual_id": command.campaign.actual_id,
                 "canonical_id": command.campaign.canonical_id}
 
@@ -328,9 +323,28 @@ class AdapterService:
         self._require(self.flags.agent_sync, "agent sync")
 
         def apply() -> dict:
+            desired = command.agent.model_dump(mode="json") | {"active": False}
+            desired_hash = self.state.digest(desired)
+            mapping = self.state.mapping("agent", command.agent.user_id)
+            if mapping and (mapping["actual_id"] != command.agent.user_id
+                            or mapping["payload_hash"] != desired_hash):
+                raise CollisionError("agent ownership mapping collision")
             actual = self.repository.sync_agent_disabled(command.agent)
+            mismatches = []
+            for field in ("user_id", "full_name", "user_group"):
+                if actual.get(field) != desired[field]:
+                    mismatches.append(field)
             if actual.get("active") not in (False, "N"):
-                raise RuntimeError("agent read-back is not disabled")
+                mismatches.append("active")
+            if not set(desired["campaigns"]).issubset(set(actual.get("campaigns", []))):
+                mismatches.append("campaigns")
+            if set(actual.get("inbound_groups", [])) != set(desired["inbound_groups"]):
+                mismatches.append("inbound_groups")
+            if mismatches:
+                raise RuntimeError("agent read-back mismatch: " + ",".join(mismatches))
+            self.state.put_mapping("agent", command.agent.user_id,
+                                   command.agent.user_id, desired_hash)
+            self.state.put_agent_desired(command.agent.user_id, desired)
             return {"status": "disabled", "actual": actual}
 
         return self._execute("agent.sync", key, command, command.agent.user_id, apply)
@@ -386,7 +400,7 @@ class AdapterService:
             owner = self.repository.campaign_owner(command.policy.campaign_id)
             if owner is None:
                 raise ValueError("campaign ownership marker missing")
-            business_unit = owner.split("-", 1)[0]
+            business_unit = "TEST" if owner == "TEST_SYN" else owner.split("-", 1)[0]
             for target in command.policy.allowed_targets:
                 group = self.repository.transfer_target(target)
                 state_owner = self.state.group_owner(target)
@@ -454,3 +468,12 @@ class AdapterService:
             "status": status, "inventory": self.repository.inventory(),
             "resources": resources,
         }
+
+    def start_reconciliation(self) -> dict:
+        run_id = str(uuid.uuid4())
+        result = self.reconciliation()
+        self.state.put_reconciliation_run(run_id, result)
+        return {"run_id": run_id, **result}
+
+    def reconciliation_run(self, run_id: str) -> dict | None:
+        return self.state.reconciliation_run(run_id)

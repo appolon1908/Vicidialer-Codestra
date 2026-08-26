@@ -42,6 +42,12 @@ class StateStore:
           campaign_id TEXT PRIMARY KEY, transfer_targets TEXT NOT NULL,
           recording_policy_reference TEXT NOT NULL, reporting_mapping TEXT NOT NULL,
           callback_enabled INTEGER NOT NULL, updated_at TEXT NOT NULL);
+        CREATE TABLE IF NOT EXISTS agent_desired(
+          user_id TEXT PRIMARY KEY, desired_json TEXT NOT NULL,
+          desired_hash TEXT NOT NULL, updated_at TEXT NOT NULL);
+        CREATE TABLE IF NOT EXISTS reconciliation_runs(
+          run_id TEXT PRIMARY KEY, result_json TEXT NOT NULL,
+          created_at TEXT NOT NULL);
         CREATE TABLE IF NOT EXISTS evidence(
           evidence_id INTEGER PRIMARY KEY AUTOINCREMENT, occurred_at TEXT NOT NULL,
           operation TEXT NOT NULL, target_hash TEXT NOT NULL, outcome TEXT NOT NULL,
@@ -245,6 +251,52 @@ class StateStore:
                 "FROM campaign_desired ORDER BY canonical_id"
             ).fetchall()
         ]
+
+    def put_agent_desired(self, user_id: str, desired: dict) -> None:
+        payload_hash = self.digest(desired)
+        current = self.db.execute(
+            "SELECT desired_hash FROM agent_desired WHERE user_id=?", (user_id,)
+        ).fetchone()
+        if current and current["desired_hash"] != payload_hash:
+            raise ValueError("agent desired ownership conflict")
+        self.db.execute(
+            "INSERT INTO agent_desired VALUES(?,?,?,?) "
+            "ON CONFLICT(user_id) DO UPDATE SET desired_json=excluded.desired_json,"
+            "desired_hash=excluded.desired_hash,updated_at=excluded.updated_at",
+            (user_id, json.dumps(desired, sort_keys=True), payload_hash,
+             datetime.now(timezone.utc).isoformat()),
+        )
+        self.db.commit()
+
+    def agent_desired(self, user_id: str) -> dict | None:
+        row = self.db.execute(
+            "SELECT desired_json,desired_hash FROM agent_desired WHERE user_id=?",
+            (user_id,),
+        ).fetchone()
+        return (
+            {"desired": json.loads(row["desired_json"]),
+             "desired_hash": row["desired_hash"]}
+            if row else None
+        )
+
+    def put_reconciliation_run(self, run_id: str, result: dict) -> None:
+        self.db.execute(
+            "INSERT INTO reconciliation_runs VALUES(?,?,?)",
+            (run_id, json.dumps(result, sort_keys=True),
+             datetime.now(timezone.utc).isoformat()),
+        )
+        self.db.commit()
+
+    def reconciliation_run(self, run_id: str) -> dict | None:
+        row = self.db.execute(
+            "SELECT result_json,created_at FROM reconciliation_runs WHERE run_id=?",
+            (run_id,),
+        ).fetchone()
+        return (
+            {"run_id": run_id, "created_at": row["created_at"],
+             **json.loads(row["result_json"])}
+            if row else None
+        )
 
     def put_group_ownership(self, code: str, campaign_id: str,
                             business_unit: str, kind: str) -> None:

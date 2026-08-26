@@ -33,18 +33,15 @@ _AUTHENTICATION_HEADERS = (
 _PROTECTED_SCOPE_BY_ROUTE = {
     ("post", "/v1/campaigns/validate"): "telephony:read",
     ("post", "/v1/campaigns/provision-disabled"): "telephony:provision",
-    ("post", "/v1/campaigns/update-disabled"): "telephony:provision",
     ("post", "/v1/campaigns/disable"): "telephony:provision",
     ("get", "/v1/campaigns/{campaign_id}/actual-state"): "telephony:read",
     ("post", "/v1/agents/sync"): "telephony:agent-sync",
     ("post", "/v1/agents/disable"): "telephony:agent-sync",
     ("get", "/v1/agents/{user_id}/actual-state"): "telephony:read",
     ("post", "/v1/leads/publish"): "telephony:lead-publish",
-    ("get", "/v1/leads/by-idempotency/{key}"): "telephony:read",
+    ("get", "/v1/leads/by-external-id/{external_id}"): "telephony:read",
     ("post", "/v1/callbacks/create"): "telephony:callback-write",
     ("get", "/v1/callbacks/{callback_id}"): "telephony:read",
-    ("post", "/v1/scripts/sync"): "telephony:provision",
-    ("post", "/v1/dispositions/sync"): "telephony:provision",
     (
         "post",
         "/v1/reconciliation/campaigns/provision-disabled",
@@ -276,12 +273,6 @@ def create_app(
         return await mutation(request, CampaignCommand, service.provision_campaign,
                               "telephony:provision", *values)
 
-    @app.post("/v1/campaigns/update-disabled")
-    async def campaign_update(request: Request, values=Depends(headers)):
-        deny_generic_reconciliation_mutation()
-        return await mutation(request, CampaignCommand, service.provision_campaign,
-                              "telephony:provision", *values)
-
     @app.post("/v1/campaigns/disable")
     async def campaign_disable(request: Request, values=Depends(headers)):
         deny_generic_reconciliation_mutation()
@@ -320,13 +311,14 @@ def create_app(
         return await mutation(request, LeadCommand, service.publish_lead,
                               "telephony:lead-publish", *values)
 
-    @app.get("/v1/leads/by-idempotency/{key}")
-    async def lead_by_key(request: Request, key: str, values=Depends(read_headers)):
+    @app.get("/v1/leads/by-external-id/{external_id}")
+    async def lead_by_external_id(request: Request, external_id: str,
+                                  values=Depends(read_headers)):
         await authorize(request, "telephony:read", *values)
-        mapping = service.state.mapping("lead", key)
+        mapping = service.state.mapping("lead", external_id)
         if not mapping:
             raise HTTPException(404, "lead missing")
-        return {"external_id": key, "lead_id": mapping["actual_id"]}
+        return {"external_id": external_id, "lead_id": mapping["actual_id"]}
 
     @app.post("/v1/callbacks/create")
     async def callback_create(request: Request, values=Depends(headers)):
@@ -341,18 +333,6 @@ def create_app(
         if not actual:
             raise HTTPException(404, "callback missing")
         return actual
-
-    @app.post("/v1/scripts/sync")
-    async def scripts_sync(request: Request, values=Depends(headers)):
-        deny_generic_reconciliation_mutation()
-        return await mutation(request, CampaignCommand, service.provision_campaign,
-                              "telephony:provision", *values)
-
-    @app.post("/v1/dispositions/sync")
-    async def dispositions_sync(request: Request, values=Depends(headers)):
-        deny_generic_reconciliation_mutation()
-        return await mutation(request, CampaignCommand, service.provision_campaign,
-                              "telephony:provision", *values)
 
     @app.post("/v1/reconciliation/campaigns/provision-disabled")
     async def reconciliation_campaign(request: Request, values=Depends(headers)):
@@ -380,13 +360,16 @@ def create_app(
     @app.post("/v1/reconciliation/run")
     async def reconciliation_run(request: Request, values=Depends(read_headers)):
         await authorize(request, "telephony:read", *values)
-        return service.reconciliation()
+        return service.start_reconciliation()
 
     @app.get("/v1/reconciliation/{run_id}")
     async def reconciliation_get(request: Request, run_id: str,
                                  values=Depends(read_headers)):
         await authorize(request, "telephony:read", *values)
-        return {"run_id": run_id, **service.reconciliation()}
+        result = service.reconciliation_run(run_id)
+        if result is None:
+            raise HTTPException(404, "reconciliation run missing")
+        return {"run_id": run_id, **result}
 
     install_openapi_contract(app)
     return app

@@ -25,3 +25,17 @@ remediated file; Git history retains the reviewed starting lines.
 | Known fallback key was available outside a named development profile | Confirmed | Modified: fallback exists only in `development-loopback`, whose source allowlist is loopback-only | `src/codestra_vicidial/app.py` |
 | Reconciliation `protected_sha` was parsed but not enforced | Confirmed | Modified: policy SHA must equal verified loaded release SHA | `src/codestra_vicidial/reconciliation.py` |
 | Backup verification trusted status strings | Confirmed | Modified: policy identifies an absolute regular artifact and binds its actual SHA-256 | `src/codestra_vicidial/reconciliation.py`, `tests/test_reconciliation_policy.py` |
+
+## Phase 3C
+
+| Finding | Verification | Disposition | Evidence |
+|---|---|---|---|
+| Callback external IDs permitted SQL pattern characters | Confirmed | Modified: IDs use a restricted literal alphabet and durable adapter mappings; SQL wildcard ambiguity is impossible | `src/codestra_vicidial/models.py`, `tests/test_phase3c_domains.py` |
+| Callback offsets were discarded without UTC conversion | Confirmed | Modified: naive values are rejected and aware values normalize to UTC before storage | `src/codestra_vicidial/models.py`, `src/codestra_vicidial/repository.py` |
+| Agent synchronization lacked durable ownership and complete readback | Confirmed | Modified: desired state and ownership are persisted only after all identity, disabled-state, campaign, and inbound-group checks pass | `src/codestra_vicidial/service.py`, `src/codestra_vicidial/state.py` |
+| Campaign update endpoint silently reprovisioned | Confirmed | Modified: misleading unversioned update route removed | `src/codestra_vicidial/app.py`, `tests/test_adapter.py` |
+| Script and disposition sync endpoints reprovisioned an entire campaign | Confirmed | Modified: misleading broad aliases removed; resources remain part of complete disabled provisioning | `src/codestra_vicidial/app.py`, `docs/VICIDIAL_ADAPTER_CONTRACT.md` |
+| Campaign validation checked only three campaign fields | Confirmed | Modified: validation executes the exact complete, non-mutating provisioning preflight | `src/codestra_vicidial/repository.py`, `tests/test_phase3c_domains.py` |
+| Lead lookup was named as idempotency lookup but used external IDs | Confirmed | Modified: route renamed to `by-external-id` | `src/codestra_vicidial/app.py` |
+| Reconciliation GET recomputed state and accepted fake run IDs | Confirmed | Modified: POST persists an immutable run and GET returns only that stored run | `src/codestra_vicidial/state.py`, `tests/test_phase3c_domains.py` |
+| `TEST_SYN` transfer ownership derived business unit `TEST_SYN` | Confirmed | Modified: the certified exception maps to business unit `TEST` | `src/codestra_vicidial/service.py`, `tests/test_phase3c_domains.py` |

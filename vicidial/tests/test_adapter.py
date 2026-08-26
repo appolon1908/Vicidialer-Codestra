@@ -191,19 +191,25 @@ def test_route_contract_is_present(harness):
         ("GET", "/health"), ("GET", "/ready"), ("GET", "/version"),
         ("POST", "/v1/campaigns/validate"),
         ("POST", "/v1/campaigns/provision-disabled"),
-        ("POST", "/v1/campaigns/update-disabled"),
         ("POST", "/v1/campaigns/disable"),
         ("POST", "/v1/reconciliation/campaigns/provision-disabled"),
         ("GET", "/v1/campaigns/{campaign_id}/actual-state"),
         ("POST", "/v1/agents/sync"), ("POST", "/v1/agents/disable"),
         ("GET", "/v1/agents/{user_id}/actual-state"),
-        ("POST", "/v1/leads/publish"), ("GET", "/v1/leads/by-idempotency/{key}"),
+        ("POST", "/v1/leads/publish"),
+        ("GET", "/v1/leads/by-external-id/{external_id}"),
         ("POST", "/v1/callbacks/create"), ("GET", "/v1/callbacks/{callback_id}"),
-        ("POST", "/v1/scripts/sync"), ("POST", "/v1/dispositions/sync"),
         ("POST", "/v1/transfer-policies/sync"),
         ("POST", "/v1/reconciliation/run"), ("GET", "/v1/reconciliation/{run_id}"),
     }
     assert required <= routes
+    removed = {
+        ("POST", "/v1/campaigns/update-disabled"),
+        ("POST", "/v1/scripts/sync"),
+        ("POST", "/v1/dispositions/sync"),
+        ("GET", "/v1/leads/by-idempotency/{key}"),
+    }
+    assert routes.isdisjoint(removed)
     prohibited_fragments = {"/sql", "/shell", "/command", "/files", "/exec"}
     assert not any(any(fragment in path for fragment in prohibited_fragments)
                    for _method, path in routes)
