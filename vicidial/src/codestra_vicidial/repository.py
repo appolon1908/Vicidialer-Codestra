@@ -309,6 +309,7 @@ class MemoryRepository:
 
     def sync_agent_disabled(self, spec: AgentSpec) -> dict:
         desired = spec.model_dump(mode="json") | {"active": False}
+        desired.pop("adopt_existing_sha256", None)
         self.agents[spec.user_id] = desired
         return deepcopy(desired)
 

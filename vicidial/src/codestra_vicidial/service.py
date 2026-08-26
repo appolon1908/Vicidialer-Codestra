@@ -324,11 +324,21 @@ class AdapterService:
 
         def apply() -> dict:
             desired = command.agent.model_dump(mode="json") | {"active": False}
+            desired["adopt_existing_sha256"] = None
             desired_hash = self.state.digest(desired)
             mapping = self.state.mapping("agent", command.agent.user_id)
             existing = self.repository.agent(command.agent.user_id)
             if mapping is None and existing is not None:
-                raise CollisionError("existing agent lacks Codestra ownership")
+                adoption_hash = command.agent.adopt_existing_sha256
+                if existing.get("active") not in (False, "N"):
+                    raise CollisionError("active existing agent cannot be adopted")
+                if (
+                    adoption_hash is None
+                    or adoption_hash != self.state.digest(existing)
+                ):
+                    raise CollisionError(
+                        "existing agent requires exact adoption proof"
+                    )
             if mapping and mapping["actual_id"] != command.agent.user_id:
                 raise CollisionError("agent ownership mapping collision")
             actual = self.repository.sync_agent_disabled(command.agent)

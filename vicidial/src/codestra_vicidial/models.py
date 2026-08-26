@@ -125,6 +125,9 @@ class AgentSpec(StrictModel):
     campaigns: list[ActualCampaign] = Field(min_length=1, max_length=30)
     inbound_groups: list[ResourceCode] = Field(default_factory=list, max_length=30)
     active: Literal[False] = False
+    adopt_existing_sha256: Annotated[
+        str, Field(pattern=r"^[a-f0-9]{64}$")
+    ] | None = None
 
 
 class AgentCommand(StrictModel):

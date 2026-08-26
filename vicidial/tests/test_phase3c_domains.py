@@ -153,11 +153,37 @@ def test_unowned_existing_agent_is_rejected_before_mutation(tmp_path):
             "inbound_groups": ["COD_TEST_CLOSERS"], "active": False,
         },
     })
-    with pytest.raises(CollisionError, match="lacks Codestra ownership"):
+    with pytest.raises(CollisionError, match="active existing agent cannot be adopted"):
         service.sync_agent("unowned-agent", command)
     assert repository.agents["COD1001"]["full_name"] == "Legacy Agent"
     assert repository.agents["COD1001"]["active"] is True
     assert service.state.mapping("agent", "COD1001") is None
+
+
+def test_disabled_existing_agent_requires_and_accepts_exact_adoption_proof(tmp_path):
+    service, repository = enabled_service(tmp_path)
+    existing = {
+        "user_id": "COD1001", "full_name": "Legacy Agent",
+        "user_group": "LEGACY", "campaigns": ["LEGACY01"],
+        "inbound_groups": [], "active": False,
+    }
+    repository.agents["COD1001"] = dict(existing)
+    payload = {
+        "context": context(),
+        "agent": {
+            "user_id": "COD1001", "full_name": "Codestra Agent",
+            "user_group": "COD_TEST_SDR", "campaigns": ["CODT0001"],
+            "inbound_groups": ["COD_TEST_CLOSERS"], "active": False,
+        },
+    }
+    with pytest.raises(CollisionError, match="exact adoption proof"):
+        service.sync_agent("adopt-agent-missing-proof", AgentCommand.model_validate(payload))
+    payload["agent"]["adopt_existing_sha256"] = service.state.digest(existing)
+    result = service.sync_agent(
+        "adopt-agent-exact-proof", AgentCommand.model_validate(payload)
+    )
+    assert result["actual"]["full_name"] == "Codestra Agent"
+    assert service.state.mapping("agent", "COD1001")["actual_id"] == "COD1001"
 
 
 def test_test_syn_transfer_uses_test_business_unit(tmp_path):
