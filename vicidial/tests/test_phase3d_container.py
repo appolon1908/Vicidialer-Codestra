@@ -66,21 +66,48 @@ def test_vulnerability_policy_is_exact_and_verifier_fails_closed(tmp_path):
         ("CVE-2026-7210", "python", "3.11.16"),
         ("CVE-2026-3644", "python", "3.11.16"),
     }
-    metadata = {"Config": {"Labels": {"org.opencontainers.image.revision": "a" * 40}}}
+    image_id = "b" * 64
+    metadata = {"Id": image_id,
+                "Config": {"Labels": {"org.opencontainers.image.revision": "a" * 40}}}
     regression = {"python_short": "3.11.16", "implementation": "cpython",
                   "expat_short": "2.8.3", "openssl_short": "3.5.8",
                   "libcrypto3": "3.5.8-r0", "libssl3": "3.5.8-r0",
                   **{x["required_regression"]: "PASS" for x in policy["adjudications"]}}
     match = {"vulnerability": {"id": "CVE-2026-4224", "severity": "High"},
              "artifact": {"name": "python", "version": "3.11.16"}}
-    assert verify(policy, {"matches": [match]}, metadata, regression, "a" * 40,
-                  today=__import__("datetime").date(2026, 8, 26))["status"] == "PASS"
-    assert verify(policy, {"matches": [match]}, [metadata], regression, "a" * 40,
-                  today=__import__("datetime").date(2026, 8, 26))["status"] == "PASS"
+    grype = {"matches": [match],
+             "source": {"type": "image", "target": {
+                 "imageID": f"sha256:{image_id}", "manifestDigest": f"sha256:{'c' * 64}"}},
+             "descriptor": {"name": "grype", "version": "0.104.0",
+                            "timestamp": "2026-08-26T00:00:00Z"}}
+    trivy = {"SchemaVersion": 2, "Trivy": "0.66.0",
+             "CreatedAt": "2026-08-26T00:00:00Z", "ArtifactID": f"sha256:{'d' * 64}",
+             "Metadata": {"ImageID": f"sha256:{image_id}"},
+             "Results": [{"Target": "runtime", "Class": "os-pkgs", "Type": "alpine",
+                          "Packages": [], "Vulnerabilities": []}]}
+    assert verify(policy, grype, metadata, regression, "a" * 40,
+                  today=__import__("datetime").date(2026, 8, 26),
+                  trivy=trivy)["status"] == "PASS"
+    assert verify(policy, grype, [metadata], regression, "a" * 40,
+                  today=__import__("datetime").date(2026, 8, 26),
+                  trivy=trivy)["status"] == "PASS"
+    for bad_grype, bad_trivy, error in (
+        ({}, trivy, "Grype report is incomplete"),
+        (grype, {}, "Trivy report identity is incomplete"),
+        (grype, {**trivy, "Results": []}, "Trivy result sections are incomplete"),
+        ({**grype, "source": {"type": "image", "target": {
+            "imageID": f"sha256:{'e' * 64}",
+            "manifestDigest": f"sha256:{'c' * 64}"}}}, trivy,
+         "Grype target does not equal exact image"),
+    ):
+        with pytest.raises(ValueError, match=error):
+            verify(policy, bad_grype, metadata, regression, "a" * 40,
+                   today=__import__("datetime").date(2026, 8, 26),
+                   trivy=bad_trivy)
     match["artifact"]["version"] = "3.11.15"
     with pytest.raises(ValueError, match="unadjudicated High"):
-        verify(policy, {"matches": [match]}, metadata, regression, "a" * 40,
-               today=__import__("datetime").date(2026, 8, 26))
+        verify(policy, grype, metadata, regression, "a" * 40,
+               today=__import__("datetime").date(2026, 8, 26), trivy=trivy)
 
 
 @pytest.mark.parametrize("name", ["compose.production.yml", "compose.shadow.yml"])
