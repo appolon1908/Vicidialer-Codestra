@@ -106,7 +106,7 @@ def test_stale_or_unverified_backup_is_denied(tmp_path: Path):
         )
     unverified = document(cmd, backup)
     unverified["backup"]["validation"] = "FAIL"
-    with pytest.raises(ReconciliationDenied, match="verified backup"):
+    with pytest.raises(ReconciliationDenied, match="backup"):
         ReconciliationPolicy(unverified, expected_release_sha="a" * 40)
 
 
@@ -117,5 +117,33 @@ def test_policy_release_sha_and_backup_checksum_are_bound(tmp_path: Path):
         ReconciliationPolicy(document(cmd, backup), expected_release_sha="b" * 40)
     policy = document(cmd, backup)
     backup.write_bytes(b"changed after approval")
-    with pytest.raises(ReconciliationDenied, match="verified backup"):
+    with pytest.raises(ReconciliationDenied, match="backup"):
         ReconciliationPolicy(policy, expected_release_sha="a" * 40)
+
+
+@pytest.mark.parametrize("change", ["delete", "replace", "tamper"])
+def test_backup_is_revalidated_for_every_authorize(tmp_path: Path, change: str):
+    cmd = command()
+    backup = make_backup(tmp_path)
+    policy = ReconciliationPolicy(
+        document(cmd, backup), expected_release_sha="a" * 40
+    )
+    if change == "delete":
+        backup.unlink()
+    elif change == "replace":
+        replacement = tmp_path / "replacement.tar"
+        replacement.write_bytes(b"synthetic backup evidence")
+        replacement.replace(backup)
+    else:
+        backup.write_bytes(b"mutated backup evidence")
+    with pytest.raises(ReconciliationDenied, match="backup"):
+        policy.authorize(cmd)
+
+
+def test_backup_symlink_is_never_followed(tmp_path: Path):
+    cmd = command()
+    target = make_backup(tmp_path)
+    link = tmp_path / "backup-link.tar"
+    link.symlink_to(target)
+    with pytest.raises(ReconciliationDenied, match="backup"):
+        ReconciliationPolicy(document(cmd, link), expected_release_sha="a" * 40)

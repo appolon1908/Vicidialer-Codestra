@@ -3,6 +3,8 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
+import stat
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -42,13 +44,13 @@ class ReconciliationPolicy:
         expected_checksum = backup["sha256"]
         if (
             not artifact.is_absolute()
-            or artifact.is_symlink()
-            or not artifact.is_file()
             or len(expected_checksum) != 64
-            or hashlib.sha256(artifact.read_bytes()).hexdigest() != expected_checksum
             or backup["validation"] != "PASS"
         ):
             raise ReconciliationDenied("fresh verified backup evidence required")
+        self.backup_fingerprint = self._verify_backup(artifact, expected_checksum)
+        self.backup_path = artifact
+        self.backup_checksum = expected_checksum
         created = datetime.fromisoformat(backup["created_at"].replace("Z", "+00:00"))
         current = now or datetime.now(timezone.utc)
         if created.tzinfo is None or not 0 <= (current - created).total_seconds() <= 86400:
@@ -73,6 +75,9 @@ class ReconciliationPolicy:
         age = (datetime.now(timezone.utc) - self.backup_created_at).total_seconds()
         if not 0 <= age <= 86400:
             raise ReconciliationDenied("backup evidence expired before request")
+        self._verify_backup(
+            self.backup_path, self.backup_checksum, self.backup_fingerprint
+        )
         if command.plan_sha256 != policy["plan_sha256"]:
             raise ReconciliationDenied("request plan digest mismatch")
         if command.authorization_reference != policy["authorization_reference"]:
@@ -86,3 +91,32 @@ class ReconciliationPolicy:
         }
         if expected != actual:
             raise ReconciliationDenied("campaign is absent from exact approved plan")
+
+    @staticmethod
+    def _verify_backup(
+        path: Path,
+        expected_checksum: str,
+        expected_fingerprint: tuple[int, int, int] | None = None,
+    ) -> tuple[int, int, int]:
+        try:
+            fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW)
+        except OSError as exc:
+            raise ReconciliationDenied("fresh verified backup evidence required") from exc
+        try:
+            before = os.fstat(fd)
+            if not stat.S_ISREG(before.st_mode):
+                raise ReconciliationDenied("backup artifact is not a regular file")
+            fingerprint = (before.st_dev, before.st_ino, before.st_size)
+            if expected_fingerprint is not None and fingerprint != expected_fingerprint:
+                raise ReconciliationDenied("backup artifact was replaced or resized")
+            digest = hashlib.sha256()
+            while chunk := os.read(fd, 1024 * 1024):
+                digest.update(chunk)
+            after = os.fstat(fd)
+            if (after.st_dev, after.st_ino, after.st_size) != fingerprint:
+                raise ReconciliationDenied("backup artifact mutated during verification")
+            if digest.hexdigest() != expected_checksum:
+                raise ReconciliationDenied("backup artifact checksum mismatch")
+            return fingerprint
+        finally:
+            os.close(fd)
