@@ -19,7 +19,13 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
+          ref: ${{ env.SOURCE_SHA }}
           fetch-depth: 0
+          persist-credentials: false
+      - name: Verify exact clean source checkout
+        run: |
+          test "$(git rev-parse HEAD)" = "${SOURCE_SHA}"
+          test -z "$(git status --porcelain --untracked-files=all)"
       - uses: actions/setup-python@v5
         with:
           python-version: "3.11"

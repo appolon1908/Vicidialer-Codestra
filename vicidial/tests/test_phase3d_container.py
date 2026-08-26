@@ -107,6 +107,10 @@ def test_workflow_builds_without_push_and_generates_evidence():
     assert "sbom: true" in text
     assert "provenance: mode=max" in text
     assert "upload-artifact" in text
+    assert "ref: ${{ env.SOURCE_SHA }}" in text
+    assert "persist-credentials: false" in text
+    assert 'git rev-parse HEAD)\" = \"${SOURCE_SHA}' in text
+    assert "git status --porcelain --untracked-files=all" in text
 
 
 @pytest.mark.skipif(not os.environ.get("VICIDIAL_CONTAINER_TEST_IMAGE"),
