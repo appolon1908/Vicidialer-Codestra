@@ -3,6 +3,9 @@ services:
     image: codestra/vicidial-restricted-adapter@${VICIDIAL_ADAPTER_IMAGE_DIGEST:?immutable image digest required}
     ports:
       - "127.0.0.1:8097:8097"
+    networks:
+      adapter-ingress:
+        ipv4_address: 172.30.97.2
     user: "10001:10001"
     read_only: true
     cap_drop: [ALL]
@@ -26,6 +29,9 @@ services:
       CODESTRA_ADAPTER_HMAC_FILE: /run/secrets/adapter-hmac
       CODESTRA_VICIDIAL_DB_FILE: /run/secrets/vicidial-db.json
       AUTHORIZED_PRIVATE_SOURCE_IP: 10.40.0.1
+      # Host Apache reaches the loopback-published port through this isolated,
+      # fixed Compose gateway; no forwarded client address is trusted.
+      AUTHORIZED_CONTAINER_PROXY_IP: 172.30.97.1
       ENABLE_VICIDIAL_WRITES: "false"
       ENABLE_PROVISIONING: "false"
       ENABLE_AGENT_SYNC: "false"
@@ -48,6 +54,14 @@ services:
 
 volumes:
   adapter-state:
+
+networks:
+  adapter-ingress:
+    driver: bridge
+    ipam:
+      config:
+        - subnet: 172.30.97.0/29
+          gateway: 172.30.97.1
 
 secrets:
   adapter-hmac:

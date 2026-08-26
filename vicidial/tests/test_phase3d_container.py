@@ -130,6 +130,13 @@ def test_compose_hardening_and_disabled_capabilities(name):
     for flag in LIVE_FLAGS:
         assert service["environment"][flag] == "false"
     assert document["secrets"]
+    if name == "compose.production.yml":
+        network = document["networks"]["adapter-ingress"]
+        assert network["ipam"]["config"] == [{
+            "subnet": "172.30.97.0/29", "gateway": "172.30.97.1"
+        }]
+        assert service["networks"]["adapter-ingress"]["ipv4_address"] == "172.30.97.2"
+        assert service["environment"]["AUTHORIZED_CONTAINER_PROXY_IP"] == "172.30.97.1"
 
 
 def test_entrypoint_rejects_enabled_live_capability():

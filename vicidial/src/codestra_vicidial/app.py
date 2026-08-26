@@ -447,6 +447,13 @@ def app_from_environment() -> FastAPI:
         os.environ.get("AUTHORIZED_PRIVATE_SOURCE_IP", "10.40.0.1"),
         "127.0.0.1",
     }
+    container_proxy = os.environ.get("AUTHORIZED_CONTAINER_PROXY_IP")
+    if container_proxy:
+        import ipaddress
+        address = ipaddress.ip_address(container_proxy)
+        if not address.is_private:
+            raise RuntimeError("container proxy source must be a private address")
+        configured_sources.add(str(address))
     if deployment == "development-loopback":
         configured_sources = {"127.0.0.1"}
     auth = RequestAuthenticator(
