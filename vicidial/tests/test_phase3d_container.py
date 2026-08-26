@@ -24,6 +24,11 @@ LIVE_FLAGS = (
 )
 
 
+def test_container_workflow_runs_for_gateway_signer_changes():
+    workflow = (ROOT / ".github/workflows/vicidial-adapter-container.yml").read_text()
+    assert '- "campaign_provisioning/**"' in workflow
+
+
 def test_dockerfile_is_pinned_multistage_nonroot_and_amd64_buildable():
     text = (DOCKER / "Dockerfile").read_text()
     assert text.count("FROM ${PYTHON_IMAGE}") == 2
