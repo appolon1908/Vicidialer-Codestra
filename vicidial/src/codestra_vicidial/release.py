@@ -140,7 +140,10 @@ def load_release_info(
             manifest_root_value = os.environ.get("CODESTRA_RELEASE_MANIFEST_ROOT")
             if manifest_root_value:
                 manifest_root = Path(manifest_root_value).resolve()
-                manifest_file = metadata_file.with_name("RELEASE_MANIFEST.json")
+                manifest_file = Path(os.environ.get(
+                    "CODESTRA_RELEASE_MANIFEST_FILE",
+                    str(metadata_file.with_name("INSTALLED_MANIFEST.json")),
+                ))
                 manifest = json.loads(manifest_file.read_text(encoding="utf-8"))
                 if manifest.get("source_sha") != result["git_sha"]:
                     raise ValueError("release manifest source SHA mismatch")

@@ -170,13 +170,15 @@ def test_required_release_verifies_installed_manifest_before_ready(
     controlled.parent.mkdir()
     controlled.write_text("verified = True\n")
     raw = controlled.read_bytes()
-    (tmp_path / "RELEASE_MANIFEST.json").write_text(json.dumps({
+    manifest_file = tmp_path / "INSTALLED_MANIFEST.json"
+    manifest_file.write_text(json.dumps({
         "source_sha": SHA,
         "files": [{"path": "src/adapter.py", "size": len(raw),
                    "sha256": hashlib.sha256(raw).hexdigest()}],
     }))
     monkeypatch.delenv("CODESTRA_BUILD_INFO_FILE", raising=False)
     monkeypatch.setenv("CODESTRA_RELEASE_MANIFEST_ROOT", str(tmp_path))
+    monkeypatch.setenv("CODESTRA_RELEASE_MANIFEST_FILE", str(manifest_file))
     assert load_release_info(required=True, root=tmp_path)["verified"] is True
     controlled.write_text("verified = False\n")
     with pytest.raises(ValueError, match="release manifest file mismatch"):

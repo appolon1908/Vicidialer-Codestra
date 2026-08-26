@@ -85,6 +85,21 @@ def test_manifest_is_complete_reproducible_and_detects_change(tmp_path: Path) ->
         generator.verify(ROOT, document)
 
 
+def test_installed_layout_manifest_is_flattened_and_tamper_evident(tmp_path: Path) -> None:
+    generator = load_script("generate_installed_manifest.py")
+    for directory in generator.INCLUDED:
+        target = tmp_path / directory
+        target.mkdir()
+        (target / "controlled.txt").write_text(directory + "\n")
+    document = generator.build(tmp_path, SHA, "2026-08-25T00:00:00Z")
+    paths = {item["path"] for item in document["files"]}
+    assert "src/controlled.txt" in paths
+    assert all(not path.startswith("vicidial/") for path in paths)
+    unit = (VICIDIAL / "ops/codestra-vicidial-restricted-adapter.service").read_text()
+    assert "scripts/verify_installed_manifest.py" in unit
+    assert "INSTALLED_MANIFEST.json" in unit
+
+
 def test_release_tuple_requires_every_identity(tmp_path: Path) -> None:
     verifier = load_script("verify_release_tuple.py")
     release = tmp_path / SHA
