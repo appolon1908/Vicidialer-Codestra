@@ -31,7 +31,6 @@ GET  /version
 
 POST /v1/campaigns/validate
 POST /v1/campaigns/provision-disabled
-POST /v1/campaigns/update-disabled
 POST /v1/campaigns/disable
 GET  /v1/campaigns/{campaign_id}/actual-state
 
@@ -40,20 +39,20 @@ POST /v1/agents/disable
 GET  /v1/agents/{user_id}/actual-state
 
 POST /v1/leads/publish
-GET  /v1/leads/by-idempotency/{key}
+GET  /v1/leads/by-external-id/{external_id}
 
 POST /v1/callbacks/create
 GET  /v1/callbacks/{callback_id}
 
-POST /v1/scripts/sync
-POST /v1/dispositions/sync
 POST /v1/transfer-policies/sync
 
 POST /v1/reconciliation/run
 GET  /v1/reconciliation/{run_id}
 ```
 
-The actual route names may follow existing accepted code, but the capabilities and security boundaries are mandatory.
+Campaign provisioning validates and creates its scripts and dispositions as one
+complete, disabled desired-state operation. Separate broad sync aliases are not
+exposed because they misleadingly suggested narrower mutations.
 
 ## Local implementation strategy
 

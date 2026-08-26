@@ -22,6 +22,7 @@ config/application-server-a.env
 *.tgz
 *.zip
 evidence/private/
+reports/vicidial/phase3/
 reports/private/
 config/*.secret.env
 !.env.example

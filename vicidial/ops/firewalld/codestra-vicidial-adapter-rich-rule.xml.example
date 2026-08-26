@@ -1,6 +1,6 @@
 <rule family="ipv4">
   <source address="10.40.0.1/32"/>
   <destination address="10.40.0.2/32"/>
-  <port protocol="tcp" port="9443"/>
+  <port protocol="tcp" port="8443"/>
   <accept/>
 </rule>

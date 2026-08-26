@@ -1,12 +1,14 @@
 [Unit]
-Description=Check Codestra restricted VICIdial adapter readiness
+Description=Verify Codestra restricted VICIdial R3 operational contract
 After=codestra-vicidial-restricted-adapter.service
 
 [Service]
 Type=oneshot
 User=codestra-adapter
 Group=codestra-adapter
-ExecStart=/usr/bin/curl --fail --silent --show-error http://127.0.0.1:8097/ready
+WorkingDirectory=/opt/codestra/vicidial-restricted-adapter/current
+EnvironmentFile=/etc/codestra/vicidial-restricted-adapter.env
+ExecStart=/opt/codestra/vicidial-restricted-adapter/current/.venv/bin/python scripts/verify_operational_contract.py --base-url http://127.0.0.1:8097 --source-commit /opt/codestra/vicidial-restricted-adapter/current/SOURCE.COMMIT --deployment-profile ${CODESTRA_ADAPTER_DEPLOYMENT} --attempts 1 --delay 0
 NoNewPrivileges=true
 PrivateTmp=true
 PrivateDevices=true

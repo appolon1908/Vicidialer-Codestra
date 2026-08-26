@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Annotated, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
@@ -125,6 +125,9 @@ class AgentSpec(StrictModel):
     campaigns: list[ActualCampaign] = Field(min_length=1, max_length=30)
     inbound_groups: list[ResourceCode] = Field(default_factory=list, max_length=30)
     active: Literal[False] = False
+    adopt_existing_sha256: Annotated[
+        str, Field(pattern=r"^[a-f0-9]{64}$")
+    ] | None = None
 
 
 class AgentCommand(StrictModel):
@@ -138,7 +141,7 @@ class DisableAgentCommand(StrictModel):
 
 
 class LeadSpec(StrictModel):
-    external_id: Annotated[str, Field(min_length=1, max_length=50)]
+    external_id: Annotated[str, Field(pattern=r"^[A-Za-z0-9._-]{1,50}$")]
     list_id: Annotated[int, Field(ge=11000, le=91999)]
     phone_code: Annotated[str, Field(pattern=r"^[0-9]{1,4}$")]
     phone_number: Annotated[str, Field(pattern=r"^[0-9]{7,18}$")]
@@ -153,13 +156,20 @@ class LeadCommand(StrictModel):
 
 
 class CallbackSpec(StrictModel):
-    external_id: Annotated[str, Field(min_length=1, max_length=50)]
+    external_id: Annotated[str, Field(pattern=r"^[A-Za-z0-9.-]{1,50}$")]
     lead_id: Annotated[int, Field(gt=0)]
     campaign_id: ActualCampaign
     user_id: Annotated[str, Field(pattern=r"^[A-Z]{3}[0-9]{4,12}$")]
     callback_time: datetime
     recipient: Literal["USERONLY", "ANYONE"] = "USERONLY"
     comments: Annotated[str, Field(max_length=255)] = ""
+
+    @field_validator("callback_time")
+    @classmethod
+    def callback_time_must_be_aware_utc(cls, value: datetime) -> datetime:
+        if value.tzinfo is None or value.utcoffset() is None:
+            raise ValueError("callback_time must include a timezone offset")
+        return value.astimezone(timezone.utc)
 
 
 class CallbackCommand(StrictModel):

@@ -37,7 +37,7 @@ class Adapter(Protocol):
     def sync_agent(self, key: str, command: dict[str, Any]) -> dict[str, Any]: ...
     def publish_lead(self, key: str, command: dict[str, Any]) -> dict[str, Any]: ...
     def sync_transfer_policy(self, key: str, command: dict[str, Any]) -> dict[str, Any]: ...
-    def reconcile(self) -> dict[str, Any]: ...
+    def reconcile(self, key: str) -> dict[str, Any]: ...
     def disable_campaign(self, key: str, command: dict[str, Any]) -> dict[str, Any]: ...
 
 
@@ -53,6 +53,17 @@ class PrivateAdapterConfig:
 
 class PrivateAdapterClient:
     """mTLS + signed-request client for the restricted private adapter."""
+
+    def _signature(
+        self, method: str, path: str, scopes: set[str], timestamp: int,
+        nonce: str, idempotency_key: str, body: bytes,
+    ) -> str:
+        canonical = "\n".join((
+            "v2", method.upper(), path, self.identity,
+            " ".join(sorted(set(scopes))), str(timestamp), nonce,
+            idempotency_key, hashlib.sha256(body).hexdigest(),
+        ))
+        return hmac.new(self.key, canonical.encode(), hashlib.sha256).hexdigest()
 
     def __init__(self, config: PrivateAdapterConfig):
         from urllib.parse import urlsplit
@@ -91,12 +102,10 @@ class PrivateAdapterClient:
         nonce = hashlib.sha256(
             f"{timestamp}:{time.time_ns()}:{path}".encode()
         ).hexdigest()[:32]
-        digest = hashlib.sha256(encoded).hexdigest()
-        signature = hmac.new(
-            self.key,
-            f"{timestamp}\n{nonce}\n{digest}".encode(),
-            hashlib.sha256,
-        ).hexdigest()
+        scopes = {item for item in scope.split(" ") if item}
+        signature = self._signature(
+            method, path, scopes, timestamp, nonce, idempotency_key or "", encoded,
+        )
         headers = {
             "Content-Type": "application/json",
             "X-Service-Identity": self.identity,
@@ -104,6 +113,7 @@ class PrivateAdapterClient:
             "X-Request-Timestamp": str(timestamp),
             "X-Request-Nonce": nonce,
             "X-Request-Signature": signature,
+            "X-Signature-Version": "v2",
         }
         if idempotency_key:
             headers["Idempotency-Key"] = idempotency_key
@@ -165,9 +175,10 @@ class PrivateAdapterClient:
             idempotency_key=key,
         )
 
-    def reconcile(self) -> dict[str, Any]:
+    def reconcile(self, key: str) -> dict[str, Any]:
         return self._request(
-            "POST", "/v1/reconciliation/run", scope="telephony:read"
+            "POST", "/v1/reconciliation/run", scope="telephony:read",
+            idempotency_key=key,
         )
 
     def disable_campaign(self, key: str, command: dict[str, Any]) -> dict[str, Any]:
@@ -436,7 +447,9 @@ def run_synthetic_lifecycle(
     )
     replay = adapter.provision_campaign(provision_key, command)
     lead_replay = adapter.publish_lead(lead_key, lead_command)
-    reconciliation = adapter.reconcile()
+    reconciliation = adapter.reconcile(
+        f"staging:{request.integration_uuid}:1:reconcile"
+    )
     rollback = adapter.disable_campaign(
         f"staging:{request.integration_uuid}:1:rollback", command
     )
