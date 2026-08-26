@@ -749,11 +749,12 @@ class MySQLRepository:
                 (item.code,))
         self.db.commit()
 
-    def agent(self, user_id: str) -> dict | None:
+    def _agent(self, user_id: str, *, for_update: bool = False) -> dict | None:
         row = self._one(
             "SELECT u.user AS user_id,u.full_name,u.user_group,u.active,"
             "u.closer_campaigns,g.allowed_campaigns FROM vicidial_users u "
-            "JOIN vicidial_user_groups g ON g.user_group=u.user_group WHERE u.user=%s",
+            "JOIN vicidial_user_groups g ON g.user_group=u.user_group "
+            "WHERE u.user=%s" + (" FOR UPDATE" if for_update else ""),
             (user_id,))
         if row is None:
             return None
@@ -761,17 +762,37 @@ class MySQLRepository:
         row["inbound_groups"] = normalize_allowed_campaigns(row.pop("closer_campaigns"))
         return row
 
+    def agent(self, user_id: str) -> dict | None:
+        return self._agent(user_id)
+
     def sync_agent_disabled(self, spec: AgentSpec) -> dict:
-        current = self.agent(spec.user_id)
-        if current:
-            self._execute(
+        try:
+            current = self._agent(spec.user_id, for_update=True)
+            if current is None:
+                raise ValueError(
+                    "agent creation requires the supported VICIdial Non-Agent API"
+                )
+            adopting = spec.adopt_existing_sha256 is not None
+            if adopting:
+                current_hash = hashlib.sha256(
+                    json.dumps(current, sort_keys=True, default=str).encode()
+                ).hexdigest()
+                if current.get("active") != "N":
+                    raise CollisionError("active existing agent cannot be adopted")
+                if current_hash != spec.adopt_existing_sha256:
+                    raise CollisionError("existing agent adoption proof became stale")
+            affected = self._execute(
                 "UPDATE vicidial_users SET active='N',full_name=%s,user_group=%s,"
-                "closer_campaigns=%s WHERE user=%s",
+                "closer_campaigns=%s WHERE user=%s" +
+                (" AND active='N'" if adopting else ""),
                 (spec.full_name, spec.user_group,
                  " " + " ".join(spec.inbound_groups) + " -", spec.user_id))
-        else:
-            raise ValueError("agent creation requires the supported VICIdial Non-Agent API")
-        self.db.commit()
+            if affected != 1:
+                raise CollisionError("agent changed during synchronized update")
+            self.db.commit()
+        except Exception:
+            self.db.rollback()
+            raise
         return self.agent(spec.user_id) or {}
 
     def disable_agent(self, user_id: str) -> dict:

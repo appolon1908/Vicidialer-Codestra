@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from datetime import datetime, timezone
+import inspect
 
 import pytest
 from pydantic import ValidationError
@@ -12,7 +13,11 @@ from codestra_vicidial.models import (
     CampaignCommand,
     TransferPolicyCommand,
 )
-from codestra_vicidial.repository import CollisionError, MemoryRepository
+from codestra_vicidial.repository import (
+    CollisionError,
+    MemoryRepository,
+    MySQLRepository,
+)
 from codestra_vicidial.service import AdapterService, FeatureFlags
 from codestra_vicidial.state import StateStore
 
@@ -184,6 +189,14 @@ def test_disabled_existing_agent_requires_and_accepts_exact_adoption_proof(tmp_p
     )
     assert result["actual"]["full_name"] == "Codestra Agent"
     assert service.state.mapping("agent", "COD1001")["actual_id"] == "COD1001"
+
+
+def test_mysql_agent_adoption_revalidates_under_row_lock():
+    source = inspect.getsource(MySQLRepository.sync_agent_disabled)
+    assert "for_update=True" in source
+    assert "adoption proof became stale" in source
+    assert "AND active='N'" in source
+    assert "self.db.rollback()" in source
 
 
 def test_test_syn_transfer_uses_test_business_unit(tmp_path):
