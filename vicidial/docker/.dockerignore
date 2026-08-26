@@ -1,0 +1,13 @@
+.git
+**/.git
+**/.venv
+**/__pycache__
+**/*.pyc
+**/.pytest_cache
+reports/
+evidence/
+*.sqlite3
+*.pem
+*.key
+*.crt
+.env

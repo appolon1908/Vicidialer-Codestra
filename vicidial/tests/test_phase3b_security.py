@@ -20,7 +20,7 @@ NONCE = "phase3b-nonce-00000001"
 BODY = b'{"synthetic":true}'
 METHOD = "POST"
 PATH = "/v1/campaigns/validate"
-IDEMPOTENCY_KEY = "phase3b-idempotency"
+IDEMPOTENCY_KEY = "test-key"
 
 
 def authenticator() -> RequestAuthenticator:

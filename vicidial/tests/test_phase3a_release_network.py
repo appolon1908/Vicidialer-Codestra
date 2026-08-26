@@ -62,14 +62,17 @@ def test_deployment_authority_is_immutable() -> None:
 
 def test_manifest_is_complete_reproducible_and_detects_change(tmp_path: Path) -> None:
     generator = load_script("generate_release_manifest.py")
-    first = generator.build(ROOT, SHA)
-    second = generator.build(ROOT, SHA)
+    first = generator.build(ROOT, SHA, "2026-08-25T00:00:00Z")
+    second = generator.build(ROOT, SHA, "2026-08-25T00:00:00Z")
     assert first == second
     paths = {item["path"] for item in first["files"]}
     assert "vicidial/src/codestra_vicidial/security.py" in paths
     assert "vicidial/ops/codestra-vicidial-restricted-adapter.service" in paths
     assert "deploy/vicidial-restricted-adapter/codestra-vicidial-restricted-adapter.service" in paths
     assert "vicidial/tests/test_phase3a_release_network.py" in paths
+    assert ".github/workflows/vicidial-adapter-container.yml" in paths
+    assert all("size" in item and "executable" in item and "classification" in item
+               for item in first["files"])
     document = json.loads(json.dumps(first))
     document["files"][0]["sha256"] = "0" * 64
     with pytest.raises(ValueError, match="does not match"):
