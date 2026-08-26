@@ -191,6 +191,41 @@ def test_disabled_existing_agent_requires_and_accepts_exact_adoption_proof(tmp_p
     assert service.state.mapping("agent", "COD1001")["actual_id"] == "COD1001"
 
 
+def test_first_agent_adoption_recovers_after_mysql_commit_before_mapping(
+    tmp_path, monkeypatch,
+):
+    service, repository = enabled_service(tmp_path)
+    existing = {
+        "user_id": "COD1001", "full_name": "Legacy Agent",
+        "user_group": "LEGACY", "campaigns": ["LEGACY01"],
+        "inbound_groups": [], "active": False,
+    }
+    repository.agents["COD1001"] = dict(existing)
+    payload = {
+        "context": context(),
+        "agent": {
+            "user_id": "COD1001", "full_name": "Codestra Agent",
+            "user_group": "COD_TEST_SDR", "campaigns": ["CODT0001"],
+            "inbound_groups": ["COD_TEST_CLOSERS"], "active": False,
+            "adopt_existing_sha256": service.state.digest(existing),
+        },
+    }
+    command = AgentCommand.model_validate(payload)
+    original_put = service.state.put_agent_mapping
+    monkeypatch.setattr(
+        service.state, "put_agent_mapping",
+        lambda *args: (_ for _ in ()).throw(RuntimeError("simulated crash")),
+    )
+    with pytest.raises(RuntimeError, match="simulated crash"):
+        service.sync_agent("adopt-crash", command)
+    assert service.state.agent_adoption_intent("COD1001") is not None
+    monkeypatch.setattr(service.state, "put_agent_mapping", original_put)
+    recovered = service.sync_agent("adopt-retry", command)
+    assert recovered["actual"]["full_name"] == "Codestra Agent"
+    assert service.state.mapping("agent", "COD1001")["actual_id"] == "COD1001"
+    assert service.state.agent_adoption_intent("COD1001") is None
+
+
 def test_mysql_agent_adoption_uses_myisam_table_lock_through_ownership():
     source = inspect.getsource(MySQLRepository.sync_agent_disabled)
     service_source = inspect.getsource(AdapterService.sync_agent)

@@ -45,6 +45,9 @@ class StateStore:
         CREATE TABLE IF NOT EXISTS agent_desired(
           user_id TEXT PRIMARY KEY, desired_json TEXT NOT NULL,
           desired_hash TEXT NOT NULL, updated_at TEXT NOT NULL);
+        CREATE TABLE IF NOT EXISTS agent_adoption_intents(
+          user_id TEXT PRIMARY KEY, original_hash TEXT NOT NULL,
+          desired_hash TEXT NOT NULL, created_at TEXT NOT NULL);
         CREATE TABLE IF NOT EXISTS reconciliation_runs(
           run_id TEXT PRIMARY KEY, result_json TEXT NOT NULL,
           created_at TEXT NOT NULL);
@@ -296,6 +299,30 @@ class StateStore:
              "desired_hash": row["desired_hash"]}
             if row else None
         )
+
+    def put_agent_adoption_intent(
+        self, user_id: str, original_hash: str, desired_hash: str
+    ) -> None:
+        """Persist retry authority before a non-transactional MyISAM mutation."""
+        self.db.execute(
+            "INSERT INTO agent_adoption_intents VALUES(?,?,?,?) "
+            "ON CONFLICT(user_id) DO NOTHING",
+            (user_id, original_hash, desired_hash,
+             datetime.now(timezone.utc).isoformat()),
+        )
+        self.db.commit()
+
+    def agent_adoption_intent(self, user_id: str) -> sqlite3.Row | None:
+        return self.db.execute(
+            "SELECT original_hash,desired_hash FROM agent_adoption_intents "
+            "WHERE user_id=?", (user_id,)
+        ).fetchone()
+
+    def clear_agent_adoption_intent(self, user_id: str) -> None:
+        self.db.execute(
+            "DELETE FROM agent_adoption_intents WHERE user_id=?", (user_id,)
+        )
+        self.db.commit()
 
     def persist_reconciliation_run(
         self,
