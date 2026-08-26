@@ -13,7 +13,9 @@ EnvironmentFile=/etc/codestra/vicidial-restricted-adapter.env
 Environment=PYTHONPATH=/opt/codestra/vicidial-restricted-adapter/current/src
 Environment=CODESTRA_RELEASE_METADATA_REQUIRED=true
 Environment=CODESTRA_BUILD_INFO_FILE=/opt/codestra/vicidial-restricted-adapter/current/BUILD_INFO.json
+Environment=CODESTRA_RELEASE_MANIFEST_ROOT=/opt/codestra/vicidial-restricted-adapter/current
 LoadCredential=adapter-hmac:/etc/codestra/secrets/telephony-provisioning-hmac
+ExecStartPre=/opt/codestra/vicidial-restricted-adapter/current/.venv/bin/python scripts/verify_release_manifest.py --root /opt/codestra/vicidial-restricted-adapter/current --manifest /opt/codestra/vicidial-restricted-adapter/current/RELEASE_MANIFEST.json
 ExecStartPre=/opt/codestra/vicidial-restricted-adapter/current/.venv/bin/python scripts/validate_runtime.py
 ExecStart=/opt/codestra/vicidial-restricted-adapter/current/.venv/bin/python -m uvicorn codestra_vicidial.app:app --host 127.0.0.1 --port 8097 --no-server-header --proxy-headers --forwarded-allow-ips=127.0.0.1
 ExecStartPost=/opt/codestra/vicidial-restricted-adapter/current/.venv/bin/python scripts/verify_operational_contract.py --base-url http://127.0.0.1:8097 --source-commit /opt/codestra/vicidial-restricted-adapter/current/SOURCE.COMMIT --deployment-profile ${CODESTRA_ADAPTER_DEPLOYMENT} --attempts 5 --delay 1

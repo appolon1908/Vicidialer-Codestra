@@ -157,6 +157,32 @@ def test_release_document_round_trip(
     assert loaded["version"] == "0.2.0rc1"
 
 
+def test_required_release_verifies_installed_manifest_before_ready(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import hashlib
+    document = build_release_document(
+        git_sha=SHA, built_at=BUILT_AT, environment="production-candidate"
+    )
+    (tmp_path / "BUILD_INFO.json").write_text(json.dumps(document))
+    (tmp_path / "SOURCE.COMMIT").write_text(SHA + "\n")
+    controlled = tmp_path / "src" / "adapter.py"
+    controlled.parent.mkdir()
+    controlled.write_text("verified = True\n")
+    raw = controlled.read_bytes()
+    (tmp_path / "RELEASE_MANIFEST.json").write_text(json.dumps({
+        "source_sha": SHA,
+        "files": [{"path": "src/adapter.py", "size": len(raw),
+                   "sha256": hashlib.sha256(raw).hexdigest()}],
+    }))
+    monkeypatch.delenv("CODESTRA_BUILD_INFO_FILE", raising=False)
+    monkeypatch.setenv("CODESTRA_RELEASE_MANIFEST_ROOT", str(tmp_path))
+    assert load_release_info(required=True, root=tmp_path)["verified"] is True
+    controlled.write_text("verified = False\n")
+    with pytest.raises(ValueError, match="release manifest file mismatch"):
+        load_release_info(required=True, root=tmp_path)
+
+
 def test_release_metadata_missing_or_invalid_fails(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,

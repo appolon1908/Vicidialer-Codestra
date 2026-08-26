@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import hashlib
 import os
 import re
 import sys
@@ -136,6 +137,26 @@ def load_release_info(
             source_commit = source_commit_file.read_text(encoding="utf-8").strip()
             if source_commit != result["git_sha"]:
                 raise ValueError("SOURCE.COMMIT and BUILD_INFO git_sha mismatch")
+            manifest_root_value = os.environ.get("CODESTRA_RELEASE_MANIFEST_ROOT")
+            if manifest_root_value:
+                manifest_root = Path(manifest_root_value).resolve()
+                manifest_file = metadata_file.with_name("RELEASE_MANIFEST.json")
+                manifest = json.loads(manifest_file.read_text(encoding="utf-8"))
+                if manifest.get("source_sha") != result["git_sha"]:
+                    raise ValueError("release manifest source SHA mismatch")
+                files = manifest.get("files")
+                if not isinstance(files, list) or not files:
+                    raise ValueError("release manifest file inventory missing")
+                for entry in files:
+                    relative = entry.get("path")
+                    if not isinstance(relative, str):
+                        raise ValueError("release manifest path missing")
+                    candidate = (manifest_root / relative).resolve()
+                    if not candidate.is_relative_to(manifest_root) or not candidate.is_file():
+                        raise ValueError(f"release manifest file missing: {relative}")
+                    raw = candidate.read_bytes()
+                    if len(raw) != entry.get("size") or hashlib.sha256(raw).hexdigest() != entry.get("sha256"):
+                        raise ValueError(f"release manifest file mismatch: {relative}")
         result["verified"] = True
         result["metadata_source"] = "BUILD_INFO.json"
         return result
