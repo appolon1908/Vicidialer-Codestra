@@ -23,6 +23,10 @@ def test_dedicated_repository_keeps_vicidial_integration_authority():
         "vicidial/src/codestra_vicidial",
         "vicidial/docker",
         "vicidial/ops",
+        "scripts/vicidial_sync.py.candidate",
+        "scripts/canonical_event_client.py.reference",
+        "tests/test_production_vicidial_sync.py",
+        "tests/test_synthetic_campaign_lifecycle.py",
         ".github/workflows/vicidial-adapter-source.yml",
         ".github/workflows/vicidial-adapter-container.yml",
     )

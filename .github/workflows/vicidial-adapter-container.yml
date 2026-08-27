@@ -4,6 +4,8 @@ on:
   pull_request:
     paths:
       - "campaign_provisioning/**"
+      - "scripts/**"
+      - "tests/**"
       - "vicidial/**"
       - "deploy/vicidial-restricted-adapter/**"
       - ".github/workflows/vicidial-adapter-container.yml"
@@ -57,7 +59,11 @@ jobs:
       - name: Install locked runtime and bounded test dependencies
         run: |
           python -m pip install --requirement vicidial/docker/requirements.lock
-          python -m pip install "httpx2==2.12.0" "pytest>=8,<10" "PyYAML>=6,<7"
+          python -m pip install \
+            "httpx2==2.12.0" \
+            "pytest>=8,<10" \
+            "PyYAML>=6,<7" \
+            "requests>=2.32,<3"
       - name: Prove TestClient uses httpx2 without classic httpx
         run: |
           test -z "$(python -m pip show httpx 2>/dev/null)"
@@ -73,6 +79,11 @@ jobs:
           PYTHONPATH=vicidial/src python -m pytest -q --junitxml=evidence/test-results/phase3c.xml vicidial/tests/test_phase3c_domains.py vicidial/tests/test_campaign_adoption_atomicity.py
           PYTHONPATH=vicidial/src python -m pytest -q --junitxml=evidence/test-results/phase3d.xml vicidial/tests/test_phase3d_container.py vicidial/tests/test_verify_oci_export.py
           PYTHONPATH=vicidial/src python -m pytest -q --junitxml=evidence/test-results/full.xml vicidial/tests
+          PYTHONPATH=vicidial/src python -m pytest -q --junitxml=evidence/test-results/root-vicidial.xml tests
+          python -m compileall -q campaign_provisioning vicidial/src vicidial/scripts vicidial/tests tests
+          python -m py_compile \
+            scripts/vicidial_sync.py.candidate \
+            scripts/canonical_event_client.py.reference
       - name: Verify deterministic installed-layout contract
         run: |
           release_root="${RUNNER_TEMP}/installed-layout/${SOURCE_SHA}"
