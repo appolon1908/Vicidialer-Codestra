@@ -145,13 +145,17 @@ def test_entrypoint_rejects_enabled_live_capability():
     assert "release tuple mismatch" in text
 
 
-def test_workflow_builds_without_push_and_generates_evidence():
+def test_workflow_builds_exact_image_and_uploads_only_clean_evidence():
     text = (ROOT / ".github/workflows/vicidial-adapter-container.yml").read_text()
     assert "platforms: linux/amd64" in text
+    assert text.count("docker/build-push-action@v6") == 2
+    assert "Build runnable linux/amd64 review image" in text
+    assert "load: true" in text
+    assert "sbom: false" in text and "provenance: false" in text
+    assert "Export attested linux/amd64 OCI candidate" in text
+    assert "outputs: type=oci,dest=evidence/vicidial-adapter.oci.tar" in text
+    assert "sbom: true" in text and "provenance: mode=max" in text
     assert "push: false" in text
-    assert "sbom: true" in text
-    assert "provenance: mode=max" in text
-    assert "upload-artifact" in text
     assert "ref: ${{ env.SOURCE_SHA }}" in text
     assert "persist-credentials: false" in text
     assert 'git rev-parse HEAD)\" = \"${SOURCE_SHA}' in text
@@ -159,6 +163,16 @@ def test_workflow_builds_without_push_and_generates_evidence():
     assert "Enforce exact source secret gate" in text
     assert "Enforce exact-image secret gate" in text
     assert "EVIDENCE_SECRET_SCAN.json" in text
+    assert "path: evidence/evidence-export/" in text
+    assert "vicidial-adapter-oci-${{ env.SOURCE_SHA }}" in text
+    assert "vicidial-host-release-${{ env.SOURCE_SHA }}" not in text
+    assert "vicidial-host-release.tar.gz" not in text
+    assert "if: always()" not in text
+    assert text.count("if: success()") == 2
+    assert "sha256sum evidence/vicidial-adapter.oci.tar" not in text
+    assert "sha256sum vicidial-adapter.oci.tar > vicidial-adapter.oci.tar.sha256" in text
+    assert 'find . -type f ! -name CHECKSUMS.sha256' in text
+    assert '> "${export_dir}/CHECKSUMS.sha256"' in text
     assert text.count("docker compose -f vicidial/docker/compose.") == 2
 
 
@@ -185,6 +199,7 @@ def test_local_image_health_release_tuple_and_restart(tmp_path):
             "import json,urllib.request; print(json.dumps(json.load("
             "urllib.request.urlopen('http://127.0.0.1:8097%s',timeout=1))))"
         )
+
         def get(path):
             output = subprocess.check_output(
                 [engine, "exec", name, "python", "-c", probe % path], text=True)
