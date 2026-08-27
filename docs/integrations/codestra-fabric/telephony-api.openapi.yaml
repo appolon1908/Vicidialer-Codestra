@@ -1,0 +1,102 @@
+openapi: 3.1.0
+info:
+  title: Codestra Private Telephony API
+  version: 1.0.0
+  description: Private Middleware facade over the restricted VICIdial/Asterisk adapter.
+paths:
+  /v1/telephony/calls/preview:
+    post:
+      operationId: previewTelephonyCall
+      security: [{oauth2: [telephony.call.preview]}]
+      responses: {'200': {description: No-effect policy and routing preview}}
+  /v1/telephony/calls:
+    post:
+      operationId: requestTelephonyCall
+      security: [{oauth2: [telephony.call.write]}]
+      parameters: [{$ref: '#/components/parameters/IdempotencyKey'}]
+      responses: {'202': {$ref: '#/components/responses/OperationAccepted'}, '403': {description: Capability disabled}}
+  /v1/telephony/calls/{call_id}:
+    get:
+      operationId: getTelephonyCall
+      security: [{oauth2: [telephony.call.read]}]
+      parameters: [{name: call_id, in: path, required: true, schema: {type: string}}]
+      responses: {'200': {description: Authoritative call projection}}
+  /v1/telephony/callbacks:
+    get:
+      operationId: listCallbacks
+      security: [{oauth2: [telephony.callback.read]}]
+      responses: {'200': {description: Tenant/campaign callbacks}}
+    post:
+      operationId: createCallback
+      security: [{oauth2: [telephony.callback.write]}]
+      parameters: [{$ref: '#/components/parameters/IdempotencyKey'}]
+      responses: {'202': {$ref: '#/components/responses/OperationAccepted'}, '403': {description: Capability disabled}}
+  /v1/telephony/callbacks/{callback_id}/cancel:
+    post:
+      operationId: cancelCallback
+      security: [{oauth2: [telephony.callback.write]}]
+      parameters:
+        - {name: callback_id, in: path, required: true, schema: {type: string, format: uuid}}
+        - {$ref: '#/components/parameters/IdempotencyKey'}
+        - {$ref: '#/components/parameters/IfMatch'}
+      responses: {'202': {$ref: '#/components/responses/OperationAccepted'}}
+  /v1/telephony/calls/{call_id}/disposition:
+    post:
+      operationId: recordCallDisposition
+      security: [{oauth2: [telephony.disposition.write]}]
+      parameters:
+        - {name: call_id, in: path, required: true, schema: {type: string}}
+        - {$ref: '#/components/parameters/IdempotencyKey'}
+      responses: {'202': {$ref: '#/components/responses/OperationAccepted'}}
+  /v1/telephony/agents/status:
+    get:
+      operationId: listAgentStatus
+      security: [{oauth2: [telephony.agent.read]}]
+      responses: {'200': {description: Authorized agent state}}
+  /v1/telephony/campaigns/status:
+    get:
+      operationId: listCampaignStatus
+      security: [{oauth2: [telephony.campaign.read]}]
+      responses: {'200': {description: Authorized campaign state}}
+  /v1/telephony/recordings/{recording_id}/metadata:
+    get:
+      operationId: getRecordingMetadata
+      security: [{oauth2: [telephony.recording.read]}]
+      parameters: [{name: recording_id, in: path, required: true, schema: {type: string}}]
+      responses: {'200': {description: Metadata and authorized reference only}}
+  /v1/webhooks/telephony/vicidial:
+    post:
+      operationId: receiveVicidialEvent
+      security: []
+      responses: {'202': {description: Durable event acceptance after adapter verification}}
+components:
+  securitySchemes:
+    oauth2:
+      type: oauth2
+      flows:
+        clientCredentials:
+          tokenUrl: https://auth.codestra.co/realms/codestra/protocol/openid-connect/token
+          scopes:
+            telephony.call.preview: Run no-effect preview
+            telephony.call.write: Request approved call
+            telephony.call.read: Read call state
+            telephony.callback.read: Read callbacks
+            telephony.callback.write: Request callback state
+            telephony.disposition.write: Record disposition
+            telephony.agent.read: Read agent state
+            telephony.campaign.read: Read campaign state
+            telephony.recording.read: Read recording metadata
+  parameters:
+    IdempotencyKey:
+      name: Idempotency-Key
+      in: header
+      required: true
+      schema: {type: string, minLength: 8, maxLength: 180}
+    IfMatch:
+      name: If-Match
+      in: header
+      required: true
+      schema: {type: string, minLength: 1, maxLength: 128}
+  responses:
+    OperationAccepted:
+      description: Durable asynchronous operation accepted

@@ -1,0 +1,24 @@
+{
+  "schema_version": "1.0",
+  "system": "vicidial-asterisk",
+  "authority": ["telephony_execution", "campaigns", "agents", "calls", "channels", "dispositions", "recordings"],
+  "integration_boundary": "MIDDLEWARE_RESTRICTED_ADAPTER_ONLY",
+  "adapter_path": "10.40.0.1 -> 10.40.0.2:8443 -> 127.0.0.1:8097",
+  "public_api": false,
+  "n8n_direct_access": false,
+  "database_direct_access": false,
+  "ami_direct_access": false,
+  "carrier_credentials_in_n8n": false,
+  "service_identity": "vicidial-adapter",
+  "event_delivery": "SIGNED_ADAPTER_EVENTS",
+  "unknown_command_reconcile_before_retry": true,
+  "success_authority": "RESTRICTED_ADAPTER_READBACK",
+  "capabilities": {
+    "PRODUCTION_DIALING": false,
+    "CALLBACK_DISPATCH": false,
+    "TELEPHONY_ADMIN_WRITE": false,
+    "RECORDING_WRITE": false,
+    "LEAD_PUBLISH": false,
+    "ODOO_WRITE": false
+  }
+}
