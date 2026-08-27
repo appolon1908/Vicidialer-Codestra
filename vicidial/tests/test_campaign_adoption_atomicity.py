@@ -35,11 +35,20 @@ def _spec(current: dict) -> CampaignSpec:
     })
 
 
+class CommitProbe:
+    def __init__(self):
+        self.commits = 0
+
+    def commit(self):
+        self.commits += 1
+
+
 class AdoptionProbe(MySQLRepository):
     def __init__(self, current: dict, affected: int):
         self.current = dict(current)
         self.affected = affected
         self.executions: list[tuple[str, tuple]] = []
+        self.db = CommitProbe()
 
     def validate_campaign(self, spec):
         return {"valid": True, "collision": True}
@@ -79,6 +88,7 @@ def test_campaign_adoption_predicate_binds_both_dialing_level_fields():
     sql, args = repository.executions[0]
     assert "AND hopper_level<=>%s AND auto_dial_level<=>%s" in sql
     assert args[-2:] == (7, "3")
+    assert repository.db.commits == 1
 
 
 def test_campaign_adoption_rejects_concurrent_dialing_level_change():
@@ -87,6 +97,7 @@ def test_campaign_adoption_rejects_concurrent_dialing_level_change():
     with pytest.raises(CollisionError, match="campaign adoption proof became stale"):
         repository.provision_campaign_disabled(_spec(current))
     assert len(repository.executions) == 1
+    assert repository.db.commits == 0
 
 
 def test_campaign_validation_and_mutation_hash_the_same_dialing_snapshot():
