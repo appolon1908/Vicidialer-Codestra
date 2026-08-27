@@ -16,10 +16,20 @@ jobs:
   validate:
     runs-on: ubuntu-latest
     timeout-minutes: 15
+    env:
+      SOURCE_SHA: ${{ github.event.pull_request.head.sha }}
+      BASE_SHA: ${{ github.event.pull_request.base.sha }}
     steps:
       - uses: actions/checkout@v4
         with:
+          ref: ${{ env.SOURCE_SHA }}
           fetch-depth: 0
+          persist-credentials: false
+
+      - name: Verify exact clean source checkout
+        run: |
+          test "$(git rev-parse HEAD)" = "${SOURCE_SHA}"
+          test -z "$(git status --porcelain --untracked-files=all)"
 
       - uses: actions/setup-python@v5
         with:
@@ -39,7 +49,7 @@ jobs:
         run: python -m compileall -q vicidial/src vicidial/scripts vicidial/tests
 
       - name: Validate Git whitespace
-        run: git diff --check "${{ github.event.pull_request.base.sha }}..HEAD"
+        run: git diff --check "${BASE_SHA}..${SOURCE_SHA}"
 
       - name: Install checksum-verified Gitleaks
         env:
@@ -61,11 +71,11 @@ jobs:
       - name: Scan PR history
         run: |
           "${RUNNER_TEMP}/bin-gitleaks" git --no-banner --redact --exit-code 1 \
-            --log-opts="${{ github.event.pull_request.base.sha }}..HEAD"
+            --log-opts="${BASE_SHA}..${SOURCE_SHA}"
 
       - name: Scan candidate diff
         run: |
-          git diff --binary "${{ github.event.pull_request.base.sha }}..HEAD" -- \
+          git diff --binary "${BASE_SHA}..${SOURCE_SHA}" -- \
             vicidial \
             deploy/vicidial-restricted-adapter \
             .github/workflows/vicidial-adapter-source.yml \
