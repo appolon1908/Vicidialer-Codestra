@@ -1,5 +1,5 @@
 #!/usr/bin/env python3.11
-"""Prove an OCI export is the same platform image tested in Docker."""
+"""Prove an OCI export is the tested image and carries required attestations."""
 from __future__ import annotations
 
 import argparse
@@ -9,6 +9,21 @@ import io
 import json
 import tarfile
 from pathlib import Path
+
+
+OCI_IMAGE_INDEX = "application/vnd.oci.image.index.v1+json"
+OCI_IMAGE_MANIFEST = "application/vnd.oci.image.manifest.v1+json"
+OCI_EMPTY_CONFIG = "application/vnd.oci.empty.v1+json"
+ATTESTATION_ARTIFACT = "application/vnd.docker.attestation.manifest.v1+json"
+IN_TOTO_MEDIA_TYPE = "application/vnd.in-toto+json"
+REFERENCE_TYPE = "vnd.docker.reference.type"
+REFERENCE_DIGEST = "vnd.docker.reference.digest"
+ATTESTATION_REFERENCE_TYPE = "attestation-manifest"
+PREDICATE_ANNOTATION = "in-toto.io/predicate-type"
+SBOM_PREDICATE = "https://spdx.dev/Document"
+PROVENANCE_PREFIX = "https://slsa.dev/provenance/"
+LINUX_AMD64 = {"architecture": "amd64", "os": "linux"}
+UNKNOWN_PLATFORM = {"architecture": "unknown", "os": "unknown"}
 
 
 def member_bytes(archive: tarfile.TarFile, name: str) -> bytes:
@@ -58,7 +73,7 @@ def descriptor_bytes(archive: tarfile.TarFile, descriptor: dict) -> bytes:
     return raw
 
 
-def blob_json(archive: tarfile.TarFile, descriptor: dict) -> dict:
+def descriptor_json(archive: tarfile.TarFile, descriptor: dict) -> dict:
     try:
         document = json.loads(descriptor_bytes(archive, descriptor))
     except json.JSONDecodeError as exc:
@@ -82,6 +97,109 @@ def layer_diff_id(raw: bytes, media_type: str) -> str:
     else:
         raise ValueError(f"unsupported OCI layer media type: {media_type}")
     return "sha256:" + hashlib.sha256(payload).hexdigest()
+
+
+def require_subject_descriptor(subject: object, target: dict) -> None:
+    if not isinstance(subject, dict):
+        raise ValueError("attestation subject descriptor is missing")
+    for field in ("mediaType", "digest", "size"):
+        if subject.get(field) != target.get(field):
+            raise ValueError("attestation subject does not match image manifest")
+
+
+def verify_statement(raw: bytes, descriptor: dict, image_digest: str) -> str:
+    if descriptor.get("mediaType") != IN_TOTO_MEDIA_TYPE:
+        raise ValueError("attestation layer is not in-toto JSON")
+    try:
+        statement = json.loads(raw)
+    except json.JSONDecodeError as exc:
+        raise ValueError("attestation statement is invalid JSON") from exc
+    if not isinstance(statement, dict):
+        raise ValueError("attestation statement is not an object")
+    statement_type = statement.get("_type")
+    if not isinstance(statement_type, str) or not statement_type.startswith(
+        "https://in-toto.io/Statement/"
+    ):
+        raise ValueError("attestation statement type is invalid")
+    predicate_type = statement.get("predicateType")
+    if not isinstance(predicate_type, str) or not predicate_type:
+        raise ValueError("attestation predicate type is missing")
+    annotations = descriptor.get("annotations")
+    if not isinstance(annotations, dict) or annotations.get(
+        PREDICATE_ANNOTATION
+    ) != predicate_type:
+        raise ValueError("attestation predicate annotation mismatch")
+    expected = image_digest.split(":", 1)[1]
+    subjects = statement.get("subject")
+    if not isinstance(subjects, list) or not any(
+        isinstance(subject, dict)
+        and isinstance(subject.get("digest"), dict)
+        and subject["digest"].get("sha256") == expected
+        for subject in subjects
+    ):
+        raise ValueError("attestation statement subject does not match image manifest")
+    if "predicate" not in statement:
+        raise ValueError("attestation predicate is missing")
+    return predicate_type
+
+
+def verify_attestations(
+    archive: tarfile.TarFile,
+    outer: dict,
+    image_descriptor: dict,
+) -> tuple[list[str], list[str]]:
+    manifests = outer.get("manifests")
+    if not isinstance(manifests, list):
+        raise ValueError("OCI root is not a nested image index")
+    image_digest = image_descriptor.get("digest")
+    attestation_descriptors = [
+        descriptor for descriptor in manifests if descriptor is not image_descriptor
+    ]
+    if not attestation_descriptors:
+        raise ValueError("OCI export has no attached attestation manifest")
+
+    manifest_digests: list[str] = []
+    predicate_types: set[str] = set()
+    for descriptor in attestation_descriptors:
+        if descriptor.get("mediaType") != OCI_IMAGE_MANIFEST:
+            raise ValueError("attestation descriptor media type is invalid")
+        if descriptor.get("platform") != UNKNOWN_PLATFORM:
+            raise ValueError("attestation descriptor platform is not unknown/unknown")
+        annotations = descriptor.get("annotations")
+        if not isinstance(annotations, dict):
+            raise ValueError("attestation descriptor annotations are missing")
+        if annotations.get(REFERENCE_TYPE) != ATTESTATION_REFERENCE_TYPE:
+            raise ValueError("attestation descriptor reference type is invalid")
+        if annotations.get(REFERENCE_DIGEST) != image_digest:
+            raise ValueError("attestation descriptor references the wrong image")
+        attestation = descriptor_json(archive, descriptor)
+        require_schema_version(attestation, "attestation manifest")
+        if attestation.get("mediaType") != OCI_IMAGE_MANIFEST:
+            raise ValueError("attestation manifest media type is invalid")
+        if attestation.get("artifactType") != ATTESTATION_ARTIFACT:
+            raise ValueError("attestation manifest artifact type is invalid")
+        require_subject_descriptor(attestation.get("subject"), image_descriptor)
+        config_descriptor = attestation.get("config")
+        if not isinstance(config_descriptor, dict):
+            raise ValueError("attestation config descriptor is missing")
+        if config_descriptor.get("mediaType") != OCI_EMPTY_CONFIG:
+            raise ValueError("attestation config is not the OCI empty descriptor")
+        config = descriptor_bytes(archive, config_descriptor)
+        if config != b"{}":
+            raise ValueError("attestation config is not empty JSON")
+        layers = attestation.get("layers")
+        if not isinstance(layers, list) or not layers:
+            raise ValueError("attestation manifest has no statement layers")
+        for layer in layers:
+            raw = descriptor_bytes(archive, layer)
+            predicate_types.add(verify_statement(raw, layer, image_digest))
+        manifest_digests.append(descriptor["digest"])
+
+    if SBOM_PREDICATE not in predicate_types:
+        raise ValueError("OCI export is missing the SPDX SBOM attestation")
+    if not any(value.startswith(PROVENANCE_PREFIX) for value in predicate_types):
+        raise ValueError("OCI export is missing the SLSA provenance attestation")
+    return sorted(manifest_digests), sorted(predicate_types)
 
 
 def main() -> int:
@@ -112,35 +230,49 @@ def main() -> int:
 
         index = member_json(archive, "index.json")
         require_schema_version(index, "OCI index")
-        roots = index.get("manifests", [])
+        roots = index.get("manifests")
         if not isinstance(roots, list) or len(roots) != 1:
-            raise ValueError("OCI archive does not contain exactly one root manifest")
+            raise ValueError("OCI archive does not contain exactly one root index")
         root_descriptor = roots[0]
-        outer = blob_json(archive, root_descriptor)
-        require_schema_version(outer, "OCI root")
+        if root_descriptor.get("mediaType") != OCI_IMAGE_INDEX:
+            raise ValueError("OCI root descriptor is not an image index")
+        outer = descriptor_json(archive, root_descriptor)
+        require_schema_version(outer, "OCI root index")
+        if outer.get("mediaType") != OCI_IMAGE_INDEX:
+            raise ValueError("OCI root is not a nested image index")
+        outer_manifests = outer.get("manifests")
+        if not isinstance(outer_manifests, list):
+            raise ValueError("OCI root is not a nested image index")
+        candidates = [
+            item
+            for item in outer_manifests
+            if item.get("platform") == LINUX_AMD64
+            and not (
+                isinstance(item.get("annotations"), dict)
+                and item["annotations"].get(REFERENCE_TYPE)
+                == ATTESTATION_REFERENCE_TYPE
+            )
+        ]
+        if len(candidates) != 1:
+            raise ValueError("OCI archive does not contain one linux/amd64 image")
+        manifest_descriptor = candidates[0]
+        if manifest_descriptor.get("mediaType") != OCI_IMAGE_MANIFEST:
+            raise ValueError("OCI image descriptor media type is invalid")
+        manifest = descriptor_json(archive, manifest_descriptor)
+        require_schema_version(manifest, "OCI image manifest")
+        if manifest.get("mediaType") not in (None, OCI_IMAGE_MANIFEST):
+            raise ValueError("OCI image manifest media type is invalid")
 
-        if "manifests" in outer:
-            candidates = [
-                item for item in outer["manifests"]
-                if item.get("platform") == {"architecture": "amd64", "os": "linux"}
-            ]
-            if len(candidates) != 1:
-                raise ValueError("OCI archive does not contain one linux/amd64 image")
-            manifest_descriptor = candidates[0]
-            manifest = blob_json(archive, manifest_descriptor)
-            require_schema_version(manifest, "OCI image manifest")
-        elif "config" in outer:
-            manifest_descriptor = root_descriptor
-            manifest = outer
-        else:
-            raise ValueError("OCI root is neither an image manifest nor an image index")
+        attestation_manifest_digests, attestation_predicate_types = (
+            verify_attestations(archive, outer, manifest_descriptor)
+        )
 
         config_descriptor = manifest.get("config")
         if not isinstance(config_descriptor, dict):
             raise ValueError("OCI image config descriptor is missing")
         if config_descriptor.get("digest") != expected_config:
             raise ValueError("OCI config digest differs from tested Docker image ID")
-        config = blob_json(archive, config_descriptor)
+        config = descriptor_json(archive, config_descriptor)
         if (config.get("architecture"), config.get("os")) != ("amd64", "linux"):
             raise ValueError("OCI archive does not contain one linux/amd64 image")
         labels = config.get("config", {}).get("Labels", {})
@@ -167,7 +299,7 @@ def main() -> int:
         index_sha256 = hashlib.sha256(member_bytes(archive, "index.json")).hexdigest()
 
     document = {
-        "schema": "codestra-oci-export-verification/v1",
+        "schema": "codestra-oci-export-verification/v2",
         "source_sha": args.source_sha,
         "docker_image_id": expected_config,
         "oci_layout_version": layout["imageLayoutVersion"],
@@ -176,6 +308,9 @@ def main() -> int:
         "oci_config_digest": config_descriptor["digest"],
         "oci_layer_digests": [item["digest"] for item in layers],
         "rootfs_diff_ids": diff_ids,
+        "attestation_count": len(attestation_manifest_digests),
+        "attestation_manifest_digests": attestation_manifest_digests,
+        "attestation_predicate_types": attestation_predicate_types,
         "oci_layout_sha256": layout_sha256,
         "index_sha256": index_sha256,
         "archive_sha256": hashlib.sha256(args.archive.read_bytes()).hexdigest(),
