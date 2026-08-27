@@ -76,9 +76,26 @@ def _spdx_predicate() -> dict:
             {
                 "name": "codestra-vicidial-restricted-adapter",
                 "SPDXID": "SPDXRef-Package-adapter",
+                "downloadLocation": "NOASSERTION",
+                "filesAnalyzed": False,
+                "licenseConcluded": "NOASSERTION",
+                "licenseDeclared": "NOASSERTION",
+                "copyrightText": "NOASSERTION",
+                "checksums": [
+                    {
+                        "algorithm": "SHA256",
+                        "checksumValue": "a" * 64,
+                    }
+                ],
             }
         ],
-        "relationships": [],
+        "relationships": [
+            {
+                "spdxElementId": "SPDXRef-DOCUMENT",
+                "relationshipType": "DESCRIBES",
+                "relatedSpdxElement": "SPDXRef-Package-adapter",
+            }
+        ],
     }
 
 
@@ -89,18 +106,37 @@ def _slsa_predicate(source_sha: str) -> dict:
                 "https://github.com/moby/buildkit/blob/master/docs/"
                 "attestations/slsa-definitions.md"
             ),
-            "resolvedDependencies": [],
+            "resolvedDependencies": [
+                {
+                    "uri": "git+https://github.com/appolon1908-hue/"
+                    "Vicidialer-Codestra@refs/pull/2/head",
+                    "digest": {"gitCommit": source_sha},
+                }
+            ],
             "externalParameters": {},
             "internalParameters": {},
         },
         "runDetails": {
-            "builder": {"id": "https://github.com/codestra/test-builder"},
+            "builder": {
+                "id": "https://github.com/codestra/test-builder",
+                "builderDependencies": [
+                    {"uri": "pkg:docker/moby/buildkit@test"}
+                ],
+                "version": {"buildkit": "test"},
+            },
             "metadata": {
                 "invocationId": "test-invocation",
                 "startedOn": "2026-01-01T00:00:00Z",
                 "finishedOn": "2026-01-01T00:00:01Z",
                 "buildkit_metadata": {"vcs": {"revision": source_sha}},
             },
+            "byproducts": [
+                {
+                    "name": "build-log",
+                    "digest": {"sha256": "b" * 64},
+                    "mediaType": "text/plain",
+                }
+            ],
         },
     }
 
@@ -126,6 +162,12 @@ def _statement(
             predicate["runDetails"]["metadata"]["buildkit_metadata"]["vcs"][
                 "revision"
             ] = "f" * 40
+        elif mutation == "slsa_resolved_dependency":
+            predicate["buildDefinition"]["resolvedDependencies"] = [None]
+        elif mutation == "slsa_builder_dependency":
+            predicate["runDetails"]["builder"]["builderDependencies"] = [None]
+        elif mutation == "slsa_byproduct":
+            predicate["runDetails"]["byproducts"] = [None]
     else:
         predicate = {"unsupported": True}
     if mutation == "empty_predicate":
@@ -261,6 +303,9 @@ def _build_archive(
             elif predicate_type == PROVENANCE and attestation_mutation in (
                 "slsa_schema",
                 "slsa_revision",
+                "slsa_resolved_dependency",
+                "slsa_builder_dependency",
+                "slsa_byproduct",
             ):
                 mutation = attestation_mutation
             raw = _statement(
@@ -403,6 +448,10 @@ def _run_verifier(monkeypatch, tmp_path, **kwargs):
     return output
 
 
+def _validator(name: str):
+    return runpy.run_path(SCRIPT)[name]
+
+
 def test_verifier_accepts_attested_nested_linux_amd64_export(
     monkeypatch, tmp_path
 ):
@@ -417,6 +466,100 @@ def test_verifier_accepts_attested_nested_linux_amd64_export(
     assert document["oci_config_media_type"] == OCI_CONFIG
     assert document["attestation_count"] == 1
     assert document["attestation_predicate_types"] == sorted([SBOM, PROVENANCE])
+
+
+@pytest.mark.parametrize(
+    "field",
+    [
+        "name",
+        "SPDXID",
+        "downloadLocation",
+        "filesAnalyzed",
+        "licenseConcluded",
+        "licenseDeclared",
+        "copyrightText",
+    ],
+)
+def test_spdx_package_requires_every_schema_field(field):
+    predicate = _spdx_predicate()
+    del predicate["packages"][0][field]
+    with pytest.raises(ValueError, match="SPDX predicate package"):
+        _validator("validate_spdx_predicate")(predicate)
+
+
+@pytest.mark.parametrize(
+    "field,value",
+    [
+        ("name", 1),
+        ("SPDXID", ""),
+        ("downloadLocation", None),
+        ("filesAnalyzed", "false"),
+        ("licenseConcluded", ""),
+        ("licenseDeclared", []),
+        ("copyrightText", ""),
+    ],
+)
+def test_spdx_package_rejects_malformed_required_field(field, value):
+    predicate = _spdx_predicate()
+    predicate["packages"][0][field] = value
+    with pytest.raises(ValueError, match="SPDX predicate package"):
+        _validator("validate_spdx_predicate")(predicate)
+
+
+def test_spdx_package_rejects_malformed_checksum():
+    predicate = _spdx_predicate()
+    predicate["packages"][0]["checksums"] = [None]
+    with pytest.raises(ValueError, match="checksum"):
+        _validator("validate_spdx_predicate")(predicate)
+
+
+def test_spdx_relationship_rejects_missing_required_field():
+    predicate = _spdx_predicate()
+    del predicate["relationships"][0]["relationshipType"]
+    with pytest.raises(ValueError, match="relationship"):
+        _validator("validate_spdx_predicate")(predicate)
+
+
+@pytest.mark.parametrize(
+    "collection,path",
+    [
+        (
+            "resolved dependency",
+            ("buildDefinition", "resolvedDependencies"),
+        ),
+        (
+            "builder dependency",
+            ("runDetails", "builder", "builderDependencies"),
+        ),
+        ("byproduct", ("runDetails", "byproducts")),
+    ],
+)
+def test_slsa_resource_descriptor_collections_reject_null(collection, path):
+    predicate = _slsa_predicate("a" * 40)
+    target = predicate
+    for part in path[:-1]:
+        target = target[part]
+    target[path[-1]] = [None]
+    with pytest.raises(ValueError, match="not an object"):
+        _validator("validate_slsa_provenance")(predicate, "a" * 40)
+
+
+@pytest.mark.parametrize(
+    "descriptor,match",
+    [
+        ({}, "no uri, digest, or content"),
+        ({"uri": ""}, "uri is missing"),
+        ({"digest": {}}, "digest must be a nonempty object"),
+        ({"content": ""}, "content is missing"),
+        ({"uri": "pkg:test", "annotations": []}, "annotations"),
+        ({"digest": {"sha256": ""}}, "digest value"),
+    ],
+)
+def test_slsa_resource_descriptor_rejects_invalid_structure(descriptor, match):
+    predicate = _slsa_predicate("a" * 40)
+    predicate["buildDefinition"]["resolvedDependencies"] = [descriptor]
+    with pytest.raises(ValueError, match=match):
+        _validator("validate_slsa_provenance")(predicate, "a" * 40)
 
 
 def test_verifier_rejects_direct_manifest_without_attached_attestations(
@@ -527,6 +670,9 @@ def test_verifier_requires_sbom_and_provenance_attestations(
     ("spdx_version", "SPDX predicate version is not supported"),
     ("slsa_schema", "SLSA provenance schema is incomplete"),
     ("slsa_revision", "source revision differs from exact head"),
+    ("slsa_resolved_dependency", "resolved dependencies.*not an object"),
+    ("slsa_builder_dependency", "builder dependencies.*not an object"),
+    ("slsa_byproduct", "byproducts.*not an object"),
     ("unsupported_predicate", "predicate type is unsupported"),
 ])
 def test_verifier_rejects_invalid_attestation_contract(

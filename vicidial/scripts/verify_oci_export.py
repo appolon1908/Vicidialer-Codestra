@@ -35,6 +35,20 @@ SBOM_PREDICATE = "https://spdx.dev/Document"
 SLSA_PROVENANCE_PREDICATE = "https://slsa.dev/provenance/v1"
 LINUX_AMD64 = {"architecture": "amd64", "os": "linux"}
 UNKNOWN_PLATFORM = {"architecture": "unknown", "os": "unknown"}
+SPDX_PACKAGE_REQUIRED_STRING_FIELDS = (
+    "name",
+    "SPDXID",
+    "downloadLocation",
+    "licenseConcluded",
+    "licenseDeclared",
+    "copyrightText",
+)
+RESOURCE_DESCRIPTOR_STRING_FIELDS = (
+    "name",
+    "uri",
+    "downloadLocation",
+    "mediaType",
+)
 
 
 def member_bytes(archive: tarfile.TarFile, name: str) -> bytes:
@@ -128,6 +142,43 @@ def require_subject_descriptor(subject: object, target: dict) -> None:
             raise ValueError("attestation subject does not match image manifest")
 
 
+def validate_spdx_checksum(checksum: object, label: str) -> None:
+    if not isinstance(checksum, dict):
+        raise ValueError(f"{label} is not an object")
+    require_nonempty_string(checksum.get("algorithm"), f"{label} algorithm")
+    value = require_nonempty_string(
+        checksum.get("checksumValue"), f"{label} value"
+    )
+    if any(character not in "0123456789abcdef" for character in value):
+        raise ValueError(f"{label} value is not lowercase hexadecimal")
+
+
+def validate_spdx_package(package: object, index: int) -> None:
+    label = f"SPDX predicate package[{index}]"
+    if not isinstance(package, dict):
+        raise ValueError(f"{label} is not an object")
+    for field in SPDX_PACKAGE_REQUIRED_STRING_FIELDS:
+        require_nonempty_string(package.get(field), f"{label} {field}")
+    if type(package.get("filesAnalyzed")) is not bool:
+        raise ValueError(f"{label} filesAnalyzed must be boolean")
+    checksums = package.get("checksums")
+    if checksums is not None:
+        if not isinstance(checksums, list):
+            raise ValueError(f"{label} checksums must be a list")
+        for checksum_index, checksum in enumerate(checksums):
+            validate_spdx_checksum(
+                checksum, f"{label} checksum[{checksum_index}]"
+            )
+
+
+def validate_spdx_relationship(relationship: object, index: int) -> None:
+    label = f"SPDX predicate relationship[{index}]"
+    if not isinstance(relationship, dict):
+        raise ValueError(f"{label} is not an object")
+    for field in ("spdxElementId", "relationshipType", "relatedSpdxElement"):
+        require_nonempty_string(relationship.get(field), f"{label} {field}")
+
+
 def validate_spdx_predicate(predicate: object) -> None:
     if not isinstance(predicate, dict):
         raise ValueError("SPDX predicate is not an object")
@@ -153,17 +204,50 @@ def validate_spdx_predicate(predicate: object) -> None:
     packages = predicate.get("packages")
     if not isinstance(packages, list) or not packages:
         raise ValueError("SPDX predicate packages are missing")
-    if not all(
-        isinstance(package, dict)
-        and isinstance(package.get("name"), str)
-        and package.get("name")
-        and isinstance(package.get("SPDXID"), str)
-        and package.get("SPDXID")
-        for package in packages
-    ):
-        raise ValueError("SPDX predicate package identity is invalid")
-    if not isinstance(predicate.get("relationships"), list):
+    for package_index, package in enumerate(packages):
+        validate_spdx_package(package, package_index)
+    relationships = predicate.get("relationships")
+    if not isinstance(relationships, list):
         raise ValueError("SPDX predicate relationships are missing")
+    for relationship_index, relationship in enumerate(relationships):
+        validate_spdx_relationship(relationship, relationship_index)
+
+
+def validate_digest_set(value: object, label: str) -> None:
+    if not isinstance(value, dict) or not value:
+        raise ValueError(f"{label} digest must be a nonempty object")
+    for algorithm, digest in value.items():
+        require_nonempty_string(algorithm, f"{label} digest algorithm")
+        require_nonempty_string(digest, f"{label} digest value")
+
+
+def validate_resource_descriptor(value: object, label: str) -> None:
+    if not isinstance(value, dict):
+        raise ValueError(f"{label} is not an object")
+    for field in RESOURCE_DESCRIPTOR_STRING_FIELDS:
+        if field in value:
+            require_nonempty_string(value[field], f"{label} {field}")
+    if "digest" in value:
+        validate_digest_set(value["digest"], label)
+    if "content" in value:
+        require_nonempty_string(value["content"], f"{label} content")
+    if "annotations" in value:
+        annotations = value["annotations"]
+        if not isinstance(annotations, dict) or not all(
+            isinstance(key, str) and key for key in annotations
+        ):
+            raise ValueError(f"{label} annotations must be an object")
+    if not any(field in value for field in ("uri", "digest", "content")):
+        raise ValueError(f"{label} has no uri, digest, or content")
+
+
+def validate_resource_descriptor_list(value: object, label: str) -> None:
+    if not isinstance(value, list):
+        raise ValueError(f"{label} are missing")
+    for descriptor_index, descriptor in enumerate(value):
+        validate_resource_descriptor(
+            descriptor, f"{label}[{descriptor_index}]"
+        )
 
 
 def validate_slsa_provenance(predicate: object, source_sha: str) -> None:
@@ -174,8 +258,9 @@ def validate_slsa_provenance(predicate: object, source_sha: str) -> None:
     if not isinstance(definition, dict) or not isinstance(details, dict):
         raise ValueError("SLSA provenance schema is incomplete")
     require_nonempty_string(definition.get("buildType"), "SLSA build type")
-    if not isinstance(definition.get("resolvedDependencies"), list):
-        raise ValueError("SLSA resolved dependencies are missing")
+    validate_resource_descriptor_list(
+        definition.get("resolvedDependencies"), "SLSA resolved dependencies"
+    )
     if not isinstance(definition.get("externalParameters"), dict):
         raise ValueError("SLSA external parameters are missing")
     if not isinstance(definition.get("internalParameters"), dict):
@@ -185,9 +270,29 @@ def validate_slsa_provenance(predicate: object, source_sha: str) -> None:
     if not isinstance(builder, dict) or not isinstance(metadata, dict):
         raise ValueError("SLSA run details are incomplete")
     require_nonempty_string(builder.get("id"), "SLSA builder ID")
+    if "builderDependencies" in builder:
+        validate_resource_descriptor_list(
+            builder["builderDependencies"], "SLSA builder dependencies"
+        )
+    version = builder.get("version")
+    if version is not None and (
+        not isinstance(version, dict)
+        or not all(
+            isinstance(key, str)
+            and key
+            and isinstance(item, str)
+            and item
+            for key, item in version.items()
+        )
+    ):
+        raise ValueError("SLSA builder version is invalid")
     require_nonempty_string(metadata.get("invocationId"), "SLSA invocation ID")
     require_nonempty_string(metadata.get("startedOn"), "SLSA start time")
     require_nonempty_string(metadata.get("finishedOn"), "SLSA finish time")
+    if "byproducts" in details:
+        validate_resource_descriptor_list(
+            details["byproducts"], "SLSA byproducts"
+        )
     buildkit = metadata.get("buildkit_metadata")
     vcs = buildkit.get("vcs") if isinstance(buildkit, dict) else None
     if not isinstance(vcs, dict) or vcs.get("revision") != source_sha:
