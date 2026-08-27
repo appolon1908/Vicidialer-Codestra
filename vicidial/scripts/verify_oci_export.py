@@ -13,7 +13,18 @@ from pathlib import Path
 
 OCI_IMAGE_INDEX = "application/vnd.oci.image.index.v1+json"
 OCI_IMAGE_MANIFEST = "application/vnd.oci.image.manifest.v1+json"
+OCI_IMAGE_CONFIG = "application/vnd.oci.image.config.v1+json"
 OCI_EMPTY_CONFIG = "application/vnd.oci.empty.v1+json"
+OCI_LAYER_TAR = "application/vnd.oci.image.layer.v1.tar"
+OCI_LAYER_GZIP = "application/vnd.oci.image.layer.v1.tar+gzip"
+DOCKER_LAYER_TAR = "application/vnd.docker.image.rootfs.diff.tar"
+DOCKER_LAYER_GZIP = "application/vnd.docker.image.rootfs.diff.tar.gzip"
+SUPPORTED_UNCOMPRESSED_LAYER_MEDIA_TYPES = frozenset(
+    {OCI_LAYER_TAR, DOCKER_LAYER_TAR}
+)
+SUPPORTED_GZIP_LAYER_MEDIA_TYPES = frozenset(
+    {OCI_LAYER_GZIP, DOCKER_LAYER_GZIP}
+)
 ATTESTATION_ARTIFACT = "application/vnd.docker.attestation.manifest.v1+json"
 IN_TOTO_MEDIA_TYPE = "application/vnd.in-toto+json"
 REFERENCE_TYPE = "vnd.docker.reference.type"
@@ -52,6 +63,13 @@ def require_schema_version(document: dict, label: str) -> None:
         raise ValueError(f"{label} schemaVersion must be integer 2")
 
 
+def require_media_type(descriptor: object, expected: str, label: str) -> None:
+    if not isinstance(descriptor, dict):
+        raise ValueError(f"{label} is missing")
+    if descriptor.get("mediaType") != expected:
+        raise ValueError(f"{label} media type is invalid")
+
+
 def descriptor_bytes(archive: tarfile.TarFile, descriptor: dict) -> bytes:
     if not isinstance(descriptor, dict):
         raise ValueError("OCI descriptor is not an object")
@@ -84,15 +102,12 @@ def descriptor_json(archive: tarfile.TarFile, descriptor: dict) -> dict:
 
 
 def layer_diff_id(raw: bytes, media_type: str) -> str:
-    if media_type.endswith("+gzip"):
+    if media_type in SUPPORTED_GZIP_LAYER_MEDIA_TYPES:
         try:
             payload = gzip.GzipFile(fileobj=io.BytesIO(raw)).read()
         except (OSError, EOFError) as exc:
             raise ValueError("OCI layer gzip compression is invalid") from exc
-    elif media_type in {
-        "application/vnd.oci.image.layer.v1.tar",
-        "application/vnd.docker.image.rootfs.diff.tar",
-    }:
+    elif media_type in SUPPORTED_UNCOMPRESSED_LAYER_MEDIA_TYPES:
         payload = raw
     else:
         raise ValueError(f"unsupported OCI layer media type: {media_type}")
@@ -268,8 +283,11 @@ def main() -> int:
         )
 
         config_descriptor = manifest.get("config")
-        if not isinstance(config_descriptor, dict):
-            raise ValueError("OCI image config descriptor is missing")
+        require_media_type(
+            config_descriptor,
+            OCI_IMAGE_CONFIG,
+            "OCI image config descriptor",
+        )
         if config_descriptor.get("digest") != expected_config:
             raise ValueError("OCI config digest differs from tested Docker image ID")
         config = descriptor_json(archive, config_descriptor)
@@ -306,7 +324,9 @@ def main() -> int:
         "oci_index_schema_version": index["schemaVersion"],
         "oci_manifest_digest": manifest_descriptor["digest"],
         "oci_config_digest": config_descriptor["digest"],
+        "oci_config_media_type": config_descriptor["mediaType"],
         "oci_layer_digests": [item["digest"] for item in layers],
+        "oci_layer_media_types": [item["mediaType"] for item in layers],
         "rootfs_diff_ids": diff_ids,
         "attestation_count": len(attestation_manifest_digests),
         "attestation_manifest_digests": attestation_manifest_digests,
