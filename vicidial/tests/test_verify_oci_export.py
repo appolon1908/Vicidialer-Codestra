@@ -14,6 +14,7 @@ import pytest
 SCRIPT = "vicidial/scripts/verify_oci_export.py"
 OCI_INDEX = "application/vnd.oci.image.index.v1+json"
 OCI_MANIFEST = "application/vnd.oci.image.manifest.v1+json"
+OCI_CONFIG = "application/vnd.oci.image.config.v1+json"
 OCI_EMPTY = "application/vnd.oci.empty.v1+json"
 IN_TOTO = "application/vnd.in-toto+json"
 SBOM = "https://spdx.dev/Document"
@@ -138,7 +139,12 @@ def _build_archive(
         "config": {"Labels": {"org.opencontainers.image.revision": source_sha}},
         "rootfs": {"type": "layers", "diff_ids": diff_ids},
     })
-    config_descriptor = _descriptor(config)
+    config_media_type = (
+        "application/json"
+        if image_mutation == "config_media_type"
+        else OCI_CONFIG
+    )
+    config_descriptor = _descriptor(config, config_media_type)
     members[_blob_name(config_descriptor)] = config
 
     manifest = _json_bytes({
@@ -319,6 +325,7 @@ def test_verifier_accepts_attested_nested_linux_amd64_export(
     assert document["schema"] == "codestra-oci-export-verification/v2"
     assert document["oci_layout_version"] == "1.0.0"
     assert document["oci_index_schema_version"] == 2
+    assert document["oci_config_media_type"] == OCI_CONFIG
     assert document["attestation_count"] == 1
     assert document["attestation_predicate_types"] == sorted([SBOM, PROVENANCE])
 
@@ -391,6 +398,14 @@ def test_verifier_requires_image_manifest_schema_version_two(
     _run_verifier(monkeypatch, tmp_path, image_schema=1)
     with pytest.raises(
         ValueError, match="OCI image manifest schemaVersion must be integer 2"
+    ):
+        runpy.run_path(SCRIPT, run_name="__main__")
+
+
+def test_verifier_requires_oci_image_config_media_type(monkeypatch, tmp_path):
+    _run_verifier(monkeypatch, tmp_path, image_mutation="config_media_type")
+    with pytest.raises(
+        ValueError, match="OCI image config descriptor media type is invalid"
     ):
         runpy.run_path(SCRIPT, run_name="__main__")
 
