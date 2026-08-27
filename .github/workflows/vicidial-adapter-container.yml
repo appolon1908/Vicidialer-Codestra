@@ -125,7 +125,7 @@ jobs:
           file: vicidial/docker/Dockerfile
           platforms: linux/amd64
           push: false
-          outputs: type=oci,dest=evidence/vicidial-adapter.oci.tar
+          outputs: type=oci,dest=evidence/vicidial-adapter.oci.tar,name=codestra/vicidial-restricted-adapter:${{ env.SOURCE_SHA }}
           build-args: |
             SOURCE_SHA=${{ env.SOURCE_SHA }}
             BUILD_DATE=2026-01-01T00:00:00Z
