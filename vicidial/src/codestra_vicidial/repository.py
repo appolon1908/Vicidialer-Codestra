@@ -387,7 +387,8 @@ class MySQLRepository:
     def campaign(self, actual_id: str) -> dict | None:
         row = self._one(
             "SELECT campaign_id,campaign_name,active,dial_method,local_call_time,"
-            "campaign_recording,scheduled_callbacks,campaign_description "
+            "campaign_recording,scheduled_callbacks,campaign_description,"
+            "hopper_level,auto_dial_level "
             "FROM vicidial_campaigns WHERE campaign_id=%s", (actual_id,))
         if not row:
             return None
@@ -455,10 +456,12 @@ class MySQLRepository:
             "campaign_recording": spec.recording_policy,
             "scheduled_callbacks": "Y" if spec.callback_enabled else "N",
             "campaign_description": description,
+            "hopper_level": 0, "auto_dial_level": "0",
         }
         current = self._one(
             "SELECT campaign_id,campaign_name,active,dial_method,local_call_time,"
-            "campaign_recording,scheduled_callbacks,campaign_description "
+            "campaign_recording,scheduled_callbacks,campaign_description,"
+            "hopper_level,auto_dial_level "
             "FROM vicidial_campaigns WHERE campaign_id=%s", (spec.actual_id,))
         if current:
             fields = tuple(desired_campaign)
@@ -535,14 +538,17 @@ class MySQLRepository:
             "campaign_recording": spec.recording_policy,
             "scheduled_callbacks": "Y" if spec.callback_enabled else "N",
             "campaign_description": description,
+            "hopper_level": 0, "auto_dial_level": "0",
         }
         current = self._one(
             "SELECT campaign_id,campaign_name,active,dial_method,local_call_time,"
-            "campaign_recording,scheduled_callbacks,campaign_description "
+            "campaign_recording,scheduled_callbacks,campaign_description,"
+            "hopper_level,auto_dial_level "
             "FROM vicidial_campaigns WHERE campaign_id=%s", (spec.actual_id,))
         campaign_fields = (
             "campaign_name", "active", "dial_method", "local_call_time",
             "campaign_recording", "scheduled_callbacks", "campaign_description",
+            "hopper_level", "auto_dial_level",
         )
         adopted = False
         legacy_update = False
@@ -617,13 +623,27 @@ class MySQLRepository:
                 ("status_name", "selectable", "human_answered", "category"), item.code,
             )
         if legacy_update:
-            self._execute(
+            affected = self._execute(
                 "UPDATE vicidial_campaigns SET campaign_name=%s,active='N',dial_method=%s,"
                 "local_call_time=%s,campaign_recording=%s,scheduled_callbacks=%s,"
-                "campaign_description=%s,hopper_level=0,auto_dial_level='0' WHERE campaign_id=%s",
+                "campaign_description=%s,hopper_level=0,auto_dial_level='0' "
+                "WHERE campaign_id=%s AND campaign_name<=>%s AND active='N' "
+                "AND dial_method<=>%s AND local_call_time<=>%s "
+                "AND campaign_recording<=>%s AND scheduled_callbacks<=>%s "
+                "AND campaign_description<=>%s "
+                "AND hopper_level<=>%s AND auto_dial_level<=>%s",
                 (spec.name, spec.dial_method, spec.call_time, spec.recording_policy,
-                 desired_campaign["scheduled_callbacks"], description, spec.actual_id),
+                 desired_campaign["scheduled_callbacks"], description, spec.actual_id,
+                 current.get("campaign_name"), current.get("dial_method"),
+                 current.get("local_call_time"), current.get("campaign_recording"),
+                 current.get("scheduled_callbacks"),
+                 current.get("campaign_description"), current.get("hopper_level"),
+                 current.get("auto_dial_level")),
             )
+            if affected != 1:
+                raise CollisionError(
+                    f"campaign adoption proof became stale: {spec.actual_id}"
+                )
         elif not adopted:
             self._execute(
                 "INSERT INTO vicidial_campaigns"
