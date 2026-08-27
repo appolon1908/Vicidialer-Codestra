@@ -32,7 +32,7 @@ REFERENCE_DIGEST = "vnd.docker.reference.digest"
 ATTESTATION_REFERENCE_TYPE = "attestation-manifest"
 PREDICATE_ANNOTATION = "in-toto.io/predicate-type"
 SBOM_PREDICATE = "https://spdx.dev/Document"
-PROVENANCE_PREFIX = "https://slsa.dev/provenance/"
+SLSA_PROVENANCE_PREDICATE = "https://slsa.dev/provenance/v1"
 LINUX_AMD64 = {"architecture": "amd64", "os": "linux"}
 UNKNOWN_PLATFORM = {"architecture": "unknown", "os": "unknown"}
 
@@ -68,6 +68,12 @@ def require_media_type(descriptor: object, expected: str, label: str) -> None:
         raise ValueError(f"{label} is missing")
     if descriptor.get("mediaType") != expected:
         raise ValueError(f"{label} media type is invalid")
+
+
+def require_nonempty_string(value: object, label: str) -> str:
+    if not isinstance(value, str) or not value.strip():
+        raise ValueError(f"{label} is missing")
+    return value
 
 
 def descriptor_bytes(archive: tarfile.TarFile, descriptor: dict) -> bytes:
@@ -122,7 +128,78 @@ def require_subject_descriptor(subject: object, target: dict) -> None:
             raise ValueError("attestation subject does not match image manifest")
 
 
-def verify_statement(raw: bytes, descriptor: dict, image_digest: str) -> str:
+def validate_spdx_predicate(predicate: object) -> None:
+    if not isinstance(predicate, dict):
+        raise ValueError("SPDX predicate is not an object")
+    if predicate.get("spdxVersion") != "SPDX-2.3":
+        raise ValueError("SPDX predicate version is not supported")
+    if predicate.get("dataLicense") != "CC0-1.0":
+        raise ValueError("SPDX predicate data license is invalid")
+    if predicate.get("SPDXID") != "SPDXRef-DOCUMENT":
+        raise ValueError("SPDX predicate document ID is invalid")
+    require_nonempty_string(predicate.get("name"), "SPDX predicate name")
+    require_nonempty_string(
+        predicate.get("documentNamespace"), "SPDX predicate namespace"
+    )
+    creation = predicate.get("creationInfo")
+    if not isinstance(creation, dict):
+        raise ValueError("SPDX predicate creation info is missing")
+    creators = creation.get("creators")
+    if not isinstance(creators, list) or not creators or not all(
+        isinstance(value, str) and value.strip() for value in creators
+    ):
+        raise ValueError("SPDX predicate creators are missing")
+    require_nonempty_string(creation.get("created"), "SPDX predicate creation time")
+    packages = predicate.get("packages")
+    if not isinstance(packages, list) or not packages:
+        raise ValueError("SPDX predicate packages are missing")
+    if not all(
+        isinstance(package, dict)
+        and isinstance(package.get("name"), str)
+        and package.get("name")
+        and isinstance(package.get("SPDXID"), str)
+        and package.get("SPDXID")
+        for package in packages
+    ):
+        raise ValueError("SPDX predicate package identity is invalid")
+    if not isinstance(predicate.get("relationships"), list):
+        raise ValueError("SPDX predicate relationships are missing")
+
+
+def validate_slsa_provenance(predicate: object, source_sha: str) -> None:
+    if not isinstance(predicate, dict):
+        raise ValueError("SLSA provenance predicate is not an object")
+    definition = predicate.get("buildDefinition")
+    details = predicate.get("runDetails")
+    if not isinstance(definition, dict) or not isinstance(details, dict):
+        raise ValueError("SLSA provenance schema is incomplete")
+    require_nonempty_string(definition.get("buildType"), "SLSA build type")
+    if not isinstance(definition.get("resolvedDependencies"), list):
+        raise ValueError("SLSA resolved dependencies are missing")
+    if not isinstance(definition.get("externalParameters"), dict):
+        raise ValueError("SLSA external parameters are missing")
+    if not isinstance(definition.get("internalParameters"), dict):
+        raise ValueError("SLSA internal parameters are missing")
+    builder = details.get("builder")
+    metadata = details.get("metadata")
+    if not isinstance(builder, dict) or not isinstance(metadata, dict):
+        raise ValueError("SLSA run details are incomplete")
+    require_nonempty_string(builder.get("id"), "SLSA builder ID")
+    require_nonempty_string(metadata.get("invocationId"), "SLSA invocation ID")
+    require_nonempty_string(metadata.get("startedOn"), "SLSA start time")
+    require_nonempty_string(metadata.get("finishedOn"), "SLSA finish time")
+    buildkit = metadata.get("buildkit_metadata")
+    vcs = buildkit.get("vcs") if isinstance(buildkit, dict) else None
+    if not isinstance(vcs, dict) or vcs.get("revision") != source_sha:
+        raise ValueError("SLSA provenance source revision differs from exact head")
+
+
+def verify_statement(
+    raw: bytes,
+    descriptor: dict,
+    image_digest: str,
+    source_sha: str,
+) -> str:
     if descriptor.get("mediaType") != IN_TOTO_MEDIA_TYPE:
         raise ValueError("attestation layer is not in-toto JSON")
     try:
@@ -137,8 +214,8 @@ def verify_statement(raw: bytes, descriptor: dict, image_digest: str) -> str:
     ):
         raise ValueError("attestation statement type is invalid")
     predicate_type = statement.get("predicateType")
-    if not isinstance(predicate_type, str) or not predicate_type:
-        raise ValueError("attestation predicate type is missing")
+    if predicate_type not in (SBOM_PREDICATE, SLSA_PROVENANCE_PREDICATE):
+        raise ValueError("attestation predicate type is unsupported")
     annotations = descriptor.get("annotations")
     if not isinstance(annotations, dict) or annotations.get(
         PREDICATE_ANNOTATION
@@ -148,13 +225,18 @@ def verify_statement(raw: bytes, descriptor: dict, image_digest: str) -> str:
     subjects = statement.get("subject")
     if not isinstance(subjects, list) or not any(
         isinstance(subject, dict)
+        and isinstance(subject.get("name"), str)
+        and subject["name"]
         and isinstance(subject.get("digest"), dict)
         and subject["digest"].get("sha256") == expected
         for subject in subjects
     ):
         raise ValueError("attestation statement subject does not match image manifest")
-    if "predicate" not in statement:
-        raise ValueError("attestation predicate is missing")
+    predicate = statement.get("predicate")
+    if predicate_type == SBOM_PREDICATE:
+        validate_spdx_predicate(predicate)
+    else:
+        validate_slsa_provenance(predicate, source_sha)
     return predicate_type
 
 
@@ -162,6 +244,7 @@ def verify_attestations(
     archive: tarfile.TarFile,
     outer: dict,
     image_descriptor: dict,
+    source_sha: str,
 ) -> tuple[list[str], list[str]]:
     manifests = outer.get("manifests")
     if not isinstance(manifests, list):
@@ -207,12 +290,15 @@ def verify_attestations(
             raise ValueError("attestation manifest has no statement layers")
         for layer in layers:
             raw = descriptor_bytes(archive, layer)
-            predicate_types.add(verify_statement(raw, layer, image_digest))
+            predicate_types.add(
+                verify_statement(raw, layer, image_digest, source_sha)
+            )
         manifest_digests.append(descriptor["digest"])
 
-    if SBOM_PREDICATE not in predicate_types:
-        raise ValueError("OCI export is missing the SPDX SBOM attestation")
-    if not any(value.startswith(PROVENANCE_PREFIX) for value in predicate_types):
+    required = {SBOM_PREDICATE, SLSA_PROVENANCE_PREDICATE}
+    if predicate_types != required:
+        if SBOM_PREDICATE not in predicate_types:
+            raise ValueError("OCI export is missing the SPDX SBOM attestation")
         raise ValueError("OCI export is missing the SLSA provenance attestation")
     return sorted(manifest_digests), sorted(predicate_types)
 
@@ -279,7 +365,9 @@ def main() -> int:
             raise ValueError("OCI image manifest media type is invalid")
 
         attestation_manifest_digests, attestation_predicate_types = (
-            verify_attestations(archive, outer, manifest_descriptor)
+            verify_attestations(
+                archive, outer, manifest_descriptor, args.source_sha
+            )
         )
 
         config_descriptor = manifest.get("config")
