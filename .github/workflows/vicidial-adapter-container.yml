@@ -77,7 +77,7 @@ jobs:
           PYTHONPATH=vicidial/src python -m pytest -q --junitxml=evidence/test-results/phase3a.xml vicidial/tests/test_phase3a_release_network.py
           PYTHONPATH=vicidial/src python -m pytest -q --junitxml=evidence/test-results/phase3b.xml vicidial/tests/test_phase3b_security.py
           PYTHONPATH=vicidial/src python -m pytest -q --junitxml=evidence/test-results/phase3c.xml vicidial/tests/test_phase3c_domains.py vicidial/tests/test_campaign_adoption_atomicity.py
-          PYTHONPATH=vicidial/src python -m pytest -q --junitxml=evidence/test-results/phase3d.xml vicidial/tests/test_phase3d_container.py vicidial/tests/test_verify_oci_export.py
+          PYTHONPATH=vicidial/src python -m pytest -q --junitxml=evidence/test-results/phase3d.xml vicidial/tests/test_phase3d_container.py vicidial/tests/test_verify_oci_export.py vicidial/tests/test_attestation_value_contracts.py
           PYTHONPATH=vicidial/src python -m pytest -q --junitxml=evidence/test-results/full.xml vicidial/tests
           PYTHONPATH=vicidial/src python -m pytest -q --junitxml=evidence/test-results/root-vicidial.xml tests
           python -m compileall -q campaign_provisioning vicidial/src vicidial/scripts vicidial/tests tests
@@ -132,7 +132,8 @@ jobs:
       - name: Export attested linux/amd64 OCI candidate
         uses: docker/build-push-action@v6
         with:
-          context: .
+          context: "https://github.com/${{ github.repository }}.git#${{ env.SOURCE_SHA }}"
+          github-token: ${{ github.token }}
           file: vicidial/docker/Dockerfile
           platforms: linux/amd64
           push: false
