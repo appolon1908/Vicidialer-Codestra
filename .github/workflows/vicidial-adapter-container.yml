@@ -134,6 +134,8 @@ jobs:
         with:
           context: "https://github.com/${{ github.repository }}.git#${{ env.SOURCE_SHA }}"
           github-token: ${{ github.token }}
+          secrets: |
+            GIT_AUTH_TOKEN.github.com=${{ github.token }}
           file: vicidial/docker/Dockerfile
           platforms: linux/amd64
           push: false
