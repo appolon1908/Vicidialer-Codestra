@@ -1,0 +1,64 @@
+name: Apply VICIdial R3 dedicated consolidation
+
+on:
+  push:
+    branches:
+      - fix/vicidial-r3-dedicated-consolidation-20260827
+    paths:
+      - tools/apply_vicidial_r3_dedicated_consolidation.py
+      - .github/workflows/apply-vicidial-r3-dedicated-consolidation.yml
+
+permissions:
+  contents: write
+
+jobs:
+  apply:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: fix/vicidial-r3-dedicated-consolidation-20260827
+          fetch-depth: 0
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Verify expected authority
+        run: |
+          test "$(git branch --show-current)" = "fix/vicidial-r3-dedicated-consolidation-20260827"
+          test "$(git merge-base HEAD origin/main)" = "1c84e8bec7e56288adb87c96f292362d33547cff"
+          test -z "$(git status --porcelain --untracked-files=all)"
+      - name: Apply exact consolidation patch
+        run: python tools/apply_vicidial_r3_dedicated_consolidation.py
+      - name: Install locked runtime and test dependencies
+        run: |
+          python -m pip install --requirement vicidial/docker/requirements.lock
+          python -m pip install "httpx2==2.12.0" "pytest>=8,<10" "PyYAML>=6,<7"
+      - name: Validate patched source before push
+        env:
+          PYTHONPATH: vicidial/src
+          CODESTRA_ADAPTER_STATE: ${{ runner.temp }}/dedicated-consolidation-state.sqlite3
+        run: |
+          python -m compileall -q vicidial/src vicidial/scripts vicidial/docker
+          python -m pytest -q \
+            vicidial/tests/test_campaign_adoption_atomicity.py \
+            vicidial/tests/test_verify_oci_export.py \
+            vicidial/tests/test_phase3a_release_network.py \
+            vicidial/tests/test_phase3d_container.py
+          python -m pytest -q vicidial/tests
+          python - <<'PY'
+          import yaml
+          from pathlib import Path
+          for path in Path('.github/workflows').glob('*.yml'):
+              yaml.safe_load(path.read_text())
+          print('WORKFLOW_YAML=PASS')
+          PY
+          git diff --check
+      - name: Commit and normally push the reconciled source
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A
+          test -n "$(git status --porcelain)"
+          git commit -m "fix(vicidial): reconcile dedicated R3 security lineage"
+          git push origin HEAD:fix/vicidial-r3-dedicated-consolidation-20260827
