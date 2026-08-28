@@ -7,6 +7,10 @@ PRODUCTION_COMPOSE = ROOT / "vicidial" / "docker" / "compose.production.yml"
 SHADOW_COMPOSE = ROOT / "vicidial" / "docker" / "compose.shadow.yml"
 ENTRYPOINT = ROOT / "vicidial" / "docker" / "entrypoint.sh"
 ADAPTER_ENV = ROOT / "vicidial" / "config" / "adapter.env.example"
+SYSTEMD_UNITS = (
+    ROOT / "vicidial" / "ops" / "codestra-vicidial-restricted-adapter.service",
+    ROOT / "deploy" / "vicidial-restricted-adapter" / "codestra-vicidial-restricted-adapter.service",
+)
 
 
 CANONICAL_MUTATION_FLAGS = {
@@ -85,6 +89,28 @@ def test_canonical_sync_modules_exist_as_executable_runtime_sources():
     assert "from canonical_event_client import" in sync_source
     assert ".reference" not in sync_source
     assert ".candidate" not in sync_source
+
+
+def test_legacy_sync_fixtures_are_byte_identical_to_canonical_until_removed():
+    # The historical root integration tests still load the retained migration
+    # filenames. Byte-parity prevents those tests from certifying different
+    # code than production while the historical fixtures are being retired.
+    assert (ROOT / "scripts" / "vicidial_sync.py").read_bytes() == (
+        ROOT / "scripts" / "vicidial_sync.py.candidate"
+    ).read_bytes()
+    assert (ROOT / "scripts" / "canonical_event_client.py").read_bytes() == (
+        ROOT / "scripts" / "canonical_event_client.py.reference"
+    ).read_bytes()
+
+
+def test_all_deployment_authority_uses_dependency_aware_production_app():
+    dockerfile = (ROOT / "vicidial" / "docker" / "Dockerfile").read_text()
+    assert "codestra_vicidial.production_app:app" in dockerfile
+    assert "codestra_vicidial.app:app" not in dockerfile
+    for unit in SYSTEMD_UNITS:
+        text = unit.read_text()
+        assert "codestra_vicidial.production_app:app" in text
+        assert "codestra_vicidial.app:app" not in text
 
 
 def test_deployment_authority_does_not_execute_reference_or_candidate_files():
