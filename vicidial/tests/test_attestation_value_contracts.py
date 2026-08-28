@@ -218,13 +218,17 @@ def test_attested_workflow_uses_exact_git_source_context():
         "- name: Export attested linux/amd64 OCI candidate", 1
     )
     attested = attested_and_after.split("- name: Test container contract", 1)[0]
-    assert "context: ." in runnable
-    assert (
+    exact_context = (
         'context: "https://github.com/${{ github.repository }}.git#'
         '${{ env.SOURCE_SHA }}"'
-        in attested
     )
+    assert exact_context in runnable
+    assert exact_context in attested
+    assert "context: ." not in runnable
+    assert "github-token: ${{ github.token }}" in runnable
     assert "github-token: ${{ github.token }}" in attested
+    assert "SOURCE_DATE_EPOCH=1767225600" in runnable
+    assert "SOURCE_DATE_EPOCH=1767225600" in attested
     assert "provenance: mode=max" in attested
 
 
