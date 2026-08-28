@@ -97,9 +97,48 @@ def normalize_source_repository_uri(value: object) -> str:
     return uri
 
 
+def source_revision_from_uri(value: object) -> str | None:
+    uri = require_nonempty_string(value, "SLSA provenance source URI")
+    if uri.startswith("git+"):
+        uri = uri[4:]
+    if "#" in uri:
+        return uri.rsplit("#", 1)[1]
+    github_prefix = "https://github.com/"
+    at_index = uri.rfind("@")
+    if uri.startswith(github_prefix) and at_index >= len(github_prefix):
+        return uri[at_index + 1:]
+    return None
+
+
+def validate_exact_source_descriptor(
+    value: object, label: str, source_sha: str
+) -> dict:
+    validate_resource_descriptor(value, label)
+    descriptor = value
+    uri = descriptor.get("uri")
+    if normalize_source_repository_uri(uri) != SOURCE_REPOSITORY:
+        raise ValueError(f"{label} repository is invalid")
+    digest = descriptor.get("digest")
+    if not isinstance(digest, dict):
+        raise ValueError(f"{label} digest is missing")
+    expected_algorithm = "sha256" if len(source_sha) == 64 else "sha1"
+    if (
+        digest.get(expected_algorithm) != source_sha
+        and digest.get("gitCommit") != source_sha
+    ):
+        raise ValueError(f"{label} differs from exact head")
+    uri_revision = source_revision_from_uri(uri)
+    if uri_revision is not None and len(uri_revision) in {40, 64}:
+        if not LOWERCASE_HEX_PATTERN.fullmatch(uri_revision):
+            raise ValueError(f"{label} URI revision is invalid")
+        if uri_revision != source_sha:
+            raise ValueError(f"{label} URI revision differs from exact head")
+    return descriptor
+
+
 def validate_exact_source_dependency(
     dependencies: list[dict], source_sha: str
-) -> None:
+) -> dict:
     if len(source_sha) not in {40, 64} or not LOWERCASE_HEX_PATTERN.fullmatch(
         source_sha
     ):
@@ -114,16 +153,33 @@ def validate_exact_source_dependency(
         raise ValueError(
             "SLSA provenance must contain exactly one resolved source dependency"
         )
-    digest = matches[0].get("digest")
-    if not isinstance(digest, dict):
-        raise ValueError("SLSA provenance source dependency digest is missing")
-    expected_algorithm = "sha256" if len(source_sha) == 64 else "sha1"
-    if (
-        digest.get(expected_algorithm) != source_sha
-        and digest.get("gitCommit") != source_sha
-    ):
-        raise ValueError(
-            "SLSA provenance source dependency differs from exact head"
+    return validate_exact_source_descriptor(
+        matches[0], "SLSA provenance source dependency", source_sha
+    )
+
+
+def validate_external_source_assertions(
+    external_parameters: dict, source_sha: str
+) -> None:
+    config_source = external_parameters.get("configSource")
+    if config_source is not None:
+        validate_exact_source_descriptor(
+            config_source, "SLSA external config source", source_sha
+        )
+    request = external_parameters.get("request")
+    if request is None:
+        return
+    if not isinstance(request, dict):
+        raise ValueError("SLSA external request is invalid")
+    root = request.get("root")
+    if root is None:
+        return
+    if not isinstance(root, dict):
+        raise ValueError("SLSA external request root is invalid")
+    root_config_source = root.get("configSource")
+    if root_config_source is not None:
+        validate_exact_source_descriptor(
+            root_config_source, "SLSA root config source", source_sha
         )
 
 
@@ -143,8 +199,10 @@ def validate_slsa_provenance(predicate: object, source_sha: str) -> None:
         definition.get("resolvedDependencies"), "SLSA resolved dependencies"
     )
     validate_exact_source_dependency(dependencies, source_sha)
-    if not isinstance(definition.get("externalParameters"), dict):
+    external_parameters = definition.get("externalParameters")
+    if not isinstance(external_parameters, dict):
         raise ValueError("SLSA external parameters are missing")
+    validate_external_source_assertions(external_parameters, source_sha)
     if not isinstance(definition.get("internalParameters"), dict):
         raise ValueError("SLSA internal parameters are missing")
     builder = details.get("builder")
@@ -176,11 +234,15 @@ def validate_slsa_provenance(predicate: object, source_sha: str) -> None:
             details["byproducts"], "SLSA byproducts"
         )
     buildkit = metadata.get("buildkit_metadata")
+    if buildkit is not None and not isinstance(buildkit, dict):
+        raise ValueError("SLSA BuildKit metadata is invalid")
     vcs = buildkit.get("vcs") if isinstance(buildkit, dict) else None
-    if not isinstance(vcs, dict) or vcs.get("revision") != source_sha:
-        raise ValueError("SLSA provenance source revision differs from exact head")
-    if (
-        "source" in vcs
-        and normalize_source_repository_uri(vcs["source"]) != SOURCE_REPOSITORY
-    ):
-        raise ValueError("SLSA provenance source repository is invalid")
+    if vcs is not None:
+        if not isinstance(vcs, dict) or vcs.get("revision") != source_sha:
+            raise ValueError("SLSA provenance source revision differs from exact head")
+        if (
+            "source" in vcs
+            and normalize_source_repository_uri(vcs["source"])
+            != SOURCE_REPOSITORY
+        ):
+            raise ValueError("SLSA provenance source repository is invalid")
