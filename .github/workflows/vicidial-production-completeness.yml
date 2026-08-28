@@ -1,0 +1,47 @@
+name: VICIdial production source completeness
+
+on:
+  pull_request:
+    paths:
+      - "campaign_provisioning/**"
+      - "scripts/**"
+      - "vicidial/src/**"
+      - "vicidial/scripts/validate_production_source.py"
+      - "vicidial/docker/**"
+      - "vicidial/ops/**"
+      - "deploy/vicidial-restricted-adapter/**"
+      - ".github/workflows/**"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  completeness:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      SOURCE_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ env.SOURCE_SHA }}
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Verify exact clean checkout
+        run: |
+          test "$(git rev-parse HEAD)" = "${SOURCE_SHA}"
+          test -z "$(git status --porcelain --untracked-files=all)"
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Validate canonical production source
+        run: python vicidial/scripts/validate_production_source.py
+      - name: Compile canonical runtime modules
+        run: |
+          python -m py_compile scripts/vicidial_sync.py scripts/canonical_event_client.py
+          python -m compileall -q campaign_provisioning vicidial/src
+      - name: Validate production flag contract
+        run: python -m pytest -q vicidial/tests/test_production_completion_contract.py
+      - name: Validate whitespace
+        run: git diff --check
