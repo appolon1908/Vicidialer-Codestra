@@ -9,12 +9,11 @@ from pathlib import Path
 from fastapi.responses import JSONResponse
 
 from .app import app
+from .reconciliation import ReconciliationPolicy
 from .release import load_release_info
 
 
-LIVE_FLAGS = (
-    "ENABLE_VICIDIAL_WRITES",
-    "ENABLE_PROVISIONING",
+ALWAYS_DISABLED_FLAGS = (
     "ENABLE_AGENT_SYNC",
     "ENABLE_LEAD_PUBLICATION",
     "ENABLE_LIVE_CALL_CONTROL",
@@ -75,8 +74,6 @@ def _source_policy_ready(profile: str) -> bool:
     if profile == "development-loopback":
         return True
     try:
-        # Keep the readiness view aligned with the base adapter's established
-        # private-source default while still rejecting public source values.
         private_source = ipaddress.ip_address(
             os.environ.get("AUTHORIZED_PRIVATE_SOURCE_IP", "10.40.0.1")
         )
@@ -152,16 +149,18 @@ def _mysql_ready() -> tuple[bool, str | None]:
 def _repository_ready(profile: str) -> tuple[bool, str]:
     backend = os.environ.get("CODESTRA_ADAPTER_BACKEND", "memory").strip().lower()
     if backend == "memory":
-        # Memory is valid only for development/shadow certification, never as
-        # the production VICIdial system-of-record backend.
-        return profile in {"development-loopback", "staging-read-only", "production-candidate"}, backend
+        return profile in {
+            "development-loopback",
+            "staging-read-only",
+            "production-candidate",
+        }, backend
     if backend == "mysql":
         ok, _database = _mysql_ready()
         return ok, backend
     return False, backend
 
 
-def _release_ready(profile: str) -> tuple[bool, str | None]:
+def _release_ready(profile: str) -> tuple[bool, str | None, dict]:
     required = (
         os.environ.get("CODESTRA_RELEASE_METADATA_REQUIRED", "false").lower() == "true"
         or profile in {"production-candidate", "production-reconciliation"}
@@ -169,50 +168,88 @@ def _release_ready(profile: str) -> tuple[bool, str | None]:
     try:
         release = load_release_info(required=required)
     except Exception:
-        return False, None
+        return False, None, {}
     sha = release.get("git_sha") if isinstance(release, dict) else None
     if required and release.get("verified") is not True:
-        return False, str(sha) if sha else None
-    return True, str(sha) if sha else None
+        return False, str(sha) if sha else None, release
+    return True, str(sha) if sha else None, release
 
 
-def _kill_switch_ready() -> bool:
-    if any(_enabled(name) for name in LIVE_FLAGS):
+def _reconciliation_policy_ready(profile: str, release_sha: str | None) -> bool:
+    if profile != "production-reconciliation":
         return False
-    # Deprecated names are rejected even when set to false. Their presence can
-    # otherwise create a false belief that an activation control is effective.
-    return not any(name in os.environ for name in LEGACY_FLAGS)
+    if not release_sha or os.environ.get("OWNER_FULL_AUTONOMY") != "YES":
+        return False
+    value = os.environ.get("CODESTRA_RECONCILIATION_POLICY_FILE")
+    if not value:
+        return False
+    try:
+        ReconciliationPolicy.from_file(
+            Path(value),
+            expected_release_sha=release_sha,
+        )
+        return True
+    except Exception:
+        return False
+
+
+def _kill_switch_ready(profile: str, reconciliation_policy_verified: bool) -> bool:
+    if any(_enabled(name) for name in ALWAYS_DISABLED_FLAGS):
+        return False
+    if any(name in os.environ for name in LEGACY_FLAGS):
+        return False
+
+    writes = _enabled("ENABLE_VICIDIAL_WRITES")
+    provisioning = _enabled("ENABLE_PROVISIONING")
+    if profile == "production-reconciliation":
+        # Reconciliation is the one bounded exception: both switches must be on,
+        # the immutable request-bound policy must be verified, and every live
+        # customer capability above must remain off.
+        return writes and provisioning and reconciliation_policy_verified
+    return not writes and not provisioning
 
 
 def build_readiness() -> tuple[int, dict]:
     profile = os.environ.get("CODESTRA_ADAPTER_DEPLOYMENT", "development-loopback")
-    release_ok, release_sha = _release_ready(profile)
+    release_ok, release_sha, release = _release_ready(profile)
     repository_ok, backend = _repository_ready(profile)
+    reconciliation_policy_verified = _reconciliation_policy_ready(profile, release_sha)
     checks = {
         "release": release_ok,
         "hmac": _hmac_ready(profile),
         "source_policy": _source_policy_ready(profile),
         "state_store": _state_store_ready(),
         "repository": repository_ok,
-        "kill_switches": _kill_switch_ready(),
+        "kill_switches": _kill_switch_ready(
+            profile,
+            reconciliation_policy_verified,
+        ),
     }
+    if profile == "production-reconciliation":
+        checks["reconciliation_policy"] = reconciliation_policy_verified
+
     status = "ready" if all(checks.values()) else "not_ready"
+    writes_enabled = (
+        profile == "production-reconciliation"
+        and _enabled("ENABLE_VICIDIAL_WRITES")
+        and _enabled("ENABLE_PROVISIONING")
+        and reconciliation_policy_verified
+    )
     body = {
         "status": status,
         "deployment_profile": profile,
         "backend": backend,
         "release_sha": release_sha,
+        "release_verified": release.get("verified") is True,
+        "reconciliation_policy_verified": reconciliation_policy_verified,
         "checks": checks,
-        "writes_enabled": False,
+        "writes_enabled": writes_enabled,
         "production_dialing": False,
         "customer_traffic_authorized": False,
     }
     return (200 if status == "ready" else 503), body
 
 
-# Replace the shallow readiness route from the base adapter with the production
-# dependency-aware route. /health remains a liveness probe and must not perform
-# dependency I/O.
 app.router.routes[:] = [
     route for route in app.router.routes if getattr(route, "path", None) != "/ready"
 ]
