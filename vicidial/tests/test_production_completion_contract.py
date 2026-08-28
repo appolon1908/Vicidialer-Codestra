@@ -4,6 +4,8 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[2]
 APP = ROOT / "vicidial" / "src" / "codestra_vicidial" / "app.py"
 PRODUCTION_COMPOSE = ROOT / "vicidial" / "docker" / "compose.production.yml"
+SHADOW_COMPOSE = ROOT / "vicidial" / "docker" / "compose.shadow.yml"
+ENTRYPOINT = ROOT / "vicidial" / "docker" / "entrypoint.sh"
 ADAPTER_ENV = ROOT / "vicidial" / "config" / "adapter.env.example"
 
 
@@ -17,6 +19,22 @@ CANONICAL_MUTATION_FLAGS = {
     "ENABLE_PRODUCTION_DIALING",
 }
 
+ALL_FAIL_CLOSED_FLAGS = {
+    "ENABLE_VICIDIAL_WRITES",
+    "ENABLE_PROVISIONING",
+    "ENABLE_AGENT_SYNC",
+    "ENABLE_LEAD_PUBLICATION",
+    "ENABLE_LIVE_CALL_CONTROL",
+    "ENABLE_WARM_TRANSFER",
+    "ENABLE_IVR_ROUTING",
+    "ENABLE_IVR_CALLBACKS",
+    "ENABLE_PRODUCTION_DIALING",
+    "ENABLE_SMS_DELIVERY",
+    "ENABLE_EMAIL_DELIVERY",
+    "ENABLE_EXTERNAL_DELIVERY",
+    "ENABLE_AI_ACTIONS",
+}
+
 DEPRECATED_FLAG_NAMES = {
     "ENABLE_CALLBACK_WRITES",
     "ENABLE_TRANSFER_POLICY_SYNC",
@@ -24,43 +42,37 @@ DEPRECATED_FLAG_NAMES = {
 }
 
 
-def test_production_compose_uses_application_feature_flag_names():
+def test_compose_uses_application_feature_flag_names():
     app = APP.read_text()
-    compose = PRODUCTION_COMPOSE.read_text()
     example = ADAPTER_ENV.read_text()
+    for compose_path in (PRODUCTION_COMPOSE, SHADOW_COMPOSE):
+        compose = compose_path.read_text()
+        for name in CANONICAL_MUTATION_FLAGS:
+            assert name in compose
+        for name in DEPRECATED_FLAG_NAMES:
+            assert name not in compose
 
-    # The deployment contract must use names that the running application
-    # actually consumes. A renamed-but-unread flag is a dangerous false switch.
     for name in CANONICAL_MUTATION_FLAGS:
-        assert name in compose or name == "ENABLE_PRODUCTION_DIALING"
         assert name in example
 
     assert 'os.environ.get("ENABLE_WARM_TRANSFER")' in app
     assert 'os.environ.get("ENABLE_IVR_CALLBACKS")' in app
 
+
+def test_production_and_shadow_compose_keep_live_capabilities_fail_closed():
+    for compose_path in (PRODUCTION_COMPOSE, SHADOW_COMPOSE):
+        compose = compose_path.read_text()
+        for name in ALL_FAIL_CLOSED_FLAGS:
+            assert f'{name}: "false"' in compose
+
+
+def test_container_entrypoint_enforces_canonical_kill_switches_and_rejects_aliases():
+    entrypoint = ENTRYPOINT.read_text()
+    for name in ALL_FAIL_CLOSED_FLAGS:
+        assert name in entrypoint
     for name in DEPRECATED_FLAG_NAMES:
-        assert name not in compose
-
-
-def test_production_compose_keeps_all_live_capabilities_fail_closed():
-    compose = PRODUCTION_COMPOSE.read_text()
-    required_false = {
-        "ENABLE_VICIDIAL_WRITES",
-        "ENABLE_PROVISIONING",
-        "ENABLE_AGENT_SYNC",
-        "ENABLE_LEAD_PUBLICATION",
-        "ENABLE_LIVE_CALL_CONTROL",
-        "ENABLE_WARM_TRANSFER",
-        "ENABLE_IVR_ROUTING",
-        "ENABLE_IVR_CALLBACKS",
-        "ENABLE_PRODUCTION_DIALING",
-        "ENABLE_SMS_DELIVERY",
-        "ENABLE_EMAIL_DELIVERY",
-        "ENABLE_EXTERNAL_DELIVERY",
-        "ENABLE_AI_ACTIONS",
-    }
-    for name in required_false:
-        assert f'{name}: "false"' in compose
+        assert name in entrypoint
+    assert "deprecated feature flag" in entrypoint
 
 
 def test_canonical_sync_modules_exist_as_executable_runtime_sources():
