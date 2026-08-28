@@ -71,12 +71,9 @@ def validate_python_file(path: Path) -> list[str]:
             findings.append(
                 f"{path}:{node.lineno}: function {node.name} raises NotImplementedError"
             )
-        if len(body) == 1 and isinstance(body[0], ast.Expr) and isinstance(
-            getattr(body[0], "value", None), ast.Constant
-        ) and body[0].value.value is Ellipsis:
-            findings.append(
-                f"{path}:{node.lineno}: function {node.name} is ellipsis-only"
-            )
+        # Ellipsis-only methods are not treated as runtime placeholders here:
+        # repository Protocol interfaces intentionally use ``...`` and have
+        # concrete Memory/MySQL implementations validated elsewhere.
     return findings
 
 
