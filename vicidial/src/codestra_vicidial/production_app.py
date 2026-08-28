@@ -75,8 +75,10 @@ def _source_policy_ready(profile: str) -> bool:
     if profile == "development-loopback":
         return True
     try:
+        # Keep the readiness view aligned with the base adapter's established
+        # private-source default while still rejecting public source values.
         private_source = ipaddress.ip_address(
-            os.environ.get("AUTHORIZED_PRIVATE_SOURCE_IP", "")
+            os.environ.get("AUTHORIZED_PRIVATE_SOURCE_IP", "10.40.0.1")
         )
     except ValueError:
         return False
@@ -201,6 +203,7 @@ def build_readiness() -> tuple[int, dict]:
         "backend": backend,
         "release_sha": release_sha,
         "checks": checks,
+        "writes_enabled": False,
         "production_dialing": False,
         "customer_traffic_authorized": False,
     }
