@@ -38,27 +38,52 @@ def environment(tmp_path, deployment):
         "campaigns": campaigns,
     }))
     policy.chmod(0o600)
-    return {
+    db_secret = tmp_path / "vicidial-db.json"
+    db_secret.write_text(json.dumps({
+        "host": "127.0.0.1",
+        "user": "codestra_adapter",
+        "password": "synthetic-test-only",
+        "database": "asterisk",
+    }))
+    db_secret.chmod(0o600)
+    mysql_profile = deployment in {"production-candidate", "production-reconciliation"}
+    env = {
         **os.environ,
         "CODESTRA_ADAPTER_DEPLOYMENT": deployment,
-        "CODESTRA_ADAPTER_BACKEND": "mysql" if deployment == "production-reconciliation" else "memory",
+        "CODESTRA_ADAPTER_BACKEND": "mysql" if mysql_profile else "memory",
         "ENABLE_VICIDIAL_WRITES": "true" if deployment == "production-reconciliation" else "false",
         "ENABLE_PROVISIONING": "true" if deployment == "production-reconciliation" else "false",
         "OWNER_FULL_AUTONOMY": "YES" if deployment == "production-reconciliation" else "NO",
-        "ENABLE_AGENT_SYNC": "false", "ENABLE_LEAD_PUBLICATION": "false",
-        "ENABLE_IVR_CALLBACKS": "false", "ENABLE_WARM_TRANSFER": "false",
+        "ENABLE_AGENT_SYNC": "false",
+        "ENABLE_LEAD_PUBLICATION": "false",
+        "ENABLE_LIVE_CALL_CONTROL": "false",
+        "ENABLE_WARM_TRANSFER": "false",
+        "ENABLE_IVR_ROUTING": "false",
+        "ENABLE_IVR_CALLBACKS": "false",
         "ENABLE_PRODUCTION_DIALING": "false",
+        "ENABLE_SMS_DELIVERY": "false",
+        "ENABLE_EMAIL_DELIVERY": "false",
+        "ENABLE_EXTERNAL_DELIVERY": "false",
+        "ENABLE_AI_ACTIONS": "false",
         "AUTHORIZED_APPLICATION_SERVER_IP": "65.109.65.169",
         "AUTHORIZED_PRIVATE_SOURCE_IP": "10.40.0.1",
         "MIDDLEWARE_BASE_URL": "https://api.codestra.co",
         "KEYCLOAK_ISSUER_URL": "https://auth.codestra.co/realms/codestra",
         "CODESTRA_ADAPTER_HMAC_FILE": str(secret),
+        "CODESTRA_VICIDIAL_DB_FILE": str(db_secret),
         "CODESTRA_RECONCILIATION_POLICY_FILE": str(policy),
         "CODESTRA_RELEASE_METADATA_REQUIRED": (
             "true" if deployment == "production-reconciliation" else "false"
         ),
         "CODESTRA_BUILD_INFO_FILE": str(build_info),
     }
+    for legacy in (
+        "ENABLE_CALLBACK_WRITES",
+        "ENABLE_TRANSFER_POLICY_SYNC",
+        "ENABLE_PSTN_DIALING",
+    ):
+        env.pop(legacy, None)
+    return env
 
 
 def run(env):
@@ -72,10 +97,6 @@ def run(env):
 
 def test_production_reconciliation_profile_is_bounded(tmp_path):
     env = environment(tmp_path, "production-reconciliation")
-    # The production validator intentionally requires a root-owned policy.
-    # CI runs unprivileged; construction/semantic success is covered by the
-    # reconciliation-policy unit suite, while this subprocess must fail closed
-    # on ownership when it cannot create the production ownership boundary.
     result = run(env)
     if os.getuid() == 0:
         assert result.returncode == 0
@@ -107,6 +128,40 @@ def test_staging_profile_stays_read_only(tmp_path):
     assert run(env).returncode == 0
     env["ENABLE_VICIDIAL_WRITES"] = "true"
     assert run(env).returncode != 0
+
+
+def test_production_candidate_requires_mysql_but_keeps_writes_off(tmp_path):
+    env = environment(tmp_path, "production-candidate")
+    assert run(env).returncode == 0
+    env["CODESTRA_ADAPTER_BACKEND"] = "memory"
+    assert run(env).returncode != 0
+    env = environment(tmp_path, "production-candidate")
+    env["ENABLE_PROVISIONING"] = "true"
+    assert run(env).returncode != 0
+
+
+def test_mysql_profiles_reject_remote_database_host(tmp_path):
+    env = environment(tmp_path, "production-candidate")
+    path = Path(env["CODESTRA_VICIDIAL_DB_FILE"])
+    document = json.loads(path.read_text())
+    document["host"] = "10.40.0.2"
+    path.write_text(json.dumps(document))
+    result = run(env)
+    assert result.returncode != 0
+    assert b"loopback-only" in result.stderr
+
+
+def test_deprecated_feature_flag_aliases_are_denied(tmp_path):
+    for legacy in (
+        "ENABLE_CALLBACK_WRITES",
+        "ENABLE_TRANSFER_POLICY_SYNC",
+        "ENABLE_PSTN_DIALING",
+    ):
+        env = environment(tmp_path, "staging-read-only")
+        env[legacy] = "false"
+        result = run(env)
+        assert result.returncode != 0
+        assert b"deprecated feature flag" in result.stderr
 
 
 def test_deprecated_or_incomplete_keycloak_issuer_is_denied(tmp_path):

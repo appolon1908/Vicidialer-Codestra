@@ -19,7 +19,7 @@ ARG OPENSSL_PACKAGE_VERSION=3.5.8-r0
 LABEL org.opencontainers.image.title="Codestra VICIdial Restricted Adapter" \
       org.opencontainers.image.revision="${SOURCE_SHA}" \
       org.opencontainers.image.created="${BUILD_DATE}" \
-      org.opencontainers.image.source="https://github.com/appolon1908-hue/codestra-production-platform"
+      org.opencontainers.image.source="https://github.com/appolon1908-hue/Vicidialer-Codestra"
 ENV PATH=/opt/venv/bin:$PATH \
     PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
@@ -30,12 +30,15 @@ ENV PATH=/opt/venv/bin:$PATH \
     ENABLE_PROVISIONING=false \
     ENABLE_AGENT_SYNC=false \
     ENABLE_LEAD_PUBLICATION=false \
-    ENABLE_CALLBACK_WRITES=false \
-    ENABLE_TRANSFER_POLICY_SYNC=false \
-    ENABLE_PSTN_DIALING=false \
+    ENABLE_LIVE_CALL_CONTROL=false \
+    ENABLE_WARM_TRANSFER=false \
+    ENABLE_IVR_ROUTING=false \
+    ENABLE_IVR_CALLBACKS=false \
+    ENABLE_PRODUCTION_DIALING=false \
     ENABLE_SMS_DELIVERY=false \
     ENABLE_EMAIL_DELIVERY=false \
-    ENABLE_EXTERNAL_DELIVERY=false
+    ENABLE_EXTERNAL_DELIVERY=false \
+    ENABLE_AI_ACTIONS=false
 COPY --from=builder /opt/venv /opt/venv
 COPY vicidial /tmp/release-src/vicidial
 COPY deploy/vicidial-restricted-adapter /tmp/release-src/deploy/vicidial-restricted-adapter
@@ -71,4 +74,4 @@ EXPOSE 8097
 VOLUME ["/var/lib/codestra-vicidial"]
 ENTRYPOINT ["/usr/local/bin/codestra-vicidial-entrypoint"]
 HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 CMD ["python", "-c", "import json,os,urllib.request; b='http://127.0.0.1:8097'; assert json.load(urllib.request.urlopen(b+'/health',timeout=3))['status']=='live'; assert json.load(urllib.request.urlopen(b+'/ready',timeout=3))['status']=='ready'; assert json.load(urllib.request.urlopen(b+'/version',timeout=3))['git_sha']==os.environ['SOURCE_SHA']"]
-CMD ["python", "-m", "uvicorn", "codestra_vicidial.app:app", "--host", "0.0.0.0", "--port", "8097", "--no-server-header"]
+CMD ["python", "-m", "uvicorn", "codestra_vicidial.production_app:app", "--host", "0.0.0.0", "--port", "8097", "--no-server-header"]

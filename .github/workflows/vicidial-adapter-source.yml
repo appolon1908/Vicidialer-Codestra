@@ -48,17 +48,18 @@ jobs:
           CODESTRA_ADAPTER_STATE: "${{ runner.temp }}/vicidial-adapter-test-state.sqlite3"
         run: python -m pytest -q vicidial/tests tests
 
-      - name: Compile source and validate reference scripts
+      - name: Compile source and canonical runtime scripts
         run: |
           python -m compileall -q \
             campaign_provisioning \
+            scripts \
             vicidial/src \
             vicidial/scripts \
             vicidial/tests \
             tests
           python -m py_compile \
-            scripts/vicidial_sync.py.candidate \
-            scripts/canonical_event_client.py.reference
+            scripts/vicidial_sync.py \
+            scripts/canonical_event_client.py
 
       - name: Validate Git whitespace
         run: git diff --check "${BASE_SHA}..${SOURCE_SHA}"
@@ -159,8 +160,6 @@ jobs:
             diagnostics="$(mktemp)"
             if ! systemd-analyze verify "${unit}" 2>"${diagnostics}"
             then
-              # Source-only CI intentionally has no production virtualenv. All
-              # other unit validation errors remain fatal.
               sed -E \
                 -e '/Command .* is not executable: No such file or directory/d' \
                 -e '\|^/lib/systemd/system/|d' \

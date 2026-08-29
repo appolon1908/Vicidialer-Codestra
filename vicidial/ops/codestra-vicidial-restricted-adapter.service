@@ -18,7 +18,7 @@ Environment=CODESTRA_RELEASE_MANIFEST_FILE=/opt/codestra/vicidial-restricted-ada
 LoadCredential=adapter-hmac:/etc/codestra/secrets/telephony-provisioning-hmac
 ExecStartPre=/opt/codestra/vicidial-restricted-adapter/current/.venv/bin/python scripts/verify_installed_manifest.py --root /opt/codestra/vicidial-restricted-adapter/current --manifest /opt/codestra/vicidial-restricted-adapter/current/INSTALLED_MANIFEST.json
 ExecStartPre=/opt/codestra/vicidial-restricted-adapter/current/.venv/bin/python scripts/validate_runtime.py
-ExecStart=/opt/codestra/vicidial-restricted-adapter/current/.venv/bin/python -m uvicorn codestra_vicidial.app:app --host 127.0.0.1 --port 8097 --no-server-header --proxy-headers --forwarded-allow-ips=127.0.0.1
+ExecStart=/opt/codestra/vicidial-restricted-adapter/current/.venv/bin/python -m uvicorn codestra_vicidial.production_app:app --host 127.0.0.1 --port 8097 --no-server-header --proxy-headers --forwarded-allow-ips=127.0.0.1
 ExecStartPost=/opt/codestra/vicidial-restricted-adapter/current/.venv/bin/python scripts/verify_operational_contract.py --base-url http://127.0.0.1:8097 --source-commit /opt/codestra/vicidial-restricted-adapter/current/SOURCE.COMMIT --deployment-profile ${CODESTRA_ADAPTER_DEPLOYMENT} --attempts 5 --delay 1
 Restart=on-failure
 RestartSec=5
