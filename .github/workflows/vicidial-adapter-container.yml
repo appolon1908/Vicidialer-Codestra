@@ -1,5 +1,7 @@
 name: VICIdial restricted adapter container
 
+# The deterministic installed layout is the sole production deployable.
+
 on:
   pull_request:
     paths:
