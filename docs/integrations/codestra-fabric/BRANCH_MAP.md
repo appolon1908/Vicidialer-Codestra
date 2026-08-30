@@ -10,4 +10,15 @@ fix/vicidial-r3-dedicated-consolidation-20260827
        -> test/telephony-fabric-contracts-v1
 ```
 
-The existing immutable-image, source-authority and runtime-hardening work remains separate. No child branch changes live dialing or public exposure.
+## Current source lock
+
+```text
+FOUNDATION_BRANCH=fix/vicidial-r3-dedicated-consolidation-20260827
+FOUNDATION_SHA=03c47f2f93207e29a474031aa4291e1134e3694b
+FOUNDATION_PR=2
+TELEPHONY_BRANCH=integration/codestra-telephony-fabric-v1
+```
+
+The telephony fabric remains stacked on the foundation until PR #2 receives independent exact-head review and is accepted. After that merge, PR #3 must be retargeted to the protected merged `main` SHA and revalidated before any child implementation branch is promoted.
+
+The immutable-image, source-authority, and runtime-hardening history remains preserved. No child branch changes live dialing, callbacks, public exposure, carrier routing, firewall state, or production deployment.

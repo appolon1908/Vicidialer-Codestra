@@ -1,24 +1,90 @@
 {
-  "schema_version": "1.0",
+  "schema_version": "1.1",
   "system": "vicidial-asterisk",
-  "authority": ["telephony_execution", "campaigns", "agents", "calls", "channels", "dispositions", "recordings"],
+  "authority": [
+    "telephony_execution",
+    "campaigns",
+    "agents",
+    "calls",
+    "callbacks",
+    "channels",
+    "dispositions",
+    "recordings",
+    "provider_call_state"
+  ],
   "integration_boundary": "MIDDLEWARE_RESTRICTED_ADAPTER_ONLY",
   "adapter_path": "10.40.0.1 -> 10.40.0.2:8443 -> 127.0.0.1:8097",
   "public_api": false,
   "n8n_direct_access": false,
   "database_direct_access": false,
   "ami_direct_access": false,
-  "carrier_credentials_in_n8n": false,
+  "ari_direct_access": false,
+  "carrier_direct_access": false,
   "service_identity": "vicidial-adapter",
-  "event_delivery": "SIGNED_ADAPTER_EVENTS",
-  "unknown_command_reconcile_before_retry": true,
-  "success_authority": "RESTRICTED_ADAPTER_READBACK",
+  "tenant_authority": "KEYCLOAK_TOKEN_AND_MIDDLEWARE_RESOLVED_TENANT",
+  "campaign_authority": "MIDDLEWARE_RESOLVED_CAMPAIGN_BINDING",
+  "success_authority": "RESTRICTED_ADAPTER_AUTHORITATIVE_READBACK",
+  "event_delivery": {
+    "mode": "SIGNED_ADAPTER_EVENTS",
+    "durable_acceptance_required": true,
+    "replay_rejection_required": true,
+    "provider_callback_cannot_choose_tenant": true
+  },
+  "unknown_outcome": {
+    "command_execution_attempts_after_uncertainty": 1,
+    "blind_redial": false,
+    "automatic_resubmission": false,
+    "authoritative_readback_required": true,
+    "intermediate_state": "reconciliation_required",
+    "unresolved_state": "manual_review"
+  },
+  "campaign_isolation": {
+    "agent_campaign_membership": "EXACTLY_ONE",
+    "primary_supervisor_per_campaign": 1,
+    "cross_campaign_login": false,
+    "cross_campaign_lead_access": false,
+    "cross_campaign_call_access": false,
+    "cross_campaign_callback_access": false,
+    "cross_campaign_transfer": false,
+    "cross_campaign_recording_access": false,
+    "cross_campaign_reporting": false,
+    "cross_campaign_email": false,
+    "campaign_scoped_scripts": true,
+    "campaign_scoped_dispositions": true,
+    "campaign_scoped_inbound_groups": true,
+    "campaign_scoped_lead_lists": true,
+    "campaign_scoped_transfer_routes": true
+  },
+  "commands": [
+    "voice.call.preview.v1",
+    "voice.call.place.v1",
+    "voice.call.cancel.v1",
+    "voice.callback.schedule.v1",
+    "voice.callback.cancel.v1",
+    "voice.disposition.record.v1"
+  ],
+  "events": [
+    "voice.call.requested.v1",
+    "voice.call.queued.v1",
+    "voice.call.ringing.v1",
+    "voice.call.answered.v1",
+    "voice.call.completed.v1",
+    "voice.call.failed.v1",
+    "voice.call.indeterminate.v1",
+    "voice.callback.scheduled.v1",
+    "voice.callback.completed.v1",
+    "voice.disposition.recorded.v1",
+    "voice.recording.available.v1"
+  ],
   "capabilities": {
     "PRODUCTION_DIALING": false,
     "CALLBACK_DISPATCH": false,
     "TELEPHONY_ADMIN_WRITE": false,
     "RECORDING_WRITE": false,
-    "LEAD_PUBLISH": false,
+    "LEAD_PUBLICATION": false,
     "ODOO_WRITE": false
-  }
+  },
+  "calls_placed": 0,
+  "deployment_authorized": false,
+  "production_authorized": false
 }
