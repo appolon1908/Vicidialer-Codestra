@@ -1,9 +1,13 @@
 name: VICIdial restricted adapter container
 
+# The deterministic installed layout is the sole production deployable.
+
 on:
   pull_request:
     paths:
       - "campaign_provisioning/**"
+      - "scripts/**"
+      - "tests/**"
       - "vicidial/**"
       - "deploy/vicidial-restricted-adapter/**"
       - ".github/workflows/vicidial-adapter-container.yml"
@@ -57,7 +61,11 @@ jobs:
       - name: Install locked runtime and bounded test dependencies
         run: |
           python -m pip install --requirement vicidial/docker/requirements.lock
-          python -m pip install "httpx2==2.12.0" "pytest>=8,<10" "PyYAML>=6,<7"
+          python -m pip install \
+            "httpx2==2.12.0" \
+            "pytest>=8,<10" \
+            "PyYAML>=6,<7" \
+            "requests>=2.32,<3"
       - name: Prove TestClient uses httpx2 without classic httpx
         run: |
           test -z "$(python -m pip show httpx 2>/dev/null)"
@@ -71,8 +79,13 @@ jobs:
           PYTHONPATH=vicidial/src python -m pytest -q --junitxml=evidence/test-results/phase3a.xml vicidial/tests/test_phase3a_release_network.py
           PYTHONPATH=vicidial/src python -m pytest -q --junitxml=evidence/test-results/phase3b.xml vicidial/tests/test_phase3b_security.py
           PYTHONPATH=vicidial/src python -m pytest -q --junitxml=evidence/test-results/phase3c.xml vicidial/tests/test_phase3c_domains.py vicidial/tests/test_campaign_adoption_atomicity.py
-          PYTHONPATH=vicidial/src python -m pytest -q --junitxml=evidence/test-results/phase3d.xml vicidial/tests/test_phase3d_container.py vicidial/tests/test_verify_oci_export.py
+          PYTHONPATH=vicidial/src python -m pytest -q --junitxml=evidence/test-results/phase3d.xml vicidial/tests/test_phase3d_container.py vicidial/tests/test_verify_oci_export.py vicidial/tests/test_attestation_value_contracts.py vicidial/tests/test_exact_build_identity.py
           PYTHONPATH=vicidial/src python -m pytest -q --junitxml=evidence/test-results/full.xml vicidial/tests
+          PYTHONPATH=vicidial/src python -m pytest -q --junitxml=evidence/test-results/root-vicidial.xml tests
+          python -m compileall -q campaign_provisioning scripts vicidial/src vicidial/scripts vicidial/tests tests
+          python -m py_compile \
+            scripts/vicidial_sync.py \
+            scripts/canonical_event_client.py
       - name: Verify deterministic installed-layout contract
         run: |
           release_root="${RUNNER_TEMP}/installed-layout/${SOURCE_SHA}"
@@ -102,13 +115,14 @@ jobs:
           KEYCLOAK_ISSUER_URL=https://auth.codestra.co/realms/codestra \
           CODESTRA_ADAPTER_HMAC_FILE="${runtime_secret}" \
             "${release_root}/.venv/bin/python" "${release_root}/scripts/validate_runtime.py"
-          # This layout is validation evidence only. The immutable OCI image is
-          # the sole production deployable; never package the CI runner runtime.
       - uses: docker/setup-buildx-action@v3
       - name: Build runnable linux/amd64 review image
         uses: docker/build-push-action@v6
         with:
-          context: .
+          context: "https://github.com/${{ github.repository }}.git#${{ env.SOURCE_SHA }}"
+          github-token: ${{ github.token }}
+          secrets: |
+            GIT_AUTH_TOKEN.github.com=${{ github.token }}
           file: vicidial/docker/Dockerfile
           platforms: linux/amd64
           load: true
@@ -116,19 +130,24 @@ jobs:
           build-args: |
             SOURCE_SHA=${{ env.SOURCE_SHA }}
             BUILD_DATE=2026-01-01T00:00:00Z
+            SOURCE_DATE_EPOCH=1767225600
           sbom: false
           provenance: false
       - name: Export attested linux/amd64 OCI candidate
         uses: docker/build-push-action@v6
         with:
-          context: .
+          context: "https://github.com/${{ github.repository }}.git#${{ env.SOURCE_SHA }}"
+          github-token: ${{ github.token }}
+          secrets: |
+            GIT_AUTH_TOKEN.github.com=${{ github.token }}
           file: vicidial/docker/Dockerfile
           platforms: linux/amd64
           push: false
-          outputs: type=oci,dest=evidence/vicidial-adapter.oci.tar
+          outputs: type=oci,dest=evidence/vicidial-adapter.oci.tar,name=codestra/vicidial-restricted-adapter:${{ env.SOURCE_SHA }}
           build-args: |
             SOURCE_SHA=${{ env.SOURCE_SHA }}
             BUILD_DATE=2026-01-01T00:00:00Z
+            SOURCE_DATE_EPOCH=1767225600
           sbom: true
           provenance: mode=max
       - name: Test container contract

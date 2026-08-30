@@ -14,10 +14,11 @@ import pytest
 SCRIPT = "vicidial/scripts/verify_oci_export.py"
 OCI_INDEX = "application/vnd.oci.image.index.v1+json"
 OCI_MANIFEST = "application/vnd.oci.image.manifest.v1+json"
+OCI_CONFIG = "application/vnd.oci.image.config.v1+json"
 OCI_EMPTY = "application/vnd.oci.empty.v1+json"
 IN_TOTO = "application/vnd.in-toto+json"
 SBOM = "https://spdx.dev/Document"
-PROVENANCE = "https://slsa.dev/provenance/v0.2"
+PROVENANCE = "https://slsa.dev/provenance/v1"
 
 
 def _json_bytes(value: dict) -> bytes:
@@ -60,13 +61,125 @@ def _read_members(path) -> dict[str, bytes]:
         }
 
 
-def _statement(predicate_type: str, image_digest: str, *, subject_digest=None) -> bytes:
+def _spdx_predicate() -> dict:
+    return {
+        "spdxVersion": "SPDX-2.3",
+        "dataLicense": "CC0-1.0",
+        "SPDXID": "SPDXRef-DOCUMENT",
+        "name": "sbom",
+        "documentNamespace": "https://codestra.example/spdx/test",
+        "creationInfo": {
+            "creators": ["Tool: buildkit-test-fixture"],
+            "created": "2026-01-01T00:00:00Z",
+        },
+        "packages": [
+            {
+                "name": "codestra-vicidial-restricted-adapter",
+                "SPDXID": "SPDXRef-Package-adapter",
+                "downloadLocation": "NOASSERTION",
+                "filesAnalyzed": False,
+                "licenseConcluded": "NOASSERTION",
+                "licenseDeclared": "NOASSERTION",
+                "copyrightText": "NOASSERTION",
+                "checksums": [
+                    {
+                        "algorithm": "SHA256",
+                        "checksumValue": "a" * 64,
+                    }
+                ],
+            }
+        ],
+        "relationships": [
+            {
+                "spdxElementId": "SPDXRef-DOCUMENT",
+                "relationshipType": "DESCRIBES",
+                "relatedSpdxElement": "SPDXRef-Package-adapter",
+            }
+        ],
+    }
+
+
+def _slsa_predicate(source_sha: str) -> dict:
+    return {
+        "buildDefinition": {
+            "buildType": (
+                "https://github.com/moby/buildkit/blob/master/docs/"
+                "attestations/slsa-definitions.md"
+            ),
+            "resolvedDependencies": [
+                {
+                    "uri": "git+https://github.com/appolon1908-hue/"
+                    "Vicidialer-Codestra@refs/pull/2/head",
+                    "digest": {"gitCommit": source_sha},
+                }
+            ],
+            "externalParameters": {},
+            "internalParameters": {},
+        },
+        "runDetails": {
+            "builder": {
+                "id": "https://github.com/codestra/test-builder",
+                "builderDependencies": [
+                    {"uri": "pkg:docker/moby/buildkit@test"}
+                ],
+                "version": {"buildkit": "test"},
+            },
+            "metadata": {
+                "invocationId": "test-invocation",
+                "startedOn": "2026-01-01T00:00:00Z",
+                "finishedOn": "2026-01-01T00:00:01Z",
+                "buildkit_metadata": {"vcs": {"revision": source_sha}},
+            },
+            "byproducts": [
+                {
+                    "name": "build-log",
+                    "digest": {"sha256": "b" * 64},
+                    "mediaType": "text/plain",
+                }
+            ],
+        },
+    }
+
+
+def _statement(
+    predicate_type: str,
+    image_digest: str,
+    source_sha: str,
+    *,
+    subject_digest=None,
+    mutation: str | None = None,
+) -> bytes:
     digest = subject_digest or image_digest.split(":", 1)[1]
+    if predicate_type == SBOM:
+        predicate = _spdx_predicate()
+        if mutation == "spdx_version":
+            predicate["spdxVersion"] = "SPDX-2.2"
+    elif predicate_type == PROVENANCE:
+        predicate = _slsa_predicate(source_sha)
+        if mutation == "slsa_schema":
+            predicate.pop("runDetails")
+        elif mutation == "slsa_revision":
+            predicate["runDetails"]["metadata"]["buildkit_metadata"]["vcs"][
+                "revision"
+            ] = "f" * 40
+        elif mutation == "slsa_resolved_dependency":
+            predicate["buildDefinition"]["resolvedDependencies"] = [None]
+        elif mutation == "slsa_builder_dependency":
+            predicate["runDetails"]["builder"]["builderDependencies"] = [None]
+        elif mutation == "slsa_byproduct":
+            predicate["runDetails"]["byproducts"] = [None]
+    else:
+        predicate = {"unsupported": True}
+    if mutation == "empty_predicate":
+        predicate = {}
     return _json_bytes({
         "_type": "https://in-toto.io/Statement/v1",
-        "subject": [{"name": "_", "digest": {"sha256": digest}}],
+        "subject": [{
+            "name": "pkg:docker/codestra/vicidial-restricted-adapter@test",
+            "digest": {"sha256": digest},
+        }],
         "predicateType": predicate_type,
-        "predicate": {},
+        "predicate": predicate,
     })
 
 
@@ -138,7 +251,12 @@ def _build_archive(
         "config": {"Labels": {"org.opencontainers.image.revision": source_sha}},
         "rootfs": {"type": "layers", "diff_ids": diff_ids},
     })
-    config_descriptor = _descriptor(config)
+    config_media_type = (
+        "application/json"
+        if image_mutation == "config_media_type"
+        else OCI_CONFIG
+    )
+    config_descriptor = _descriptor(config, config_media_type)
     members[_blob_name(config_descriptor)] = config
 
     manifest = _json_bytes({
@@ -164,18 +282,40 @@ def _build_archive(
         if include_provenance:
             predicate_types.append(PROVENANCE)
         for predicate_type in predicate_types:
+            actual_predicate_type = predicate_type
+            if (
+                attestation_mutation == "unsupported_predicate"
+                and predicate_type == SBOM
+            ):
+                actual_predicate_type = "https://example.invalid/predicate"
             statement_subject = (
                 "f" * 64
                 if attestation_mutation == "statement_subject"
                 and not statement_descriptors
                 else None
             )
+            mutation = None
+            if predicate_type == SBOM and attestation_mutation in (
+                "empty_predicate",
+                "spdx_version",
+            ):
+                mutation = attestation_mutation
+            elif predicate_type == PROVENANCE and attestation_mutation in (
+                "slsa_schema",
+                "slsa_revision",
+                "slsa_resolved_dependency",
+                "slsa_builder_dependency",
+                "slsa_byproduct",
+            ):
+                mutation = attestation_mutation
             raw = _statement(
-                predicate_type,
+                actual_predicate_type,
                 image_descriptor["digest"],
+                source_sha,
                 subject_digest=statement_subject,
+                mutation=mutation,
             )
-            annotations = {"in-toto.io/predicate-type": predicate_type}
+            annotations = {"in-toto.io/predicate-type": actual_predicate_type}
             if (
                 attestation_mutation == "predicate_annotation"
                 and not statement_descriptors
@@ -308,6 +448,10 @@ def _run_verifier(monkeypatch, tmp_path, **kwargs):
     return output
 
 
+def _validator(name: str):
+    return runpy.run_path(SCRIPT)[name]
+
+
 def test_verifier_accepts_attested_nested_linux_amd64_export(
     monkeypatch, tmp_path
 ):
@@ -319,8 +463,103 @@ def test_verifier_accepts_attested_nested_linux_amd64_export(
     assert document["schema"] == "codestra-oci-export-verification/v2"
     assert document["oci_layout_version"] == "1.0.0"
     assert document["oci_index_schema_version"] == 2
+    assert document["oci_config_media_type"] == OCI_CONFIG
     assert document["attestation_count"] == 1
     assert document["attestation_predicate_types"] == sorted([SBOM, PROVENANCE])
+
+
+@pytest.mark.parametrize(
+    "field",
+    [
+        "name",
+        "SPDXID",
+        "downloadLocation",
+        "filesAnalyzed",
+        "licenseConcluded",
+        "licenseDeclared",
+        "copyrightText",
+    ],
+)
+def test_spdx_package_requires_every_schema_field(field):
+    predicate = _spdx_predicate()
+    del predicate["packages"][0][field]
+    with pytest.raises(ValueError, match="SPDX predicate package"):
+        _validator("validate_spdx_predicate")(predicate)
+
+
+@pytest.mark.parametrize(
+    "field,value",
+    [
+        ("name", 1),
+        ("SPDXID", ""),
+        ("downloadLocation", None),
+        ("filesAnalyzed", "false"),
+        ("licenseConcluded", ""),
+        ("licenseDeclared", []),
+        ("copyrightText", ""),
+    ],
+)
+def test_spdx_package_rejects_malformed_required_field(field, value):
+    predicate = _spdx_predicate()
+    predicate["packages"][0][field] = value
+    with pytest.raises(ValueError, match="SPDX predicate package"):
+        _validator("validate_spdx_predicate")(predicate)
+
+
+def test_spdx_package_rejects_malformed_checksum():
+    predicate = _spdx_predicate()
+    predicate["packages"][0]["checksums"] = [None]
+    with pytest.raises(ValueError, match="checksum"):
+        _validator("validate_spdx_predicate")(predicate)
+
+
+def test_spdx_relationship_rejects_missing_required_field():
+    predicate = _spdx_predicate()
+    del predicate["relationships"][0]["relationshipType"]
+    with pytest.raises(ValueError, match="relationship"):
+        _validator("validate_spdx_predicate")(predicate)
+
+
+@pytest.mark.parametrize(
+    "collection,path",
+    [
+        (
+            "resolved dependency",
+            ("buildDefinition", "resolvedDependencies"),
+        ),
+        (
+            "builder dependency",
+            ("runDetails", "builder", "builderDependencies"),
+        ),
+        ("byproduct", ("runDetails", "byproducts")),
+    ],
+)
+def test_slsa_resource_descriptor_collections_reject_null(collection, path):
+    predicate = _slsa_predicate("a" * 40)
+    target = predicate
+    for part in path[:-1]:
+        target = target[part]
+    target[path[-1]] = [None]
+    with pytest.raises(ValueError, match="not an object"):
+        _validator("validate_slsa_provenance")(predicate, "a" * 40)
+
+
+@pytest.mark.parametrize(
+    "descriptor,match",
+    [
+        ({}, "no uri, digest, or content"),
+        ({"uri": ""}, "uri is missing"),
+        ({"digest": {}}, "digest must be a nonempty object"),
+        ({"content": ""}, "content is missing"),
+        ({"uri": "pkg:test", "annotations": []}, "annotations"),
+        ({"digest": {"sha256": ""}}, "digest value"),
+    ],
+)
+def test_slsa_resource_descriptor_rejects_invalid_structure(descriptor, match):
+    predicate = _slsa_predicate("a" * 40)
+    predicate["buildDefinition"]["resolvedDependencies"] = [descriptor]
+    with pytest.raises(ValueError, match=match):
+        _validator("validate_slsa_provenance")(predicate, "a" * 40)
 
 
 def test_verifier_rejects_direct_manifest_without_attached_attestations(
@@ -395,6 +634,14 @@ def test_verifier_requires_image_manifest_schema_version_two(
         runpy.run_path(SCRIPT, run_name="__main__")
 
 
+def test_verifier_requires_oci_image_config_media_type(monkeypatch, tmp_path):
+    _run_verifier(monkeypatch, tmp_path, image_mutation="config_media_type")
+    with pytest.raises(
+        ValueError, match="OCI image config descriptor media type is invalid"
+    ):
+        runpy.run_path(SCRIPT, run_name="__main__")
+
+
 @pytest.mark.parametrize("kwargs,match", [
     ({"include_attestations": False}, "no attached attestation"),
     ({"include_sbom": False}, "missing the SPDX SBOM"),
@@ -419,6 +666,14 @@ def test_verifier_requires_sbom_and_provenance_attestations(
     ("layer_media_type", "layer is not in-toto JSON"),
     ("malformed_statement", "statement is invalid JSON"),
     ("no_layers", "has no statement layers"),
+    ("empty_predicate", "SPDX predicate version is not supported"),
+    ("spdx_version", "SPDX predicate version is not supported"),
+    ("slsa_schema", "SLSA provenance schema is incomplete"),
+    ("slsa_revision", "source revision differs from exact head"),
+    ("slsa_resolved_dependency", "resolved dependencies.*not an object"),
+    ("slsa_builder_dependency", "builder dependencies.*not an object"),
+    ("slsa_byproduct", "byproducts.*not an object"),
+    ("unsupported_predicate", "predicate type is unsupported"),
 ])
 def test_verifier_rejects_invalid_attestation_contract(
     monkeypatch, tmp_path, mutation, match

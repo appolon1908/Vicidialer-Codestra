@@ -26,12 +26,15 @@ services:
       ENABLE_PROVISIONING: "false"
       ENABLE_AGENT_SYNC: "false"
       ENABLE_LEAD_PUBLICATION: "false"
-      ENABLE_CALLBACK_WRITES: "false"
-      ENABLE_TRANSFER_POLICY_SYNC: "false"
-      ENABLE_PSTN_DIALING: "false"
+      ENABLE_LIVE_CALL_CONTROL: "false"
+      ENABLE_WARM_TRANSFER: "false"
+      ENABLE_IVR_ROUTING: "false"
+      ENABLE_IVR_CALLBACKS: "false"
+      ENABLE_PRODUCTION_DIALING: "false"
       ENABLE_SMS_DELIVERY: "false"
       ENABLE_EMAIL_DELIVERY: "false"
       ENABLE_EXTERNAL_DELIVERY: "false"
+      ENABLE_AI_ACTIONS: "false"
     restart: "no"
     stop_grace_period: 10s
     pids_limit: 128

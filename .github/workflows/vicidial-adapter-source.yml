@@ -3,6 +3,9 @@ name: VICIdial adapter source validation
 on:
   pull_request:
     paths:
+      - "campaign_provisioning/**"
+      - "scripts/**"
+      - "tests/**"
       - "vicidial/**"
       - "deploy/vicidial-restricted-adapter/**"
       - ".github/workflows/vicidial-adapter-source.yml"
@@ -40,13 +43,23 @@ jobs:
       - name: Install adapter test dependencies
         run: python -m pip install -e 'vicidial[test]'
 
-      - name: Run adapter tests
+      - name: Run complete VICIdial-owned test suites
         env:
           CODESTRA_ADAPTER_STATE: "${{ runner.temp }}/vicidial-adapter-test-state.sqlite3"
-        run: python -m pytest -q vicidial/tests
+        run: python -m pytest -q vicidial/tests tests
 
-      - name: Compile source
-        run: python -m compileall -q vicidial/src vicidial/scripts vicidial/tests
+      - name: Compile source and canonical runtime scripts
+        run: |
+          python -m compileall -q \
+            campaign_provisioning \
+            scripts \
+            vicidial/src \
+            vicidial/scripts \
+            vicidial/tests \
+            tests
+          python -m py_compile \
+            scripts/vicidial_sync.py \
+            scripts/canonical_event_client.py
 
       - name: Validate Git whitespace
         run: git diff --check "${BASE_SHA}..${SOURCE_SHA}"
@@ -76,6 +89,9 @@ jobs:
       - name: Scan candidate diff
         run: |
           git diff --binary "${BASE_SHA}..${SOURCE_SHA}" -- \
+            campaign_provisioning \
+            scripts \
+            tests \
             vicidial \
             deploy/vicidial-restricted-adapter \
             .github/workflows/vicidial-adapter-source.yml \
@@ -85,7 +101,12 @@ jobs:
 
       - name: Reject forbidden artifacts
         run: |
-          if git ls-files vicidial deploy/vicidial-restricted-adapter |
+          if git ls-files \
+            campaign_provisioning \
+            scripts \
+            tests \
+            vicidial \
+            deploy/vicidial-restricted-adapter |
             grep -E '(^|/)(secrets?|runtime|spool|recordings?|backups?|logs?|volumes?|data)/|[.](pem|key|p12|pfx|dump|backup|sqlite3|db|wav|gsm|mp3|ogg)$'
           then
             echo "Forbidden runtime or secret artifact is tracked."
@@ -139,8 +160,6 @@ jobs:
             diagnostics="$(mktemp)"
             if ! systemd-analyze verify "${unit}" 2>"${diagnostics}"
             then
-              # Source-only CI intentionally has no production virtualenv. All
-              # other unit validation errors remain fatal.
               sed -E \
                 -e '/Command .* is not executable: No such file or directory/d' \
                 -e '\|^/lib/systemd/system/|d' \
