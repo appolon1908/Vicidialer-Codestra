@@ -49,8 +49,18 @@ jobs:
           cmp scripts/canonical_event_client.py scripts/canonical_event_client.py.reference
           cmp scripts/vicidial_sync.py scripts/vicidial_sync.py.candidate
 
-      - name: Remove one-use repair machinery
+      - name: Normalize and remove one-use repair machinery
         run: |
+          python - <<'PY'
+          from pathlib import Path
+
+          for name in (
+              "vicidial/tests/test_production_readiness.py",
+              "tests/test_production_vicidial_sync.py",
+          ):
+              path = Path(name)
+              path.write_text(path.read_text(encoding="utf-8").rstrip() + "\n", encoding="utf-8")
+          PY
           rm .github/repair_pr2_runtime_safety.py
           rm .github/workflows/pr2-runtime-safety-repair.yml
           rm -f .github/repair-trigger
