@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import ipaddress
-import json
 import os
 import sqlite3
 from pathlib import Path
@@ -92,58 +91,17 @@ def _source_policy_ready(profile: str) -> bool:
 
 
 def _mysql_ready() -> tuple[bool, str | None]:
-    secret_path = Path(
-        os.environ.get("CODESTRA_VICIDIAL_DB_FILE", "/run/secrets/vicidial-db.json")
-    )
+    """Exercise the repository connection used by operational requests."""
     try:
-        credentials = json.loads(secret_path.read_text())
-    except (OSError, ValueError, TypeError):
-        return False, None
-
-    host = str(credentials.get("host", "127.0.0.1"))
-    if host not in {"127.0.0.1", "localhost"}:
-        return False, None
-    database = str(credentials.get("database", "asterisk"))
-    if database != "asterisk":
-        return False, database
-
-    connection = None
-    try:
-        import pymysql
-
-        connection = pymysql.connect(
-            host=host,
-            unix_socket=credentials.get("unix_socket"),
-            user=credentials["user"],
-            password=credentials["password"],
-            database=database,
-            port=int(credentials.get("port", 3306)),
-            connect_timeout=2,
-            read_timeout=2,
-            write_timeout=2,
-            autocommit=True,
-            cursorclass=pymysql.cursors.DictCursor,
-        )
-        with connection.cursor() as cursor:
-            cursor.execute("SELECT DATABASE() AS db_name, 1 AS ok")
-            row = cursor.fetchone()
-            if not row or row.get("db_name") != "asterisk" or int(row.get("ok", 0)) != 1:
-                return False, database
-            cursor.execute(
-                "SELECT COUNT(*) AS table_count FROM information_schema.tables "
-                "WHERE table_schema=%s AND table_name IN "
-                "('vicidial_campaigns','vicidial_users','vicidial_list','vicidial_callbacks')",
-                (database,),
-            )
-            row = cursor.fetchone()
-            if not row or int(row.get("table_count", 0)) != 4:
-                return False, database
-        return True, database
+        service = getattr(app.state, "adapter_service", None)
+        repository = getattr(service, "repository", None)
+        readiness = getattr(repository, "readiness", None)
+        if not callable(readiness):
+            return False, None
+        ok, database = readiness()
+        return bool(ok), database
     except Exception:
-        return False, database
-    finally:
-        if connection is not None:
-            connection.close()
+        return False, None
 
 
 def _repository_ready(profile: str) -> tuple[bool, str]:

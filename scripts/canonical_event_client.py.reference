@@ -258,6 +258,34 @@ class PreparedEvent(object):
         }
 
 
+
+
+def validate_persistence_acknowledgement(body, prepared):
+    """Require a bounded acknowledgement of durable middleware persistence."""
+    if not body:
+        raise DeliveryError("durable persistence acknowledgement is missing", False)
+    try:
+        acknowledgement = json.loads(body.decode("utf-8"))
+    except (UnicodeDecodeError, ValueError, TypeError):
+        raise DeliveryError("durable persistence acknowledgement is invalid", False)
+
+    expected_fields = {
+        "persisted",
+        "status",
+        "event_id",
+        "idempotency_key",
+    }
+    if not isinstance(acknowledgement, dict) or set(acknowledgement) != expected_fields:
+        raise DeliveryError("durable persistence acknowledgement fields are invalid", False)
+    if acknowledgement["persisted"] is not True or acknowledgement["status"] != "persisted":
+        raise DeliveryError("middleware did not acknowledge durable persistence", False)
+    if acknowledgement["event_id"] != prepared.event_id:
+        raise DeliveryError("persistence acknowledgement event identity mismatch", False)
+    if acknowledgement["idempotency_key"] != prepared.idempotency_key:
+        raise DeliveryError("persistence acknowledgement idempotency mismatch", False)
+    return acknowledgement
+
+
 class EventClient(object):
     def __init__(
         self,
@@ -337,12 +365,22 @@ class EventClient(object):
                 if 300 <= response.status_code < 400:
                     raise DeliveryError("redirect rejected", False)
                 size = 0
+                response_chunks = []
                 for chunk in response.iter_content(8192):
                     size += len(chunk)
                     if size > MAX_RESPONSE_BYTES:
                         raise DeliveryError("response exceeds limit", False)
+                    if chunk:
+                        response_chunks.append(chunk)
                 if 200 <= response.status_code < 300:
-                    return {"sent": True, "status_code": response.status_code}
+                    acknowledgement = validate_persistence_acknowledgement(
+                        b"".join(response_chunks), prepared
+                    )
+                    return {
+                        "sent": True,
+                        "status_code": response.status_code,
+                        "persistence_status": acknowledgement["status"],
+                    }
                 retryable = response.status_code in TRANSIENT_STATUSES
                 last_error = DeliveryError("middleware request failed", retryable)
             except (requests.Timeout, requests.ConnectionError):
