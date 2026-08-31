@@ -81,3 +81,79 @@ def test_private_source_policy_is_required_outside_development(monkeypatch, tmp_
     assert module._source_policy_ready("production-candidate") is False
     monkeypatch.setenv("AUTHORIZED_PRIVATE_SOURCE_IP", "10.40.0.1")
     assert module._source_policy_ready("production-candidate") is True
+
+def test_mysql_readiness_reconnects_and_probes_operational_repository(
+    monkeypatch, tmp_path
+):
+    module = load_production_app(monkeypatch, tmp_path)
+    from types import SimpleNamespace
+
+    from codestra_vicidial.repository import MySQLRepository
+
+    class ReadyCursor:
+        def __init__(self, rows):
+            self.rows = iter(rows)
+            self.executed = []
+
+        def execute(self, sql, params=()):
+            self.executed.append((sql, params))
+
+        def fetchone(self):
+            return next(self.rows)
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_):
+            return False
+
+    class ReadyConnection:
+        def __init__(self):
+            self.ping_calls = []
+            self.cursor_value = ReadyCursor(
+                [
+                    {"db_name": "asterisk", "ok": 1},
+                    {"table_count": 4},
+                ]
+            )
+
+        def ping(self, reconnect=False):
+            self.ping_calls.append(reconnect)
+
+        def cursor(self):
+            return self.cursor_value
+
+    connection = ReadyConnection()
+    repository = MySQLRepository(connection)
+    module.app.state.adapter_service = SimpleNamespace(repository=repository)
+    monkeypatch.setenv("CODESTRA_ADAPTER_BACKEND", "mysql")
+
+    status, body = module.build_readiness()
+
+    assert status == 200
+    assert body["checks"]["repository"] is True
+    assert body["backend"] == "mysql"
+    assert connection.ping_calls == [True]
+
+
+def test_mysql_readiness_fails_when_operational_connection_cannot_reconnect(
+    monkeypatch, tmp_path
+):
+    module = load_production_app(monkeypatch, tmp_path)
+    from types import SimpleNamespace
+
+    from codestra_vicidial.repository import MySQLRepository
+
+    class DeadConnection:
+        def ping(self, reconnect=False):
+            raise RuntimeError("stale connection")
+
+    module.app.state.adapter_service = SimpleNamespace(
+        repository=MySQLRepository(DeadConnection())
+    )
+    monkeypatch.setenv("CODESTRA_ADAPTER_BACKEND", "mysql")
+
+    status, body = module.build_readiness()
+
+    assert status == 503
+    assert body["checks"]["repository"] is False

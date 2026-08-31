@@ -164,6 +164,7 @@ def create_app(
         title="Codestra restricted VICIdial adapter",
         version=__version__,
     )
+    app.state.adapter_service = service
 
     @app.exception_handler(CollisionError)
     async def collision_handler(_request: Request, exc: CollisionError):

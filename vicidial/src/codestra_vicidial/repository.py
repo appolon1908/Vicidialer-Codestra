@@ -369,6 +369,38 @@ class MySQLRepository:
     def __init__(self, connection):
         self.db = connection
 
+    def readiness(self) -> tuple[bool, str | None]:
+        """Probe and reconnect the exact connection used for requests."""
+        try:
+            ping = getattr(self.db, "ping", None)
+            if not callable(ping):
+                return False, None
+            try:
+                ping(reconnect=True)
+            except TypeError:
+                ping()
+            with self.db.cursor() as cursor:
+                cursor.execute("SELECT DATABASE() AS db_name, 1 AS ok")
+                row = cursor.fetchone()
+                if (
+                    not row
+                    or row.get("db_name") != "asterisk"
+                    or int(row.get("ok", 0)) != 1
+                ):
+                    return False, str(row.get("db_name")) if row else None
+                cursor.execute(
+                    "SELECT COUNT(*) AS table_count FROM information_schema.tables "
+                    "WHERE table_schema=%s AND table_name IN "
+                    "('vicidial_campaigns','vicidial_users','vicidial_list','vicidial_callbacks')",
+                    ("asterisk",),
+                )
+                row = cursor.fetchone()
+                if not row or int(row.get("table_count", 0)) != 4:
+                    return False, "asterisk"
+            return True, "asterisk"
+        except Exception:
+            return False, None
+
     def _one(self, sql: str, args: tuple = ()) -> dict | None:
         with self.db.cursor() as cursor:
             cursor.execute(sql, args)
