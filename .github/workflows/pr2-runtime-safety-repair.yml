@@ -4,6 +4,7 @@ on:
   push:
     branches:
       - fix/vicidial-r3-dedicated-consolidation-20260827
+  workflow_dispatch:
 
 permissions:
   contents: write
@@ -52,6 +53,7 @@ jobs:
         run: |
           rm .github/repair_pr2_runtime_safety.py
           rm .github/workflows/pr2-runtime-safety-repair.yml
+          rm -f .github/repair-trigger
           git diff --check
 
       - name: Commit reviewed corrections
