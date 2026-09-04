@@ -4,6 +4,7 @@ on:
   pull_request:
     paths:
       - "campaign_provisioning/**"
+      - "config/odoo-realtime-projection-contract.json"
       - "scripts/**"
       - "tests/**"
       - "vicidial/**"
@@ -90,6 +91,7 @@ jobs:
         run: |
           git diff --binary "${BASE_SHA}..${SOURCE_SHA}" -- \
             campaign_provisioning \
+            config/odoo-realtime-projection-contract.json \
             scripts \
             tests \
             vicidial \
