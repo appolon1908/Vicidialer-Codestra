@@ -1,0 +1,49 @@
+{
+  "schema_version": "1.0",
+  "producer": "vicidial-adapter",
+  "consumer": "middleware-api",
+  "path": "/api/v1/vicidial/events",
+  "scope": "telephony.events.publish",
+  "event_prefix": "codestra.vicidial.call.lifecycle.",
+  "event_types": [
+    "codestra.vicidial.call.lifecycle.answered",
+    "codestra.vicidial.call.lifecycle.completed",
+    "codestra.vicidial.call.lifecycle.connected",
+    "codestra.vicidial.call.lifecycle.created",
+    "codestra.vicidial.call.lifecycle.failed",
+    "codestra.vicidial.call.lifecycle.hangup",
+    "codestra.vicidial.call.lifecycle.held",
+    "codestra.vicidial.call.lifecycle.missed",
+    "codestra.vicidial.call.lifecycle.offered",
+    "codestra.vicidial.call.lifecycle.resumed",
+    "codestra.vicidial.call.lifecycle.ringing",
+    "codestra.vicidial.call.lifecycle.transfer.completed",
+    "codestra.vicidial.call.lifecycle.transfer.started"
+  ],
+  "required_payload_fields": [
+    "schema_version",
+    "business_unit_id",
+    "campaign_id",
+    "call_id",
+    "asterisk_uniqueid",
+    "linkedid",
+    "agent_id",
+    "extension",
+    "keycloak_subject",
+    "sequence",
+    "direction"
+  ],
+  "transport": {
+    "oidc_bearer": true,
+    "mtls": true,
+    "hmac_sha256": true,
+    "at_least_once": true
+  },
+  "safety": {
+    "read_only_ami": true,
+    "carries_audio": false,
+    "allows_originate": false,
+    "allows_ari_command": false,
+    "production_dialing_default": false
+  }
+}
