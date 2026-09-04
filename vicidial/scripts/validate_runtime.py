@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
-"""Fail closed when the staging adapter runtime is unsafe."""
+"""Fail closed when the adapter runtime contract is unsafe."""
 from __future__ import annotations
 
+import json
 import os
 import sys
 from pathlib import Path
@@ -13,14 +14,33 @@ from codestra_vicidial.release import load_release_info
 ALWAYS_FALSE_FLAGS = (
     "ENABLE_AGENT_SYNC",
     "ENABLE_LEAD_PUBLICATION",
-    "ENABLE_IVR_CALLBACKS",
+    "ENABLE_LIVE_CALL_CONTROL",
     "ENABLE_WARM_TRANSFER",
+    "ENABLE_IVR_ROUTING",
+    "ENABLE_IVR_CALLBACKS",
     "ENABLE_PRODUCTION_DIALING",
+    "ENABLE_SMS_DELIVERY",
+    "ENABLE_EMAIL_DELIVERY",
+    "ENABLE_EXTERNAL_DELIVERY",
+    "ENABLE_AI_ACTIONS",
+)
+DEPRECATED_FLAGS = (
+    "ENABLE_CALLBACK_WRITES",
+    "ENABLE_TRANSFER_POLICY_SYNC",
+    "ENABLE_PSTN_DIALING",
 )
 
-for name in ALWAYS_FALSE_FLAGS:
-    if os.environ.get(name, "").lower() != "false":
+
+def require_false(name: str) -> None:
+    if os.environ.get(name, "false").lower() != "false":
         raise SystemExit("{} must remain false".format(name))
+
+
+for name in ALWAYS_FALSE_FLAGS:
+    require_false(name)
+for name in DEPRECATED_FLAGS:
+    if name in os.environ:
+        raise SystemExit("deprecated feature flag {} is not supported".format(name))
 
 deployment = os.environ.get("CODESTRA_ADAPTER_DEPLOYMENT", "staging-read-only")
 release_info = None
@@ -34,14 +54,20 @@ if (
         raise SystemExit(f"release metadata invalid: {exc}") from exc
     if release_info.get("verified") is not True:
         raise SystemExit("release metadata is not verified")
+
+backend = os.environ.get("CODESTRA_ADAPTER_BACKEND", "memory")
 if deployment == "staging-read-only":
-    if os.environ.get("CODESTRA_ADAPTER_BACKEND") != "memory":
+    if backend != "memory":
         raise SystemExit("staging deployment requires memory backend")
     for name in ("ENABLE_VICIDIAL_WRITES", "ENABLE_PROVISIONING"):
-        if os.environ.get(name, "").lower() != "false":
-            raise SystemExit("{} must be false in staging deployment".format(name))
+        require_false(name)
+elif deployment == "production-candidate":
+    if backend != "mysql":
+        raise SystemExit("production candidate requires loopback mysql backend")
+    for name in ("ENABLE_VICIDIAL_WRITES", "ENABLE_PROVISIONING"):
+        require_false(name)
 elif deployment == "production-reconciliation":
-    if os.environ.get("CODESTRA_ADAPTER_BACKEND") != "mysql":
+    if backend != "mysql":
         raise SystemExit("production reconciliation requires loopback mysql backend")
     for name in ("ENABLE_VICIDIAL_WRITES", "ENABLE_PROVISIONING"):
         if os.environ.get(name, "").lower() != "true":
@@ -59,6 +85,18 @@ elif deployment == "production-reconciliation":
         raise SystemExit("request-bound reconciliation policy invalid: {}".format(exc)) from exc
 else:
     raise SystemExit("unsupported adapter deployment profile")
+
+if backend == "mysql":
+    secret_path = Path(os.environ.get("CODESTRA_VICIDIAL_DB_FILE", "/run/secrets/vicidial-db.json"))
+    try:
+        credentials = json.loads(secret_path.read_text())
+    except (OSError, ValueError, TypeError) as exc:
+        raise SystemExit("VICIdial database credential document is invalid") from exc
+    if credentials.get("host", "127.0.0.1") not in {"127.0.0.1", "localhost"}:
+        raise SystemExit("VICIdial database must be loopback-only")
+    if credentials.get("database", "asterisk") != "asterisk":
+        raise SystemExit("VICIdial database name must be asterisk")
+
 if os.environ.get("AUTHORIZED_APPLICATION_SERVER_IP") != "65.109.65.169":
     raise SystemExit("authorized application identity mismatch")
 if os.environ.get("AUTHORIZED_PRIVATE_SOURCE_IP") != "10.40.0.1":
@@ -67,7 +105,6 @@ if os.environ.get("MIDDLEWARE_BASE_URL") != "https://api.codestra.co":
     raise SystemExit("middleware URL mismatch")
 if os.environ.get("KEYCLOAK_ISSUER_URL") != "https://auth.codestra.co/realms/codestra":
     raise SystemExit("Keycloak issuer mismatch")
-
 
 for name, default in (
     ("CODESTRA_ADAPTER_RATE_LIMIT_REQUESTS", "120"),

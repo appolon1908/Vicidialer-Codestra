@@ -1,9 +1,13 @@
 name: VICIdial restricted adapter container
 
+# The deterministic installed layout is the sole production deployable.
+
 on:
   pull_request:
     paths:
       - "campaign_provisioning/**"
+      - "scripts/**"
+      - "tests/**"
       - "vicidial/**"
       - "deploy/vicidial-restricted-adapter/**"
       - ".github/workflows/vicidial-adapter-container.yml"
@@ -57,7 +61,11 @@ jobs:
       - name: Install locked runtime and bounded test dependencies
         run: |
           python -m pip install --requirement vicidial/docker/requirements.lock
-          python -m pip install "httpx2==2.12.0" "pytest>=8,<10" "PyYAML>=6,<7"
+          python -m pip install \
+            "httpx2==2.12.0" \
+            "pytest>=8,<10" \
+            "PyYAML>=6,<7" \
+            "requests>=2.32,<3"
       - name: Prove TestClient uses httpx2 without classic httpx
         run: |
           test -z "$(python -m pip show httpx 2>/dev/null)"
@@ -70,24 +78,51 @@ jobs:
           mkdir -p evidence/test-results
           PYTHONPATH=vicidial/src python -m pytest -q --junitxml=evidence/test-results/phase3a.xml vicidial/tests/test_phase3a_release_network.py
           PYTHONPATH=vicidial/src python -m pytest -q --junitxml=evidence/test-results/phase3b.xml vicidial/tests/test_phase3b_security.py
-          PYTHONPATH=vicidial/src python -m pytest -q --junitxml=evidence/test-results/phase3c.xml vicidial/tests/test_phase3c_domains.py
-          PYTHONPATH=vicidial/src python -m pytest -q --junitxml=evidence/test-results/phase3d.xml vicidial/tests/test_phase3d_container.py
+          PYTHONPATH=vicidial/src python -m pytest -q --junitxml=evidence/test-results/phase3c.xml vicidial/tests/test_phase3c_domains.py vicidial/tests/test_campaign_adoption_atomicity.py
+          PYTHONPATH=vicidial/src python -m pytest -q --junitxml=evidence/test-results/phase3d.xml vicidial/tests/test_phase3d_container.py vicidial/tests/test_verify_oci_export.py vicidial/tests/test_attestation_value_contracts.py vicidial/tests/test_exact_build_identity.py
           PYTHONPATH=vicidial/src python -m pytest -q --junitxml=evidence/test-results/full.xml vicidial/tests
-      - name: Build and verify manifest-bound host release
+          PYTHONPATH=vicidial/src python -m pytest -q --junitxml=evidence/test-results/root-vicidial.xml tests
+          python -m compileall -q campaign_provisioning scripts vicidial/src vicidial/scripts vicidial/tests tests
+          python -m py_compile \
+            scripts/vicidial_sync.py \
+            scripts/canonical_event_client.py
+      - name: Verify deterministic installed-layout contract
         run: |
-          release_root="${RUNNER_TEMP}/host-release/${SOURCE_SHA}"
+          release_root="${RUNNER_TEMP}/installed-layout/${SOURCE_SHA}"
           python vicidial/scripts/build_host_release.py \
             --source vicidial \
             --output "${release_root}" \
             --source-sha "${SOURCE_SHA}" \
             --generated-at 2026-01-01T00:00:00Z
-          tar -C "${RUNNER_TEMP}/host-release" -czf evidence/vicidial-host-release.tar.gz "${SOURCE_SHA}"
-          sha256sum evidence/vicidial-host-release.tar.gz > evidence/vicidial-host-release.tar.gz.sha256
+          test -s "${release_root}/INSTALLED_MANIFEST.json"
+          "${release_root}/.venv/bin/python" "${release_root}/scripts/verify_installed_manifest.py" \
+            --root "${release_root}" --manifest "${release_root}/INSTALLED_MANIFEST.json"
+          runtime_secret="${RUNNER_TEMP}/installed-layout-hmac"
+          head -c 32 /dev/zero > "${runtime_secret}"
+          chmod 0600 "${runtime_secret}"
+          CODESTRA_RELEASE_METADATA_REQUIRED=true \
+          CODESTRA_RELEASE_MANIFEST_ROOT="${release_root}" \
+          CODESTRA_RELEASE_MANIFEST_FILE="${release_root}/INSTALLED_MANIFEST.json" \
+          CODESTRA_ADAPTER_DEPLOYMENT=staging-read-only \
+          CODESTRA_ADAPTER_BACKEND=memory \
+          ENABLE_VICIDIAL_WRITES=false ENABLE_PROVISIONING=false \
+          ENABLE_AGENT_SYNC=false ENABLE_LEAD_PUBLICATION=false \
+          ENABLE_IVR_CALLBACKS=false ENABLE_WARM_TRANSFER=false \
+          ENABLE_PRODUCTION_DIALING=false \
+          AUTHORIZED_APPLICATION_SERVER_IP=65.109.65.169 \
+          AUTHORIZED_PRIVATE_SOURCE_IP=10.40.0.1 \
+          MIDDLEWARE_BASE_URL=https://api.codestra.co \
+          KEYCLOAK_ISSUER_URL=https://auth.codestra.co/realms/codestra \
+          CODESTRA_ADAPTER_HMAC_FILE="${runtime_secret}" \
+            "${release_root}/.venv/bin/python" "${release_root}/scripts/validate_runtime.py"
       - uses: docker/setup-buildx-action@v3
       - name: Build runnable linux/amd64 review image
         uses: docker/build-push-action@v6
         with:
-          context: .
+          context: "https://github.com/${{ github.repository }}.git#${{ env.SOURCE_SHA }}"
+          github-token: ${{ github.token }}
+          secrets: |
+            GIT_AUTH_TOKEN.github.com=${{ github.token }}
           file: vicidial/docker/Dockerfile
           platforms: linux/amd64
           load: true
@@ -95,19 +130,24 @@ jobs:
           build-args: |
             SOURCE_SHA=${{ env.SOURCE_SHA }}
             BUILD_DATE=2026-01-01T00:00:00Z
+            SOURCE_DATE_EPOCH=1767225600
           sbom: false
           provenance: false
       - name: Export attested linux/amd64 OCI candidate
         uses: docker/build-push-action@v6
         with:
-          context: .
+          context: "https://github.com/${{ github.repository }}.git#${{ env.SOURCE_SHA }}"
+          github-token: ${{ github.token }}
+          secrets: |
+            GIT_AUTH_TOKEN.github.com=${{ github.token }}
           file: vicidial/docker/Dockerfile
           platforms: linux/amd64
           push: false
-          outputs: type=oci,dest=evidence/vicidial-adapter.oci.tar
+          outputs: type=oci,dest=evidence/vicidial-adapter.oci.tar,name=codestra/vicidial-restricted-adapter:${{ env.SOURCE_SHA }}
           build-args: |
             SOURCE_SHA=${{ env.SOURCE_SHA }}
             BUILD_DATE=2026-01-01T00:00:00Z
+            SOURCE_DATE_EPOCH=1767225600
           sbom: true
           provenance: mode=max
       - name: Test container contract
@@ -128,7 +168,7 @@ jobs:
             --metadata evidence/IMAGE_METADATA.json \
             --source-sha "${SOURCE_SHA}" \
             --output evidence/OCI_EXPORT_VERIFICATION.json
-          sha256sum evidence/vicidial-adapter.oci.tar > evidence/vicidial-adapter.oci.tar.sha256
+          (cd evidence && sha256sum vicidial-adapter.oci.tar > vicidial-adapter.oci.tar.sha256)
       - name: Generate and verify source manifest
         run: |
           python vicidial/scripts/generate_release_manifest.py --root . \
@@ -205,13 +245,24 @@ jobs:
           jq 'map({Id,Digest,RepoDigests,Architecture,Os,Config:{User:.Config.User,Labels:.Config.Labels}})' \
             evidence/IMAGE_METADATA.json > "${export_dir}/IMAGE_METADATA.json"
           find "${export_dir}" -type f -exec chmod 0600 {} +
-          (cd "${export_dir}" && find . -type f -print0 | sort -z | xargs -0 sha256sum) \
-            > evidence/EVIDENCE_EXPORT_CHECKSUMS.sha256
+          secret_report="${RUNNER_TEMP}/EVIDENCE_SECRET_SCAN.json"
           "${RUNNER_TEMP}/gitleaks-bin" dir --no-banner --redact --exit-code 1 \
-            --report-format json --report-path evidence/EVIDENCE_SECRET_SCAN.json \
+            --report-format json --report-path "${secret_report}" \
             "${export_dir}"
+          cp "${secret_report}" "${export_dir}/EVIDENCE_SECRET_SCAN.json"
+          (cd "${export_dir}" && find . -type f ! -name CHECKSUMS.sha256 -print0 | sort -z | xargs -0 sha256sum) \
+            > "${export_dir}/CHECKSUMS.sha256"
       - uses: actions/upload-artifact@v4
-        if: always()
+        if: success()
         with:
           name: vicidial-adapter-container-evidence
-          path: evidence/
+          path: evidence/evidence-export/
+          if-no-files-found: error
+      - uses: actions/upload-artifact@v4
+        if: success()
+        with:
+          name: vicidial-adapter-oci-${{ env.SOURCE_SHA }}
+          path: |
+            evidence/vicidial-adapter.oci.tar
+            evidence/vicidial-adapter.oci.tar.sha256
+          if-no-files-found: error

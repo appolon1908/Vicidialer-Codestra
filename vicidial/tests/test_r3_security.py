@@ -160,10 +160,10 @@ def test_systemd_launch_uses_python_module() -> None:
 
     assert (
         "current/.venv/bin/python -m uvicorn "
-        "codestra_vicidial.app:app"
+        "codestra_vicidial.production_app:app"
     ) in unit
 
     assert (
         "current/.venv/bin/uvicorn "
-        "codestra_vicidial.app:app"
+        "codestra_vicidial.production_app:app"
     ) not in unit

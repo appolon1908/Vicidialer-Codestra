@@ -17,10 +17,24 @@ import yaml
 ROOT = Path(__file__).resolve().parents[2]
 DOCKER = ROOT / "vicidial/docker"
 LIVE_FLAGS = (
-    "ENABLE_VICIDIAL_WRITES", "ENABLE_PROVISIONING", "ENABLE_AGENT_SYNC",
-    "ENABLE_LEAD_PUBLICATION", "ENABLE_CALLBACK_WRITES",
-    "ENABLE_TRANSFER_POLICY_SYNC", "ENABLE_PSTN_DIALING",
-    "ENABLE_SMS_DELIVERY", "ENABLE_EMAIL_DELIVERY", "ENABLE_EXTERNAL_DELIVERY",
+    "ENABLE_VICIDIAL_WRITES",
+    "ENABLE_PROVISIONING",
+    "ENABLE_AGENT_SYNC",
+    "ENABLE_LEAD_PUBLICATION",
+    "ENABLE_LIVE_CALL_CONTROL",
+    "ENABLE_WARM_TRANSFER",
+    "ENABLE_IVR_ROUTING",
+    "ENABLE_IVR_CALLBACKS",
+    "ENABLE_PRODUCTION_DIALING",
+    "ENABLE_SMS_DELIVERY",
+    "ENABLE_EMAIL_DELIVERY",
+    "ENABLE_EXTERNAL_DELIVERY",
+    "ENABLE_AI_ACTIONS",
+)
+DEPRECATED_FLAGS = (
+    "ENABLE_CALLBACK_WRITES",
+    "ENABLE_TRANSFER_POLICY_SYNC",
+    "ENABLE_PSTN_DIALING",
 )
 
 
@@ -40,6 +54,12 @@ def test_dockerfile_is_pinned_multistage_nonroot_and_amd64_buildable():
     assert '"libcrypto3=${OPENSSL_PACKAGE_VERSION}"' in text
     assert '"libssl3=${OPENSSL_PACKAGE_VERSION}"' in text
     assert "OPENSSL_PACKAGE_VERSION=3.5.8-r0" in text
+    assert "https://github.com/appolon1908-hue/Vicidialer-Codestra" in text
+    assert "codestra_vicidial.production_app:app" in text
+    for flag in LIVE_FLAGS:
+        assert f"{flag}=false" in text
+    for flag in DEPRECATED_FLAGS:
+        assert f"{flag}=false" not in text
 
 
 def test_runtime_security_regression_is_bounded_and_version_pinned():
@@ -59,6 +79,7 @@ def test_provenance_build_type_records_selected_engine():
 
 def test_vulnerability_policy_is_exact_and_verifier_fails_closed(tmp_path):
     from vicidial.scripts.verify_vulnerability_adjudication import verify
+
     policy = json.loads((ROOT / "vicidial/config/vulnerability-adjudication.json").read_text())
     assert {(x["vulnerability_id"], x["package"], x["installed_version"])
             for x in policy["adjudications"]} == {
@@ -129,6 +150,8 @@ def test_compose_hardening_and_disabled_capabilities(name):
     assert "@${VICIDIAL_ADAPTER_IMAGE_DIGEST" in service["image"]
     for flag in LIVE_FLAGS:
         assert service["environment"][flag] == "false"
+    for flag in DEPRECATED_FLAGS:
+        assert flag not in service["environment"]
     assert document["secrets"]
     if name == "compose.production.yml":
         network = document["networks"]["adapter-ingress"]
@@ -139,19 +162,25 @@ def test_compose_hardening_and_disabled_capabilities(name):
         assert service["environment"]["AUTHORIZED_CONTAINER_PROXY_IP"] == "172.30.97.1"
 
 
-def test_entrypoint_rejects_enabled_live_capability():
+def test_entrypoint_rejects_enabled_live_capability_and_legacy_aliases():
     text = (DOCKER / "entrypoint.sh").read_text()
     assert all(flag in text for flag in LIVE_FLAGS)
+    assert all(flag in text for flag in DEPRECATED_FLAGS)
+    assert "deprecated feature flag" in text
     assert "release tuple mismatch" in text
 
 
-def test_workflow_builds_without_push_and_generates_evidence():
+def test_workflow_builds_exact_image_and_uploads_only_clean_evidence():
     text = (ROOT / ".github/workflows/vicidial-adapter-container.yml").read_text()
     assert "platforms: linux/amd64" in text
+    assert text.count("docker/build-push-action@v6") == 2
+    assert "Build runnable linux/amd64 review image" in text
+    assert "load: true" in text
+    assert "sbom: false" in text and "provenance: false" in text
+    assert "Export attested linux/amd64 OCI candidate" in text
+    assert "outputs: type=oci,dest=evidence/vicidial-adapter.oci.tar" in text
+    assert "sbom: true" in text and "provenance: mode=max" in text
     assert "push: false" in text
-    assert "sbom: true" in text
-    assert "provenance: mode=max" in text
-    assert "upload-artifact" in text
     assert "ref: ${{ env.SOURCE_SHA }}" in text
     assert "persist-credentials: false" in text
     assert 'git rev-parse HEAD)\" = \"${SOURCE_SHA}' in text
@@ -159,7 +188,21 @@ def test_workflow_builds_without_push_and_generates_evidence():
     assert "Enforce exact source secret gate" in text
     assert "Enforce exact-image secret gate" in text
     assert "EVIDENCE_SECRET_SCAN.json" in text
+    assert "path: evidence/evidence-export/" in text
+    assert "vicidial-adapter-oci-${{ env.SOURCE_SHA }}" in text
+    assert "vicidial-host-release-${{ env.SOURCE_SHA }}" not in text
+    assert "vicidial-host-release.tar.gz" not in text
+    assert "if: always()" not in text
+    assert text.count("if: success()") == 2
+    assert "sha256sum evidence/vicidial-adapter.oci.tar" not in text
+    assert "sha256sum vicidial-adapter.oci.tar > vicidial-adapter.oci.tar.sha256" in text
+    assert 'find . -type f ! -name CHECKSUMS.sha256' in text
+    assert '> "${export_dir}/CHECKSUMS.sha256"' in text
     assert text.count("docker compose -f vicidial/docker/compose.") == 2
+    assert "scripts/vicidial_sync.py" in text
+    assert "scripts/canonical_event_client.py" in text
+    assert "scripts/vicidial_sync.py.candidate" not in text
+    assert "scripts/canonical_event_client.py.reference" not in text
 
 
 @pytest.mark.skipif(not os.environ.get("VICIDIAL_CONTAINER_TEST_IMAGE"),
@@ -185,6 +228,7 @@ def test_local_image_health_release_tuple_and_restart(tmp_path):
             "import json,urllib.request; print(json.dumps(json.load("
             "urllib.request.urlopen('http://127.0.0.1:8097%s',timeout=1))))"
         )
+
         def get(path):
             output = subprocess.check_output(
                 [engine, "exec", name, "python", "-c", probe % path], text=True)
@@ -202,9 +246,17 @@ def test_local_image_health_release_tuple_and_restart(tmp_path):
         version = get("/version")
         ready = get("/ready")
         assert version["verified"] is True and version["git_sha"]
-        assert ready["status"] == "ready" and ready["writes_enabled"] is False
+        assert ready["status"] == "ready"
+        assert ready["checks"]["release"] is True
+        assert ready["checks"]["hmac"] is True
+        assert ready["checks"]["state_store"] is True
+        assert ready["checks"]["repository"] is True
+        assert ready["checks"]["kill_switches"] is True
+        assert ready["production_dialing"] is False
+        assert ready["customer_traffic_authorized"] is False
         subprocess.run([engine, "restart", name], check=True, capture_output=True)
         time.sleep(1)
         assert get("/version")["git_sha"] == version["git_sha"]
+        assert get("/ready")["status"] == "ready"
     finally:
         subprocess.run([engine, "rm", "--force", name], capture_output=True)
