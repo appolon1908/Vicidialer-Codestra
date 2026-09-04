@@ -13,7 +13,7 @@ import time
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, BinaryIO, Iterable, Literal, Mapping
+from typing import Any, Callable, Iterable, Literal, Mapping
 
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator
 
@@ -38,7 +38,6 @@ SUPPORTED_AMI_EVENTS = frozenset(
         "Unhold",
     }
 )
-TERMINAL_STATES = frozenset({"completed", "failed", "missed", "transferred"})
 _SAFE_ID = re.compile(r"^[A-Za-z0-9._:-]+$")
 _SAFE_EVENT_ID = re.compile(r"^[A-Za-z0-9._-]+$")
 _E164 = re.compile(r"^\+[1-9][0-9]{7,14}$")
@@ -407,21 +406,6 @@ def linked_id(message: AMIMessage) -> str:
         "TransfereeLinkedid",
         "OrigTransfererLinkedid",
         "SecondTransfererLinkedid",
-    ):
-        value = message.get(key).strip()
-        if value:
-            return safe_asterisk_id(value)
-    return ""
-
-
-def unique_id(message: AMIMessage) -> str:
-    for key in (
-        "Uniqueid",
-        "DestUniqueid",
-        "TransfererUniqueid",
-        "TransfereeUniqueid",
-        "OrigTransfererUniqueid",
-        "SecondTransfererUniqueid",
     ):
         value = message.get(key).strip()
         if value:
@@ -1710,6 +1694,8 @@ class AMIClient:
     def messages(
         self,
         stop: threading.Event,
+        *,
+        on_connected: Callable[[], None] | None = None,
     ) -> Iterable[AMIMessage]:
         with socket.create_connection(
             (self.config.host, self.config.port),
@@ -1731,6 +1717,8 @@ class AMIClient:
             response = parse_ami_block(login)
             if response.response.lower() != "success":
                 raise AMIProtocolError("AMI login was rejected")
+            if on_connected is not None:
+                on_connected()
 
             parser = AMIStreamParser()
             for message in parser.feed(pending):
