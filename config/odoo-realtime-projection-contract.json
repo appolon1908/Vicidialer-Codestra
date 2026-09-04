@@ -35,7 +35,10 @@
   ],
   "transport": {
     "oidc_bearer": true,
-    "mtls": true,
+    "mtls": {
+      "mode": "optional",
+      "client_certificate_pair_required_when_enabled": true
+    },
     "hmac_sha256": true,
     "at_least_once": true
   },
