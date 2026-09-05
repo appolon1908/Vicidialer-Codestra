@@ -43,8 +43,6 @@ jobs:
     with:
       repository_class: service
       run_stack_tests: false
-      dockerfile_path: vicidial/docker/Dockerfile
-      docker_build_context: .
       artifact_strategy: oci
       dockerfile_path: vicidial/docker/Dockerfile
       docker_build_context: .
