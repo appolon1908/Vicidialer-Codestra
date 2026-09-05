@@ -32,7 +32,16 @@ def test_archive_is_accepted_by_existing_pip_install_step(tmp_path):
     target = tmp_path / "installed"
     result = subprocess.run([sys.executable, "-m", "pip", "install", "--no-deps", "--target", str(target), str(extracted)], text=True, capture_output=True)
     assert result.returncode == 0, result.stderr
-    check = subprocess.run([sys.executable, "-c", "import importlib.metadata as m; import codestra_vicidial.app as a; assert m.version('codestra-vicidial-adapter') == '0.2.0rc1'; assert a.__file__.startswith(r'%s')" % target], cwd=tmp_path, env={"PYTHONPATH": str(target)}, text=True, capture_output=True)
+    check = subprocess.run(
+        [sys.executable, "-c", "import importlib.metadata as m; import codestra_vicidial.app as a; assert m.version('codestra-vicidial-adapter') == '0.2.0rc1'; assert a.__file__.startswith(r'%s')" % target],
+        cwd=tmp_path,
+        env={
+            "PYTHONPATH": str(target),
+            "CODESTRA_ADAPTER_STATE": str(tmp_path / "runtime-state.sqlite3"),
+        },
+        text=True,
+        capture_output=True,
+    )
     assert check.returncode == 0, check.stderr
 
 def test_verifier_rejects_tampering_and_wrong_bindings(tmp_path):
