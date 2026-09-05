@@ -39,7 +39,7 @@ permissions:
 
 jobs:
   deploy-readiness:
-    uses: appolon1908-hue/Infustruction-repo/.github/workflows/reusable-codestra-deploy-readiness.yml@13916e5d3b17145351d771e16a9c4ef45fc82dfc
+    uses: appolon1908-hue/Infustruction-repo/.github/workflows/reusable-codestra-deploy-readiness.yml@99972268792554e70f756134b544c5e49eee5398
     with:
       repository_class: service
       run_stack_tests: false
