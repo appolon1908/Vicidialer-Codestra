@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import secrets
 from copy import deepcopy
 from datetime import datetime, timezone
 from typing import Any, Protocol
@@ -80,6 +81,7 @@ class Repository(Protocol):
     def disable_campaign(self, actual_id: str) -> None: ...
     def agent(self, user_id: str) -> dict | None: ...
     def sync_agent_disabled(self, spec: AgentSpec) -> dict: ...
+    def provision_agent_disabled(self, spec: AgentSpec) -> dict: ...
     def disable_agent(self, user_id: str) -> dict: ...
     def lead_by_external_id(self, external_id: str) -> dict | None: ...
     def publish_lead(self, spec: LeadSpec) -> dict: ...
@@ -312,6 +314,13 @@ class MemoryRepository:
         desired.pop("adopt_existing_sha256", None)
         self.agents[spec.user_id] = desired
         return deepcopy(desired)
+
+    def provision_agent_disabled(self, spec: AgentSpec) -> dict:
+        if spec.user_id in self.agents:
+            raise CollisionError("agent identifier already exists")
+        actual = self.sync_agent_disabled(spec)
+        self.agents[spec.user_id]["user_level"] = 9
+        return deepcopy(self.agents[spec.user_id])
 
     def disable_agent(self, user_id: str) -> dict:
         if user_id not in self.agents:
@@ -803,7 +812,7 @@ class MySQLRepository:
 
     def _agent(self, user_id: str) -> dict | None:
         row = self._one(
-            "SELECT u.user AS user_id,u.full_name,u.user_group,u.active,"
+            "SELECT u.user AS user_id,u.full_name,u.user_level,u.user_group,u.active,"
             "u.closer_campaigns,g.allowed_campaigns FROM vicidial_users u "
             "JOIN vicidial_user_groups g ON g.user_group=u.user_group "
             "WHERE u.user=%s",
@@ -863,6 +872,42 @@ class MySQLRepository:
                 self.release_agent_adoption_lock()
             raise
         return self.agent(spec.user_id) or {}
+
+    def provision_agent_disabled(self, spec: AgentSpec) -> dict:
+        """Create one disabled user through a fixed, parameterized DB operation.
+
+        The generated bootstrap password is intentionally neither returned nor logged.
+        A separately governed activation/credential rotation workflow must replace it.
+        """
+        if self._agent_disable_view(spec.user_id) is not None:
+            raise CollisionError("agent identifier already exists")
+        group = self._one(
+            "SELECT user_group,allowed_campaigns FROM vicidial_user_groups "
+            "WHERE user_group=%s", (spec.user_group,)
+        )
+        if group is None:
+            raise CollisionError("approved user group is missing")
+        allowed = set(normalize_allowed_campaigns(group["allowed_campaigns"]))
+        if not set(spec.campaigns).issubset(allowed):
+            raise CollisionError("approved campaigns are absent from user group")
+        bootstrap = secrets.token_urlsafe(32)
+        try:
+            self._execute(
+                "INSERT INTO vicidial_users "
+                "(user,pass,full_name,user_level,user_group,active,closer_campaigns) "
+                "VALUES (%s,%s,%s,%s,%s,'N',%s)",
+                (spec.user_id, bootstrap, spec.full_name, 9, spec.user_group,
+                 format_allowed_campaigns(spec.inbound_groups)),
+            )
+            self.db.commit()
+        except Exception:
+            self.db.rollback()
+            raise
+        actual = self.agent(spec.user_id)
+        if actual is None or actual.get("active") != "N":
+            self.disable_agent(spec.user_id)
+            raise RuntimeError("disabled agent creation read-back failed")
+        return actual
 
     def release_agent_adoption_lock(self) -> None:
         self._execute("UNLOCK TABLES")
