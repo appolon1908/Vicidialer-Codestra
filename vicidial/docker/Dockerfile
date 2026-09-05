@@ -54,7 +54,9 @@ RUN apk add --no-cache \
       "libuuid=${LIBUUID_PACKAGE_VERSION}" \
  && test -n "$SOURCE_SHA" \
  && test -n "$BUILD_DATE" \
- && mkdir -p "/opt/codestra/releases/$SOURCE_SHA" /var/lib/codestra-vicidial \
+ && mkdir -p "/opt/codestra/releases/$SOURCE_SHA/scripts" /var/lib/codestra-vicidial \
+ && cp /tmp/release-src/vicidial/scripts/validate_runtime.py "/opt/codestra/releases/$SOURCE_SHA/scripts/validate_runtime.py" \
+ && chmod 0555 "/opt/codestra/releases/$SOURCE_SHA/scripts/validate_runtime.py" \
  && printf '%s\n' "$SOURCE_SHA" > "/opt/codestra/releases/$SOURCE_SHA/SOURCE.COMMIT" \
  && SOURCE_SHA="$SOURCE_SHA" BUILD_DATE="$BUILD_DATE" RELEASE_ENVIRONMENT="$RELEASE_ENVIRONMENT" python -c 'import json,os; from codestra_vicidial.release import build_release_document; p="/opt/codestra/releases/"+os.environ["SOURCE_SHA"]+"/BUILD_INFO.json"; open(p,"w").write(json.dumps(build_release_document(git_sha=os.environ["SOURCE_SHA"],built_at=os.environ["BUILD_DATE"],environment=os.environ["RELEASE_ENVIRONMENT"]),sort_keys=True)+"\n")' \
  && python /tmp/release-src/vicidial/scripts/generate_release_manifest.py --root /tmp/release-src --source-sha "$SOURCE_SHA" --generated-at "$BUILD_DATE" --output "/opt/codestra/releases/$SOURCE_SHA/RELEASE_MANIFEST.json" \

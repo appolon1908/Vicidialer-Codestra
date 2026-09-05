@@ -9,6 +9,8 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 from codestra_vicidial.reconciliation import ReconciliationDenied, ReconciliationPolicy
+from codestra_vicidial.internal_calling import InternalCallError, InternalCallPolicy, validate_lifecycle_schema
+from codestra_vicidial.internal_call_transport import CallDenied, load_protected_json, valid_ami_header_value
 from codestra_vicidial.release import load_release_info
 
 ALWAYS_FALSE_FLAGS = (
@@ -55,6 +57,11 @@ if (
     if release_info.get("verified") is not True:
         raise SystemExit("release metadata is not verified")
 
+if os.environ.get("ENABLE_INTERNAL_TEST_CALLING", "false") not in {"true", "false"}:
+    raise SystemExit("invalid internal call gate")
+if deployment != "production-internal-test":
+    require_false("ENABLE_INTERNAL_TEST_CALLING")
+
 backend = os.environ.get("CODESTRA_ADAPTER_BACKEND", "memory")
 if deployment == "staging-read-only":
     if backend != "memory":
@@ -66,6 +73,41 @@ elif deployment == "production-candidate":
         raise SystemExit("production candidate requires loopback mysql backend")
     for name in ("ENABLE_VICIDIAL_WRITES", "ENABLE_PROVISIONING"):
         require_false(name)
+elif deployment == "production-internal-test":
+    from codestra_vicidial.internal_calling import InternalCallPolicy
+    if backend != "mysql" or release_info is None:
+        raise SystemExit("internal tests require mysql and verified release metadata")
+    if os.environ.get("ENABLE_INTERNAL_TEST_CALLING") != "true":
+        raise SystemExit("bounded internal calling must be explicitly enabled")
+    for name in ("ENABLE_VICIDIAL_WRITES", "ENABLE_PROVISIONING", "ENABLE_AGENT_PROVISIONING"):
+        require_false(name)
+    policy = InternalCallPolicy.from_file(Path(os.environ["CODESTRA_INTERNAL_CALL_POLICY_FILE"]), release_info["git_sha"])
+    if policy.release_sha != release_info.get("git_sha"):
+        raise SystemExit("internal call policy release mismatch")
+    lifecycle = Path(os.environ.get(
+        "CODESTRA_AMI_LIFECYCLE_STATE",
+        os.environ.get("AMI_EVENT_STATE_DB", "/var/lib/codestra-vicidial/ami-events.sqlite3"),
+    ))
+    if not lifecycle.is_absolute() or not lifecycle.is_file():
+        raise SystemExit("authoritative AMI lifecycle database unavailable")
+    try:
+        validate_lifecycle_schema(lifecycle)
+    except InternalCallError as exc:
+        raise SystemExit("authoritative AMI lifecycle database schema invalid") from exc
+    credential = Path(os.environ["CODESTRA_AMI_CREDENTIAL_FILE"])
+    try:
+        document = load_protected_json(credential)
+        if set(document) != {"host", "port", "username", "secret"}:
+            raise CallDenied("AMI credential schema invalid")
+        if document["host"] not in {"127.0.0.1", "localhost"}:
+            raise CallDenied("AMI must remain loopback-only")
+        if type(document["port"]) is not int or not 1 <= document["port"] <= 65535:
+            raise CallDenied("invalid AMI port")
+        if not all(valid_ami_header_value(document[key])
+                   for key in ("username", "secret")):
+            raise CallDenied("AMI identity is incomplete")
+    except (OSError, ValueError, TypeError, KeyError, CallDenied) as exc:
+        raise SystemExit("AMI credential is unavailable or invalid") from exc
 elif deployment == "production-reconciliation":
     if backend != "mysql":
         raise SystemExit("production reconciliation requires loopback mysql backend")

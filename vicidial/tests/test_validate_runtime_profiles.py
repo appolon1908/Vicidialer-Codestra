@@ -46,7 +46,35 @@ def environment(tmp_path, deployment):
         "database": "asterisk",
     }))
     db_secret.chmod(0o600)
-    mysql_profile = deployment in {"production-candidate", "production-reconciliation"}
+    call_policy = tmp_path / "internal-call-policy.json"
+    if call_policy.exists():
+        call_policy.chmod(0o600)
+    call_policy.write_text(json.dumps({
+        "schema_version": "1.0", "release_sha": source_sha,
+        "authorization_reference": "CHG-APPOLON-INTERNAL-0001",
+        "expires_at": "2099-09-05T20:00:00Z", "tenant_id": "tenant-test",
+        "subject": "subject-appolon", "employee_id": "employee-appolon",
+        "username": "appolon", "extension": "6901", "campaign": "TEST_SYN",
+        "destination_alias": "internal:TEST_ECHO", "destination_extension": "6000",
+        "dialplan_context": "codestra-internal-test", "internal_only": True,
+        "external_dialing": False, "recording": False, "max_calls": 1,
+        "route_sha256": "a" * 64,
+    }))
+    call_policy.chmod(0o400)
+    lifecycle = tmp_path / "ami-events.sqlite3"
+    from codestra_vicidial.ami_gateway import LifecycleStore
+    LifecycleStore(lifecycle)
+    ami_credential = tmp_path / "ami.json"
+    if ami_credential.exists():
+        ami_credential.chmod(0o600)
+    ami_credential.write_text(json.dumps({
+        "host": "127.0.0.1", "port": 5038, "username": "synthetic",
+        "secret": "synthetic-private-value",
+    }))
+    ami_credential.chmod(0o400)
+    mysql_profile = deployment in {
+        "production-candidate", "production-reconciliation", "production-internal-test",
+    }
     env = {
         **os.environ,
         "CODESTRA_ADAPTER_DEPLOYMENT": deployment,
@@ -72,8 +100,16 @@ def environment(tmp_path, deployment):
         "CODESTRA_ADAPTER_HMAC_FILE": str(secret),
         "CODESTRA_VICIDIAL_DB_FILE": str(db_secret),
         "CODESTRA_RECONCILIATION_POLICY_FILE": str(policy),
+        "CODESTRA_INTERNAL_CALL_POLICY_FILE": str(call_policy),
+        "CODESTRA_AMI_LIFECYCLE_STATE": str(lifecycle),
+        "CODESTRA_AMI_CREDENTIAL_FILE": str(ami_credential),
+        "ENABLE_INTERNAL_TEST_CALLING": (
+            "true" if deployment == "production-internal-test" else "false"
+        ),
         "CODESTRA_RELEASE_METADATA_REQUIRED": (
-            "true" if deployment == "production-reconciliation" else "false"
+            "true" if deployment in {
+                "production-reconciliation", "production-internal-test",
+            } else "false"
         ),
         "CODESTRA_BUILD_INFO_FILE": str(build_info),
     }
@@ -134,6 +170,81 @@ def test_production_candidate_requires_mysql_but_keeps_writes_off(tmp_path):
     env = environment(tmp_path, "production-candidate")
     assert run(env).returncode == 0
     env["CODESTRA_ADAPTER_BACKEND"] = "memory"
+    assert run(env).returncode != 0
+
+
+def test_production_internal_test_requires_exact_policy_and_lifecycle(tmp_path):
+    env = environment(tmp_path, "production-internal-test")
+    result = run(env)
+    assert result.returncode == 0
+    env["ENABLE_INTERNAL_TEST_CALLING"] = "false"
+    assert run(env).returncode != 0
+
+
+def test_internal_profile_rejects_each_consumed_lifecycle_column_gap(tmp_path):
+    for column in (
+        "extension", "binding_json", "call_id", "answered", "updated_at",
+    ):
+        case = tmp_path / column
+        case.mkdir()
+        env = environment(case, "production-internal-test")
+        lifecycle = Path(env["CODESTRA_AMI_LIFECYCLE_STATE"])
+        with __import__("sqlite3").connect(lifecycle) as db:
+            definitions = {
+                "call_key": "TEXT PRIMARY KEY", "linkedid": "TEXT",
+                "extension": "TEXT", "call_id": "TEXT", "binding_json": "TEXT",
+                "asterisk_uniqueid": "TEXT", "state": "TEXT", "answered": "INTEGER",
+                "terminal": "INTEGER", "created_at": "TEXT", "answered_at": "TEXT",
+                "ended_at": "TEXT", "updated_at": "TEXT",
+            }
+            db.execute("DROP TABLE calls")
+            schema = ",".join(
+                f"{name} {kind}" for name, kind in definitions.items()
+                if name != column
+            )
+            db.execute(f"CREATE TABLE calls ({schema})")
+        from codestra_vicidial.internal_calling import (
+            InternalCallError, validate_lifecycle_schema,
+        )
+        try:
+            validate_lifecycle_schema(lifecycle)
+        except InternalCallError:
+            pass
+        else:
+            raise AssertionError(f"missing consumed column {column} was accepted")
+        result = run(env)
+        assert result.returncode != 0
+        if os.getuid() == 0:
+            assert b"lifecycle database schema invalid" in result.stderr
+
+
+def test_internal_profile_rejects_unencodable_ami_identity(tmp_path):
+    for index, value in enumerate(("bad\nidentity", "x" * 257, "bad\ud800identity")):
+        case = tmp_path / str(index)
+        case.mkdir()
+        env = environment(case, "production-internal-test")
+        credential = Path(env["CODESTRA_AMI_CREDENTIAL_FILE"])
+        credential.chmod(0o600)
+        document = json.loads(credential.read_text())
+        document["username"] = value
+        credential.write_text(json.dumps(document))
+        credential.chmod(0o400)
+        result = run(env)
+        assert result.returncode != 0
+        assert b"AMI credential is unavailable or invalid" in result.stderr
+    env = environment(tmp_path, "production-internal-test")
+    Path(env["CODESTRA_AMI_LIFECYCLE_STATE"]).unlink()
+    assert run(env).returncode != 0
+    env = environment(tmp_path, "production-internal-test")
+    lifecycle = Path(env["CODESTRA_AMI_LIFECYCLE_STATE"])
+    lifecycle.unlink()
+    lifecycle.touch(mode=0o600)
+    assert run(env).returncode != 0
+    env = environment(tmp_path, "production-internal-test")
+    credential = Path(env["CODESTRA_AMI_CREDENTIAL_FILE"])
+    credential.chmod(0o600)
+    credential.write_text(json.dumps({"host": "127.0.0.1", "port": 5038}))
+    credential.chmod(0o400)
     assert run(env).returncode != 0
     env = environment(tmp_path, "production-candidate")
     env["ENABLE_PROVISIONING"] = "true"
