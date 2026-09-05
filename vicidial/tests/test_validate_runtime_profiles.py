@@ -179,6 +179,33 @@ def test_production_internal_test_requires_exact_policy_and_lifecycle(tmp_path):
     assert result.returncode == 0
     env["ENABLE_INTERNAL_TEST_CALLING"] = "false"
     assert run(env).returncode != 0
+
+
+def test_internal_profile_rejects_each_consumed_lifecycle_column_gap(tmp_path):
+    for column in (
+        "extension", "binding_json", "call_id", "answered", "updated_at",
+    ):
+        case = tmp_path / column
+        case.mkdir()
+        env = environment(case, "production-internal-test")
+        lifecycle = Path(env["CODESTRA_AMI_LIFECYCLE_STATE"])
+        with __import__("sqlite3").connect(lifecycle) as db:
+            definitions = {
+                "call_key": "TEXT PRIMARY KEY", "linkedid": "TEXT",
+                "extension": "TEXT", "call_id": "TEXT", "binding_json": "TEXT",
+                "asterisk_uniqueid": "TEXT", "state": "TEXT", "answered": "INTEGER",
+                "terminal": "INTEGER", "created_at": "TEXT", "answered_at": "TEXT",
+                "ended_at": "TEXT", "updated_at": "TEXT",
+            }
+            db.execute("DROP TABLE calls")
+            schema = ",".join(
+                f"{name} {kind}" for name, kind in definitions.items()
+                if name != column
+            )
+            db.execute(f"CREATE TABLE calls ({schema})")
+        result = run(env)
+        assert result.returncode != 0
+        assert b"lifecycle database schema invalid" in result.stderr
     env = environment(tmp_path, "production-internal-test")
     Path(env["CODESTRA_AMI_LIFECYCLE_STATE"]).unlink()
     assert run(env).returncode != 0

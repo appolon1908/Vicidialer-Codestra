@@ -381,6 +381,32 @@ def test_http_contract_keeps_v2_scopes_and_audits_invalid_payload(tmp_path):
         )
 
 
+def test_unknown_hangup_preserves_not_found_semantics(tmp_path):
+    service, transport, _ = executor(tmp_path)
+    with pytest.raises(KeyError):
+        service.hangup("missing-operation")
+    assert transport.actions == []
+
+
+def test_hangup_readback_race_preserves_not_found_semantics(tmp_path, monkeypatch):
+    service, transport, _ = executor(tmp_path)
+    service.originate(command())
+    before = list(transport.actions)
+
+    def disappeared(_operation_id):
+        raise KeyError("operation disappeared before mutation")
+
+    monkeypatch.setattr(service, "_hangup", disappeared)
+    with pytest.raises(KeyError):
+        service.hangup(command().operation_id)
+    assert transport.actions == before
+    with sqlite3.connect(service.audit_path) as db:
+        assert db.execute(
+            "SELECT outcome FROM audit WHERE operation='internal-call.hangup' "
+            "ORDER BY sequence DESC LIMIT 1"
+        ).fetchone()[0] == "not_found"
+
+
 def test_socket_transport_matches_action_id_and_never_opens_remote_ami(monkeypatch):
     import codestra_vicidial.internal_call_transport as module
 

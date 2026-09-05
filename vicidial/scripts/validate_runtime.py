@@ -10,7 +10,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 from codestra_vicidial.reconciliation import ReconciliationDenied, ReconciliationPolicy
-from codestra_vicidial.internal_calling import InternalCallError, InternalCallPolicy
+from codestra_vicidial.internal_calling import InternalCallPolicy
 from codestra_vicidial.internal_call_transport import CallDenied, load_protected_json
 from codestra_vicidial.release import load_release_info
 

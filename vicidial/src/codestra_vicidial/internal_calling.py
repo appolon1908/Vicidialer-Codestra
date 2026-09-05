@@ -179,6 +179,11 @@ class InternalCallExecutor:
         self._audit(operation, operation_id, correlation_id, actor, "requested")
         try:
             result = handler()
+        except KeyError:
+            # A missing operation is authoritative before any mutation. Preserve
+            # the route's 404 contract instead of classifying it as uncertain.
+            self._audit(operation, operation_id, correlation_id, actor, "not_found")
+            raise
         except PermissionError:
             self._audit(operation, operation_id, correlation_id, actor, "denied")
             raise
