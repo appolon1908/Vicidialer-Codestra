@@ -202,3 +202,66 @@ def test_verifier_rejects_checksum_valid_path_alias(tmp_path):
     result = subprocess.run([sys.executable, str(VERIFY), '--archive', str(alias_archive),
                              '--source-sha', SHA, '--builder-sha', 'b' * 40], capture_output=True, text=True)
     assert result.returncode != 0, 'checksum-valid alias archive must be rejected'
+
+
+def test_verifier_rejects_checksum_valid_sensitive_member(tmp_path):
+    import io
+    archive, _ = build(tmp_path, 'release.tar.gz')
+    with tarfile.open(archive, 'r:gz') as bundle:
+        files = [(m, bundle.extractfile(m).read() if m.isfile() else None) for m in bundle.getmembers()]
+    payload = b'synthetic-not-a-real-credential'
+    secret = tarfile.TarInfo('./credentials.json')
+    secret.size = len(payload)
+    secret.mode = 0o644
+    files.append((secret, payload))
+    sums = next(raw for m, raw in files if m.name == './SHA256SUMS')
+    sums += (hashlib.sha256(payload).hexdigest() + '  credentials.json\n').encode()
+    bad = tmp_path / 'sensitive.tar.gz'
+    with tarfile.open(bad, 'w:gz') as bundle:
+        for info, raw in files:
+            if info.name == './SHA256SUMS':
+                raw = sums
+            elif info.name == './SOURCE_RELEASE_MANIFEST.json':
+                manifest = json.loads(raw)
+                manifest['file_count'] += 1
+                manifest['checksums_sha256'] = hashlib.sha256(sums).hexdigest()
+                raw = json.dumps(manifest).encode()
+            if raw is not None:
+                info.size = len(raw)
+            bundle.addfile(info, io.BytesIO(raw) if raw is not None else None)
+    result = subprocess.run([sys.executable, str(VERIFY), '--archive', str(bad),
+                             '--source-sha', SHA, '--builder-sha', 'b' * 40], capture_output=True)
+    assert result.returncode != 0, 'checksum-valid credential-bearing member must be rejected'
+
+
+def test_verifier_rejects_unsafe_modes_links_and_member_paths(tmp_path):
+    import copy
+    import io
+    archive, _ = build(tmp_path, 'release.tar.gz')
+    with tarfile.open(archive, 'r:gz') as bundle:
+        entries = [(m, bundle.extractfile(m).read() if m.isfile() else None) for m in bundle.getmembers()]
+    for case in ('private-directory', 'private-metadata', 'writable-file', 'setuid',
+                 'symlink', 'hardlink', 'fifo', 'absolute', 'traversal', 'duplicate'):
+        bad = tmp_path / (case + '.tar.gz')
+        with tarfile.open(bad, 'w:gz') as bundle:
+            for original, payload in entries:
+                info = copy.copy(original)
+                if case == 'private-directory' and info.name == './src':
+                    info.mode = 0o700
+                if info.name == './SOURCE_SHA':
+                    if case == 'private-metadata': info.mode = 0o600
+                    if case == 'writable-file': info.mode = 0o666
+                    if case == 'setuid': info.mode = 0o4644
+                    if case == 'absolute': info.name = '/SOURCE_SHA'
+                    if case == 'traversal': info.name = './../SOURCE_SHA'
+                    if case in ('symlink', 'hardlink', 'fifo'):
+                        info.type = {'symlink': tarfile.SYMTYPE, 'hardlink': tarfile.LNKTYPE, 'fifo': tarfile.FIFOTYPE}[case]
+                        info.linkname = 'pyproject.toml' if case != 'fifo' else ''
+                        info.size = 0
+                        payload = None
+                bundle.addfile(info, io.BytesIO(payload) if payload is not None else None)
+                if case == 'duplicate' and info.name == './SOURCE_SHA':
+                    bundle.addfile(info, io.BytesIO(payload))
+        result = subprocess.run([sys.executable, str(VERIFY), '--archive', str(bad),
+                                 '--source-sha', SHA, '--builder-sha', 'b' * 40], capture_output=True)
+        assert result.returncode != 0, case
