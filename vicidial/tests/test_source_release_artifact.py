@@ -32,11 +32,41 @@ def test_archive_is_accepted_by_existing_pip_install_step(tmp_path):
     target = tmp_path / "installed"
     result = subprocess.run([sys.executable, "-m", "pip", "install", "--no-deps", "--target", str(target), str(extracted)], text=True, capture_output=True)
     assert result.returncode == 0, result.stderr
+    credential = tmp_path / "synthetic-hmac"
+    credential.write_bytes(b"isolated-test-credential-not-for-production" * 2)
+    credential.chmod(0o600)
+    installed_check = """
+import importlib.metadata as metadata, pathlib, runpy, sys
+import codestra_vicidial.app as application
+import codestra_vicidial.reconciliation
+import codestra_vicidial.release
+import codestra_vicidial.internal_calling
+import codestra_vicidial.internal_call_transport
+target = pathlib.Path(sys.argv[1]).resolve()
+assert metadata.version('codestra-vicidial-adapter') == '0.2.0rc1'
+routes = {(method, route.path) for route in application.app.routes for method in getattr(route, 'methods', [])}
+assert {('POST', '/v1/calls/internal/originate'),
+        ('GET', '/v1/calls/internal/{operation_id}'),
+        ('POST', '/v1/calls/internal/{operation_id}/hangup')} <= routes
+# Preload the installed modules before the canonical script adds its source path.
+# After validation, reject any package module resolved from extracted source.
+runpy.run_path(sys.argv[2], run_name='__main__')
+for name, module in tuple(sys.modules.items()):
+    if name.startswith('codestra_vicidial') and getattr(module, '__file__', None):
+        assert pathlib.Path(module.__file__).resolve().is_relative_to(target), name
+"""
     check = subprocess.run(
-        [sys.executable, "-c", "import importlib.metadata as m; import codestra_vicidial.app as a; assert m.version('codestra-vicidial-adapter') == '0.2.0rc1'; assert a.__file__.startswith(r'%s')" % target],
+        [sys.executable, "-c", installed_check, str(target), str(extracted / "scripts/validate_runtime.py")],
         cwd=tmp_path,
         env={
             "PYTHONPATH": str(target),
+            "CODESTRA_ADAPTER_HMAC_FILE": str(credential),
+            "CODESTRA_ADAPTER_DEPLOYMENT": "staging-read-only",
+            "CODESTRA_ADAPTER_BACKEND": "memory",
+            "AUTHORIZED_APPLICATION_SERVER_IP": "65.109.65.169",
+            "AUTHORIZED_PRIVATE_SOURCE_IP": "10.40.0.1",
+            "MIDDLEWARE_BASE_URL": "https://api.codestra.co",
+            "KEYCLOAK_ISSUER_URL": "https://auth.codestra.co/realms/codestra",
             "CODESTRA_ADAPTER_STATE": str(tmp_path / "runtime-state.sqlite3"),
         },
         text=True,

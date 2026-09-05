@@ -78,6 +78,7 @@ jobs:
           assert statement.get("predicateType")=="https://slsa.dev/provenance/v1"
           assert statement.get("subject")==[{"name":archive.name,"digest":{"sha256":hashlib.sha256(archive.read_bytes()).hexdigest()}}]
           predicate=statement["predicate"]; definition=predicate["buildDefinition"]; details=predicate["runDetails"]
+          assert definition["buildType"]=="https://github.com/appolon1908-hue/Vicidialer-Codestra/server-b-source-release/v1"
           assert definition["externalParameters"]=={"source_sha":os.environ["SOURCE_SHA"]}
           assert definition["resolvedDependencies"]==[{"uri":"git+https://github.com/appolon1908-hue/Vicidialer-Codestra","digest":{"gitCommit":os.environ["SOURCE_SHA"]}}]
           assert details["builder"]["id"]==os.environ["GITHUB_WORKFLOW_REF"]
