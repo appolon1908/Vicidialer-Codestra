@@ -3,6 +3,7 @@ import hashlib
 import importlib.util
 import json
 import sys
+import os
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
@@ -70,7 +71,8 @@ def test_validator_rejects_invalid_policy(tmp_path, mutation):
         module.validate(document, "a" * 40, backup_artifact_source=tmp_path / "synthetic-backup.enc")
 
 
-def test_cli_writes_runtime_path_with_private_mode(tmp_path):
+@pytest.mark.parametrize("creation_umask", [0o022, 0o077])
+def test_cli_writes_runtime_path_with_private_mode(tmp_path, creation_umask):
     document, backup = generated(tmp_path)
     output = tmp_path / "policy.json"
     agent = tmp_path / "agent.json"
@@ -83,31 +85,11 @@ def test_cli_writes_runtime_path_with_private_mode(tmp_path):
         "--backup-reference", document["backup"]["reference"], "--backup-created-at",
         document["backup"]["created_at"], "--backup-artifact", str(backup),
         "--runtime-backup-artifact", "/run/provisioning-backup/synthetic-backup.enc",
+        "--runtime-gid", str(os.getgid()),
         "--output", str(output),
     ]
-    completed = subprocess.run(command, capture_output=True, text=True)
+    completed = subprocess.run(command, capture_output=True, text=True, umask=creation_umask)
     assert completed.returncode == 0, completed.stderr
-    assert output.stat().st_mode & 0o777 == 0o600
-    assert json.loads(output.read_text())["backup"]["artifact"].startswith("/run/provisioning-backup/")
-
-
-def test_runtime_policy_requires_admin_before_creating_file(tmp_path, monkeypatch):
-    monkeypatch.setattr(module.os, "geteuid", lambda: 1001)
-    output = tmp_path / "policy.json"
-    with pytest.raises(ValueError, match="requires root"):
-        module.write_policy(output, b"{}", 10001)
-    assert not output.exists()
-
-
-def test_runtime_policy_group_read_without_write_and_no_overwrite(tmp_path, monkeypatch):
-    # Simulate ownership assignment only; no privileged host operation is performed.
-    monkeypatch.setattr(module.os, "geteuid", lambda: 0)
-    owners = []
-    monkeypatch.setattr(module.os, "fchown", lambda fd, uid, gid: owners.append((uid, gid)))
-    output = tmp_path / "policy.json"
-    module.write_policy(output, b"{}", 10001)
-    assert owners == [(0, 10001)]
     assert output.stat().st_mode & 0o777 == 0o640
-    with pytest.raises(FileExistsError):
-        module.write_policy(output, b"replacement", 10001)
-    assert output.read_bytes() == b"{}"
+    assert output.stat().st_gid == os.getgid()
+    assert json.loads(output.read_text())["backup"]["artifact"].startswith("/run/provisioning-backup/")

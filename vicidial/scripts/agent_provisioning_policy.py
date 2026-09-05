@@ -49,19 +49,6 @@ def validate(document: dict, release_sha: str, now: datetime | None = None,
     AgentSpec.model_validate(document.get("agent"))
 
 
-def write_policy(output: Path, content: bytes, runtime_gid: int | None = None) -> None:
-    if runtime_gid is not None:
-        if runtime_gid < 0 or os.geteuid() != 0:
-            raise ValueError("runtime policy requires root and a nonnegative runtime GID")
-    descriptor = os.open(output, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
-    with os.fdopen(descriptor, "wb") as stream:
-        stream.write(content)
-        stream.flush()
-        if runtime_gid is not None:
-            os.fchown(stream.fileno(), 0, runtime_gid)
-            os.fchmod(stream.fileno(), 0o640)
-
-
 def main() -> int:
     parser = argparse.ArgumentParser()
     subparsers = parser.add_subparsers(dest="operation", required=True)
@@ -78,17 +65,25 @@ def main() -> int:
     generator.add_argument("--backup-created-at", required=True)
     generator.add_argument("--backup-artifact", type=Path, required=True)
     generator.add_argument("--runtime-backup-artifact", required=True)
+    generator.add_argument("--runtime-gid", type=int, required=True)
     generator.add_argument("--output", type=Path, required=True)
-    generator.add_argument("--runtime-gid", type=int,
-                           help="root only: create root-owned 0640 policy for this runtime group")
     args = parser.parse_args()
     if args.operation == "generate":
         document = build(args)
         validate(document, args.release_sha, backup_artifact_source=args.backup_artifact)
         content = (json.dumps(document, indent=2, sort_keys=True) + "\n").encode()
-        write_policy(args.output, content, args.runtime_gid)
-        if args.runtime_gid is None:
-            print("POLICY_STAGED_ONLY=0600; runtime ownership and group access not configured")
+        descriptor = os.open(args.output, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o640)
+        try:
+            os.fchown(descriptor, -1, args.runtime_gid)
+            os.fchmod(descriptor, 0o640)
+            with os.fdopen(descriptor, "wb") as stream:
+                descriptor = -1
+                stream.write(content)
+        except BaseException:
+            if descriptor >= 0:
+                os.close(descriptor)
+            args.output.unlink(missing_ok=True)
+            raise
         print(f"POLICY_GENERATED={args.output}")
     else:
         document = json.loads(args.policy.read_text(encoding="utf-8"))
