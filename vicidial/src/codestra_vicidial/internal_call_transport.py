@@ -30,11 +30,18 @@ def digest(value):
 
 
 def valid_ami_header_value(value: object) -> bool:
-    return (
+    valid = (
         isinstance(value, str)
         and 0 < len(value) <= 256
         and all(ord(character) >= 32 for character in value)
     )
+    if not valid:
+        return False
+    try:
+        value.encode("utf-8")
+    except UnicodeEncodeError:
+        return False
+    return True
 
 
 def load_protected_json(path):

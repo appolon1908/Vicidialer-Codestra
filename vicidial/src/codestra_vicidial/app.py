@@ -401,6 +401,9 @@ def create_app(
         await authorize(request, "telephony:internal-call-hangup", identity, scopes,
                         timestamp, nonce, signature, signature_version, key)
         if key != operation_id + ":hangup":
+            internal_call_executor._audit(
+                "hangup", operation_id, operation_id, identity, "invalid_request"
+            )
             raise HTTPException(422, "hangup idempotency key is not operation-bound")
         try:
             return internal_call_executor.hangup(operation_id, actor=identity)

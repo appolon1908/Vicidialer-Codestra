@@ -373,13 +373,35 @@ def test_http_contract_keeps_v2_scopes_and_audits_invalid_payload(tmp_path):
     assert not transport.actions
     assert send("telephony:internal-call").status_code == 200
     assert len(transport.actions) == 1
+    operation_id = command().operation_id
+    hangup_path = f"/v1/calls/internal/{operation_id}/hangup"
+    wrong_key = operation_id + ":wrong"
+    stamp, nonce = int(time.time()), str(uuid4())
+    signature = auth.sign(
+        stamp, nonce, b"", method="POST", path=hangup_path,
+        scopes={"telephony:internal-call-hangup"}, idempotency_key=wrong_key,
+    )
+    rejected = client.post(hangup_path, content=b"", headers={
+        "Idempotency-Key": wrong_key,
+        "X-Service-Identity": "codestra-middleware",
+        "X-Service-Scopes": "telephony:internal-call-hangup",
+        "X-Request-Timestamp": str(stamp), "X-Request-Nonce": nonce,
+        "X-Request-Signature": signature, "X-Signature-Version": "v2",
+    })
+    assert rejected.status_code == 422
+    assert len(transport.actions) == 1
     with sqlite3.connect(executor_service.audit_path) as db:
         assert (
-            db.execute(
-                "SELECT count(*) FROM audit WHERE outcome='invalid_request'"
+                db.execute(
+                    "SELECT count(*) FROM audit WHERE operation='internal-call.originate' "
+                    "AND outcome='invalid_request'"
             ).fetchone()[0]
             == 1
         )
+        assert db.execute(
+            "SELECT count(*) FROM audit WHERE operation='internal-call.hangup' "
+            "AND outcome='invalid_request'"
+        ).fetchone()[0] == 1
 
 
 def test_unknown_hangup_preserves_not_found_semantics(tmp_path):
@@ -535,8 +557,10 @@ def test_service_owned_readonly_policy_is_readable(tmp_path, monkeypatch):
 def test_container_internal_profile_runs_runtime_preflight():
     root = Path(__file__).resolve().parents[1]
     entrypoint = (root / "docker/entrypoint.sh").read_text()
+    dockerfile = (root / "docker/Dockerfile").read_text()
     assert 'if [ "$profile" = production-internal-test ]' in entrypoint
     assert 'python "$CODESTRA_RELEASE_ROOT/scripts/validate_runtime.py"' in entrypoint
+    assert 'cp /tmp/release-src/vicidial/scripts/validate_runtime.py' in dockerfile
 
 
 def test_protected_policy_rejects_duplicate_keys_and_symlinks(tmp_path, monkeypatch):

@@ -219,8 +219,8 @@ def test_internal_profile_rejects_each_consumed_lifecycle_column_gap(tmp_path):
 
 
 def test_internal_profile_rejects_unencodable_ami_identity(tmp_path):
-    for value in ("bad\nidentity", "x" * 257):
-        case = tmp_path / hashlib.sha256(value.encode()).hexdigest()[:8]
+    for index, value in enumerate(("bad\nidentity", "x" * 257, "bad\ud800identity")):
+        case = tmp_path / str(index)
         case.mkdir()
         env = environment(case, "production-internal-test")
         credential = Path(env["CODESTRA_AMI_CREDENTIAL_FILE"])
