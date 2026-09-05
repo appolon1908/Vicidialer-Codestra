@@ -164,8 +164,8 @@ class InternalCallExecutor:
         policy = self.policy_provider()
         if policy.expires_at.tzinfo is None or policy.expires_at <= datetime.now(UTC):
             raise PermissionError("internal call authorization expired")
-        if policy.release_sha != self.policy.release_sha:
-            raise PermissionError("internal call policy release changed")
+        if digest(policy.model_dump(mode="json")) != digest(self.policy.model_dump(mode="json")):
+            raise PermissionError("internal call policy changed from startup authorization")
         return policy
 
     def _authorize(self, command, policy):
