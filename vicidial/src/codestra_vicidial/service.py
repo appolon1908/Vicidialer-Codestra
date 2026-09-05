@@ -14,6 +14,7 @@ from .models import (
 )
 from .repository import CollisionError, Repository, normalize_allowed_campaigns
 from .state import StateStore
+from .credential_authority import CredentialAuthorityUnavailable
 
 
 class ReadbackMismatch(RuntimeError):
@@ -37,10 +38,15 @@ class FeatureFlags:
 
 
 class AdapterService:
-    def __init__(self, repository: Repository, state: StateStore, flags: FeatureFlags):
+    def __init__(self, repository: Repository, state: StateStore, flags: FeatureFlags,
+                 credential_authority=None):
         self.repository = repository
         self.state = state
         self.flags = flags
+        self.credential_authority = credential_authority
+
+    def agent_availability(self, user_id: str, extension: str) -> dict:
+        return self.repository.agent_availability(user_id, extension)
 
     def _execute(self, operation: str, key: str, command, target: str, fn) -> dict:
         body = command.model_dump(mode="json")
@@ -404,6 +410,8 @@ class AdapterService:
 
     def provision_agent(self, key: str, command: ProvisionAgentCommand) -> dict:
         self._require(self.flags.agent_provisioning, "agent provisioning")
+        if self.credential_authority is None:
+            raise CredentialAuthorityUnavailable("approved secret authority unavailable")
 
         def apply() -> dict:
             desired = command.agent.model_dump(mode="json")
@@ -417,17 +425,29 @@ class AdapterService:
                 self.state.put_agent_adoption_intent(
                     command.agent.user_id, "missing", desired_hash
                 )
-                actual = self.repository.provision_agent_disabled(command.agent)
+                issued = self.credential_authority.issue(
+                    username=command.agent.user_id,
+                    extension=command.agent.extension,
+                    idempotency_key=key,
+                )
+                actual = self.repository.provision_agent_disabled(command.agent, issued.value)
             elif intent["original_hash"] != "missing" or intent["desired_hash"] != desired_hash:
                 raise CollisionError("agent provisioning intent mismatch")
             elif actual is None:
-                actual = self.repository.provision_agent_disabled(command.agent)
+                issued = self.credential_authority.issue(
+                    username=command.agent.user_id,
+                    extension=command.agent.extension,
+                    idempotency_key=key,
+                )
+                actual = self.repository.provision_agent_disabled(command.agent, issued.value)
             mismatches = [field for field in ("user_id", "full_name", "user_group")
                           if actual.get(field) != desired[field]]
             if actual.get("active") not in (False, "N"):
                 mismatches.append("active")
             if int(actual.get("user_level", 0)) != command.user_level:
                 mismatches.append("user_level")
+            if actual.get("extension") != command.agent.extension:
+                mismatches.append("extension")
             if not set(desired["campaigns"]).issubset(set(actual.get("campaigns", []))):
                 mismatches.append("campaigns")
             if set(actual.get("inbound_groups", [])) != set(desired["inbound_groups"]):
@@ -439,7 +459,8 @@ class AdapterService:
             self.state.finalize_agent_adoption(
                 command.agent.user_id, command.agent.user_id, desired_hash, desired
             )
-            return {"status": "complete_disabled", "actual": actual,
+            sanitized = {k: v for k, v in actual.items() if k not in {"pass", "password", "credential"}}
+            return {"status": "complete_disabled", "actual": sanitized,
                     "recovered_after_commit": intent is not None}
 
         return self._execute("agent.provision-disabled", key, command,

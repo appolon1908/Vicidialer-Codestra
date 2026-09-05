@@ -10,6 +10,7 @@ from fastapi.responses import JSONResponse
 
 from . import __version__
 from .agent_provisioning import AgentProvisioningPolicy
+from .credential_authority import UnixCredentialAuthority
 from .models import (
     AgentCommand,
     CallbackCommand,
@@ -45,6 +46,7 @@ _PROTECTED_SCOPE_BY_ROUTE = {
     ("post", "/v1/agents/provision-disabled"): "telephony:agent-provision",
     ("post", "/v1/agents/disable"): "telephony:agent-sync",
     ("get", "/v1/agents/{user_id}/actual-state"): "telephony:read",
+    ("get", "/v1/agents/availability/{user_id}/{extension}"): "telephony:read",
     ("post", "/v1/leads/publish"): "telephony:lead-publish",
     ("get", "/v1/leads/by-external-id/{external_id}"): "telephony:read",
     ("post", "/v1/callbacks/create"): "telephony:callback-write",
@@ -337,6 +339,14 @@ def create_app(
             raise HTTPException(404, "agent missing")
         return actual
 
+    @app.get("/v1/agents/availability/{user_id}/{extension}")
+    async def agent_availability(request: Request, user_id: str, extension: str,
+                                 values=Depends(read_headers)):
+        await authorize(request, "telephony:read", *values)
+        if user_id != "appolon" or extension != "6901":
+            raise HTTPException(403, "availability query outside approved scope")
+        return service.agent_availability(user_id, extension)
+
     @app.post("/v1/leads/publish")
     async def lead_publish(request: Request, values=Depends(headers)):
         return await mutation(request, LeadCommand, service.publish_lead,
@@ -464,10 +474,16 @@ def app_from_environment() -> FastAPI:
         )
     )
 
+    credential_authority = None
+    if flags.agent_provisioning:
+        credential_authority = UnixCredentialAuthority(Path(os.environ.get(
+            "CODESTRA_SECRET_AUTHORITY_SOCKET", "/run/secrets/authority.sock"
+        )))
     service = AdapterService(
         repository,
         state,
         flags,
+        credential_authority,
     )
 
     configured_sources = {

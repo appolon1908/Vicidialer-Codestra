@@ -35,6 +35,8 @@ POST /v1/campaigns/disable
 GET  /v1/campaigns/{campaign_id}/actual-state
 
 POST /v1/agents/sync
+GET  /v1/agents/availability/{user_id}/{extension}
+POST /v1/agents/provision-disabled
 POST /v1/agents/disable
 GET  /v1/agents/{user_id}/actual-state
 
@@ -49,6 +51,14 @@ POST /v1/transfer-policies/sync
 POST /v1/reconciliation/run
 GET  /v1/reconciliation/{run_id}
 ```
+
+The bounded disabled-agent profile is limited to the exact policy-authorized
+identity. For the Appolon synthetic supervisor request this is `appolon`, extension
+`6901`, group `WEBTEST_SYN`, campaign `TEST_SYN`, VICIdial level 8, `active=N`,
+internal-only, and external dialing disabled. Availability returns only booleans and
+existing non-secret identifiers. Credential material comes from the protected local
+secret-authority socket and is never returned or audited. User and phone creation are
+one transaction; any collision or partial failure rolls back both records.
 
 Campaign provisioning validates and creates its scripts and dispositions as one
 complete, disabled desired-state operation. Separate broad sync aliases are not
