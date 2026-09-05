@@ -302,7 +302,10 @@ class InternalCallExecutor:
         }
 
     def readback(self, operation_id: str) -> dict:
-        policy = self._policy()
+        # Read/end authority is operation-bound and survives expiry or removal
+        # of the one-call START grant. This immutable snapshot cannot authorize
+        # another originate; new calls still reload the live policy above.
+        policy = self.policy
         with closing(sqlite3.connect(self.state_path)) as db:
             row = db.execute(
                 "SELECT correlation_id,uniqueid,state,created_at,policy_hash FROM internal_calls WHERE operation_id=?",
@@ -311,7 +314,7 @@ class InternalCallExecutor:
         if not row:
             raise KeyError(operation_id)
         if row[4] != digest(policy.model_dump(mode="json")):
-            raise PermissionError("operation does not belong to current exact policy")
+            raise PermissionError("operation does not belong to the exact start policy")
         evidence = LifecycleEvidence(self.lifecycle_path).read(row[1], policy)
         return {
             "operation_id": operation_id,

@@ -86,33 +86,30 @@ def test_durable_audit_records_actor_denial_success_and_uncertain(tmp_path):
     assert {r[2] for r in rows} == {command().correlation_id}
 
 
-def test_revoked_or_rebound_policy_denies_readback_and_hangup(tmp_path):
+def test_rebound_start_policy_does_not_rebind_existing_call(tmp_path):
     service, transport, lifecycle = executor(tmp_path)
     accepted = service.originate(command())
     seed_connected(lifecycle, accepted["asterisk_uniqueid"])
     service.policy_provider = lambda: policy().model_copy(
         update={"tenant_id": "different-tenant"}
     )
-    with pytest.raises(PermissionError):
-        service.readback(command().operation_id)
-    with pytest.raises(PermissionError):
-        service.hangup(command().operation_id)
-    assert len(transport.actions) == 1
+    assert service.readback(command().operation_id)["tenant_id"] == "tenant-test"
+    assert service.hangup(command().operation_id)["hangup"] == "requested"
+    assert len(transport.actions) == 2
 
 
-def test_expired_policy_denies_all_operations(tmp_path):
-    service, _, _ = executor(tmp_path)
-    service.originate(command())
+def test_expired_start_policy_denies_new_start_but_preserves_read_and_end(tmp_path):
+    service, transport, lifecycle = executor(tmp_path)
+    accepted = service.originate(command())
+    seed_connected(lifecycle, accepted["asterisk_uniqueid"])
     service.policy_provider = lambda: service.policy.model_copy(
         update={"expires_at": datetime.now(UTC) - timedelta(seconds=1)}
     )
-    for action in [
-        lambda: service.originate(command()),
-        lambda: service.readback(command().operation_id),
-        lambda: service.hangup(command().operation_id),
-    ]:
-        with pytest.raises(PermissionError):
-            action()
+    with pytest.raises(PermissionError):
+        service.originate(command())
+    assert service.readback(command().operation_id)["call_state"] == "connected"
+    assert service.hangup(command().operation_id)["hangup"] == "requested"
+    assert [item["Action"] for item in transport.actions] == ["Originate", "Hangup"]
 
 
 def test_kill_switch_blocks_originate_but_preserves_same_call_cleanup(tmp_path):
