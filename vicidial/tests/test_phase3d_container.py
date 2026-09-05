@@ -56,13 +56,21 @@ def test_dockerfile_is_pinned_multistage_nonroot_and_amd64_buildable():
     assert '"libssl3=${OPENSSL_PACKAGE_VERSION}"' in text
     assert '"libuuid=${LIBUUID_PACKAGE_VERSION}"' in text
     assert "OPENSSL_PACKAGE_VERSION=3.5.8-r0" in text
-    assert "LIBUUID_PACKAGE_VERSION=2.42.3-r0" in text
+    assert "LIBUUID_PACKAGE_VERSION=2.42.3-r1" in text
+    assert "https://dl-cdn.alpinelinux.org/alpine/v3.24/main" in text
     assert "https://github.com/appolon1908-hue/Vicidialer-Codestra" in text
     assert "codestra_vicidial.production_app:app" in text
     for flag in LIVE_FLAGS:
         assert f"{flag}=false" in text
     for flag in DEPRECATED_FLAGS:
         assert f"{flag}=false" not in text
+
+
+def test_agent_provisioning_profile_mounts_scoped_authority_socket():
+    text = (DOCKER / "compose.agent-provisioning.yml").read_text()
+    assert "${CODESTRA_SECRET_AUTHORITY_SOCKET:?approved secret authority socket required}" in text
+    assert ":/run/secret-authority/authority.sock" in text
+    assert "CODESTRA_SECRET_AUTHORITY_SOCKET: /run/secret-authority/authority.sock" in text
 
 
 def test_runtime_security_regression_is_bounded_and_version_pinned():
@@ -96,7 +104,7 @@ def test_vulnerability_policy_is_exact_and_verifier_fails_closed(tmp_path):
     regression = {"python_short": "3.11.16", "implementation": "cpython",
                       "expat_short": "2.8.3", "openssl_short": "3.5.8",
                       "libcrypto3": "3.5.8-r0", "libssl3": "3.5.8-r0",
-                      "libuuid": "2.42.3-r0",
+                      "libuuid": "2.42.3-r1",
                   **{x["required_regression"]: "PASS" for x in policy["adjudications"]}}
     match = {"vulnerability": {"id": "CVE-2026-4224", "severity": "High"},
              "artifact": {"name": "python", "version": "3.11.16"}}
@@ -202,7 +210,7 @@ def test_workflow_builds_exact_image_and_uploads_only_clean_evidence():
     assert "sha256sum vicidial-adapter.oci.tar > vicidial-adapter.oci.tar.sha256" in text
     assert 'find . -type f ! -name CHECKSUMS.sha256' in text
     assert '> "${export_dir}/CHECKSUMS.sha256"' in text
-    assert text.count("docker compose -f vicidial/docker/compose.") == 2
+    assert text.count("docker compose -f vicidial/docker/compose.") == 3
     assert "scripts/vicidial_sync.py" in text
     assert "scripts/canonical_event_client.py" in text
     assert "scripts/vicidial_sync.py.candidate" not in text

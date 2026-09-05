@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+import stat
 from collections.abc import Mapping
 from pathlib import Path
 
@@ -476,9 +477,18 @@ def app_from_environment() -> FastAPI:
 
     credential_authority = None
     if flags.agent_provisioning:
-        credential_authority = UnixCredentialAuthority(Path(os.environ.get(
+        authority_path = Path(os.environ.get(
             "CODESTRA_SECRET_AUTHORITY_SOCKET", "/run/secrets/authority.sock"
-        )))
+        ))
+        try:
+            authority_stat = authority_path.stat()
+        except OSError as exc:
+            raise RuntimeError("approved secret authority unavailable") from exc
+        if not stat.S_ISSOCK(authority_stat.st_mode) or not os.access(
+            authority_path, os.R_OK | os.W_OK
+        ):
+            raise RuntimeError("approved secret authority unavailable or unauthorized")
+        credential_authority = UnixCredentialAuthority(authority_path)
     service = AdapterService(
         repository,
         state,

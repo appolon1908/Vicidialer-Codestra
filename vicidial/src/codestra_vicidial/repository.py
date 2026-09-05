@@ -912,6 +912,13 @@ class MySQLRepository:
         The generated bootstrap password is intentionally neither returned nor logged.
         A separately governed activation/credential rotation workflow must replace it.
         """
+        engines = self._all(
+            "SELECT TABLE_NAME,ENGINE FROM information_schema.TABLES "
+            "WHERE TABLE_SCHEMA=DATABASE() AND TABLE_NAME IN ('vicidial_users','phones')"
+        )
+        engine_map = {row["TABLE_NAME"]: row["ENGINE"] for row in engines}
+        if engine_map != {"vicidial_users": "InnoDB", "phones": "InnoDB"}:
+            raise RuntimeError("transactional InnoDB user and phone tables required")
         availability = self.agent_availability(spec.user_id, spec.extension)
         if not availability["username_available"]:
             raise CollisionError("agent identifier already exists")
