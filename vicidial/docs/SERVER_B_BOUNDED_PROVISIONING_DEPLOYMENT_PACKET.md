@@ -22,6 +22,17 @@ HIGH_CRITICAL_SCAN=PASS
 Do not deploy a branch tag, an earlier PR image, or an artifact whose digest is
 not bound to `SOURCE_SHA` by the signed provenance.
 
+Export the complete `ARTIFACT_REFERENCE` as `VICIDIAL_ADAPTER_IMAGE`. Validate
+the protected release manifest and Compose contract before rendering:
+
+```text
+python vicidial/scripts/validate_deployment_artifact.py \
+  --release-manifest <downloaded-release-manifest.json> \
+  --compose vicidial/docker/compose.production.yml
+VICIDIAL_ADAPTER_IMAGE=<the validator's complete ghcr.io/...@sha256 output> \
+  docker compose -f vicidial/docker/compose.production.yml config --quiet
+```
+
 ## Preserved rollback evidence
 
 The existing operator evidence is authoritative and must not be regenerated
@@ -44,6 +55,27 @@ RESTORE_PUBLIC_PORTS=0
 RESTORE_RESIDUAL_RESOURCES=0
 ROLLBACK_READY=PASS
 ```
+
+## Per-check evidence register
+
+Every administrative check must populate every column. `N/A` is allowed only
+for artifact reference when a check predates the release; no field may be
+omitted and every evidence object is recorded with its full SHA-256.
+
+| Check name | Command or CI run | Environment/host | Source revision | Artifact reference | UTC timestamp | Result | Evidence location | Evidence SHA-256 |
+|---|---|---|---|---|---|---|---|---|
+| Encrypted backup | restricted operator backup (log records exact command) | production / `static` (`65.21.67.207`) | N/A | N/A | `2026-09-05T10:37:26Z` | PASS | `/var/log/codestra-vicidial-operator/20260905T103726Z-backup-19740.log` | `3b6dc251c49adb57d0b43e3ae330f797a8c677bd17d943fb9faf0cdaf86dc886` |
+| Backup validation and off-host copy | restricted operator validation (log records exact command) | production / `static` (`65.21.67.207`) | N/A | N/A | `2026-09-05T10:38:50Z` | PASS | `/var/log/codestra-vicidial-operator/20260905T103850Z-validate-backup-20087.log` | `75162a2c48db2766cd9af7fa82a1995b1d9a09415a5abd0c68f652354196cb45` |
+| Isolated restore rehearsal | restricted operator restore test (log records exact command) | isolated restore / `static` (`65.21.67.207`) | N/A | N/A | `2026-09-05T10:39:12Z` | PASS | `/var/log/codestra-vicidial-operator/20260905T103912Z-restore-test-20249.log` | `7ca2d5af0970d62382b83d4397d2cd7d7e3ae0d1114f15ec6c1fc30e67b9bcfa` |
+| Rollback applicability | restricted operator rollback plan (log records exact command) | production / `static` (`65.21.67.207`) | N/A | N/A | `2026-09-05T10:40:09Z` | PASS | `/var/log/codestra-vicidial-operator/20260905T104009Z-rollback-plan-21151.log` | `d73c4cf86190fcb1f90bd16e8bc95c344276c9a2e04e2f4945fc252a996c0ca3` |
+| Protected release identity | `<protected workflow run URL/ID>` | GitHub Actions protected branch | `<40-char source SHA>` | `ghcr.io/appolon1908-hue/vicidialer-codestra@sha256:<64 hex>` | `<UTC>` | `<PASS/FAIL>` | `<immutable evidence URL/path>` | `<64 hex>` |
+| Production Compose render | `docker compose ... config --quiet` | administrative staging / `static` | `<40-char source SHA>` | `<complete immutable artifact reference>` | `<UTC>` | `<PASS/FAIL>` | `<sanitized evidence path>` | `<64 hex>` |
+| Runtime policy offline validation | `agent_provisioning_policy.py validate ...` | administrative staging / `static` | `<40-char source SHA>` | `<complete immutable artifact reference>` | `<UTC>` | `<PASS/FAIL>` | `<sanitized evidence path>` | `<64 hex>` |
+| Default disabled readback | `/health`, `/ready`, `/version` plus sanitized configuration readback | production / `static` | `<40-char source SHA>` | `<complete immutable artifact reference>` | `<UTC>` | `<PASS/FAIL>` | `<sanitized evidence path>` | `<64 hex>` |
+
+The four preserved rows record completed evidence. Template rows are
+deliberately unfilled and are not PASS until the authorized administrative
+step creates and hashes their evidence.
 
 ## Administrative sequence
 

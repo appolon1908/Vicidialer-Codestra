@@ -50,6 +50,7 @@ jobs:
           touch "${RUNNER_TEMP}/adapter-hmac" "${RUNNER_TEMP}/vicidial-db.json"
           mkdir -p "${RUNNER_TEMP}/mysqld"
           export VICIDIAL_ADAPTER_IMAGE_DIGEST="sha256:0000000000000000000000000000000000000000000000000000000000000000"
+          export VICIDIAL_ADAPTER_IMAGE="ghcr.io/appolon1908-hue/vicidialer-codestra@${VICIDIAL_ADAPTER_IMAGE_DIGEST}"
           export CODESTRA_ADAPTER_HMAC_SECRET_FILE="${RUNNER_TEMP}/adapter-hmac"
           export CODESTRA_VICIDIAL_DB_SECRET_FILE="${RUNNER_TEMP}/vicidial-db.json"
           export VICIDIAL_DB_SOCKET_DIR="${RUNNER_TEMP}/mysqld"

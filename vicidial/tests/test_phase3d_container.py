@@ -151,7 +151,10 @@ def test_compose_hardening_and_disabled_capabilities(name):
     assert service["tmpfs"]
     assert service["pids_limit"] == 128
     assert "/var/run/docker.sock" not in json.dumps(document)
-    assert "@${VICIDIAL_ADAPTER_IMAGE_DIGEST" in service["image"]
+    if name == "compose.production.yml":
+        assert service["image"].startswith("${VICIDIAL_ADAPTER_IMAGE:")
+    else:
+        assert "@${VICIDIAL_ADAPTER_IMAGE_DIGEST" in service["image"]
     for flag in LIVE_FLAGS:
         assert service["environment"][flag] == "false"
     for flag in DEPRECATED_FLAGS:
