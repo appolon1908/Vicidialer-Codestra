@@ -77,3 +77,12 @@ PRODUCTION_CHANGES=NONE
 LIVE_CALLS_PLACED=0
 RUNTIME_EXECUTION_AUTHORIZATION=NOT_ESTABLISHED_BY_SOURCE_TESTS
 PROTECTED_ARTIFACT=NOT_PRODUCED
+
+## Exact-head CI follow-up
+
+Initial PR #27 source run 33985771169 caught simultaneous first-audit WAL
+initialization contention (database locked) at c2e7a5f. This was a failed check,
+not a call or authorization failure in production. Audit schema/WAL setup now
+occurs during executor construction; request audit connections open the existing
+store without schema or journal-mode changes. The concurrent quota regression
+remains enabled and the updated head must pass the same source checks.

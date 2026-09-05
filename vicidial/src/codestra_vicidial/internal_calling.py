@@ -129,6 +129,9 @@ class InternalCallExecutor:
                     "unbound legacy call intents require administrator reconciliation"
                 )
             db.commit()
+        # Initialize schema/WAL once, before any concurrent request can audit.
+        initialized_audit = StateStore(self.audit_path)
+        initialized_audit.db.close()
 
     def _policy(self):
         policy = self.policy_provider()
@@ -156,7 +159,10 @@ class InternalCallExecutor:
             raise PermissionError("internal destination is not authorized")
 
     def _audit(self, operation, operation_id, correlation_id, actor, outcome):
-        store = StateStore(self.audit_path)
+        # Reuse StateStore.audit without re-running its schema initializer or
+        # changing journal mode while another request holds a transaction.
+        store = StateStore.__new__(StateStore)
+        store.db = sqlite3.connect(self.audit_path.as_uri() + "?mode=rw", uri=True, timeout=5)
         try:
             store.audit(
                 correlation_id,
