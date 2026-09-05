@@ -34,7 +34,7 @@ jobs:
       - name: Build and test deterministic installer-compatible archive
         run: |
           set -Eeuo pipefail
-          python -m pip install "exact-source/vicidial[test]" pytest==8.4.2
+          python -m pip install -e "exact-source/vicidial[test]" pytest==8.4.2
           SOURCE_RELEASE_TEST_ROOT="$PWD/exact-source/vicidial" python -m pytest -q vicidial/tests/test_source_release_artifact.py
           git -C exact-source diff --exit-code HEAD
           mkdir -p dist
