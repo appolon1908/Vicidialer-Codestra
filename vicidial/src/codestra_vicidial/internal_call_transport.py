@@ -29,13 +29,25 @@ def digest(value):
     ).hexdigest()
 
 
+def valid_ami_header_value(value: object) -> bool:
+    return (
+        isinstance(value, str)
+        and 0 < len(value) <= 256
+        and all(ord(character) >= 32 for character in value)
+    )
+
+
 def load_protected_json(path):
     if not path.is_absolute():
         raise CallDenied("absolute protected path required")
     fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW)
     with os.fdopen(fd) as stream:
         info = os.fstat(stream.fileno())
-        service_owned = info.st_uid == os.geteuid() and not info.st_mode & 0o077
+        service_owned = (
+            info.st_uid == os.geteuid()
+            and info.st_mode & 0o400
+            and not info.st_mode & 0o377
+        )
         root_group_readable = (
             info.st_uid == 0
             and info.st_gid == os.getegid()
@@ -76,10 +88,7 @@ class SocketAmiTransport:
             raise CallDenied("invalid loopback AMI port")
 
         def encode(values):
-            if any(
-                not isinstance(v, str) or len(v) > 256 or any(ord(c) < 32 for c in v)
-                for v in values.values()
-            ):
+            if any(not valid_ami_header_value(v) for v in values.values()):
                 raise CallDenied("invalid AMI header")
             return (
                 "\r\n".join(f"{k}: {v}" for k, v in values.items()) + "\r\n\r\n"

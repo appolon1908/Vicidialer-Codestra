@@ -58,7 +58,7 @@ def environment(tmp_path, deployment):
         "external_dialing": False, "recording": False, "max_calls": 1,
         "route_sha256": "a" * 64,
     }))
-    call_policy.chmod(0o600)
+    call_policy.chmod(0o400)
     lifecycle = tmp_path / "ami-events.sqlite3"
     from codestra_vicidial.ami_gateway import LifecycleStore
     LifecycleStore(lifecycle)
@@ -67,7 +67,7 @@ def environment(tmp_path, deployment):
         "host": "127.0.0.1", "port": 5038, "username": "synthetic",
         "secret": "synthetic-private-value",
     }))
-    ami_credential.chmod(0o600)
+    ami_credential.chmod(0o400)
     mysql_profile = deployment in {
         "production-candidate", "production-reconciliation", "production-internal-test",
     }
@@ -212,6 +212,22 @@ def test_internal_profile_rejects_each_consumed_lifecycle_column_gap(tmp_path):
         assert result.returncode != 0
         if os.getuid() == 0:
             assert b"lifecycle database schema invalid" in result.stderr
+
+
+def test_internal_profile_rejects_unencodable_ami_identity(tmp_path):
+    for value in ("bad\nidentity", "x" * 257):
+        case = tmp_path / hashlib.sha256(value.encode()).hexdigest()[:8]
+        case.mkdir()
+        env = environment(case, "production-internal-test")
+        credential = Path(env["CODESTRA_AMI_CREDENTIAL_FILE"])
+        credential.chmod(0o600)
+        document = json.loads(credential.read_text())
+        document["username"] = value
+        credential.write_text(json.dumps(document))
+        credential.chmod(0o400)
+        result = run(env)
+        assert result.returncode != 0
+        assert b"AMI credential is unavailable or invalid" in result.stderr
     env = environment(tmp_path, "production-internal-test")
     Path(env["CODESTRA_AMI_LIFECYCLE_STATE"]).unlink()
     assert run(env).returncode != 0
@@ -222,7 +238,9 @@ def test_internal_profile_rejects_each_consumed_lifecycle_column_gap(tmp_path):
     assert run(env).returncode != 0
     env = environment(tmp_path, "production-internal-test")
     credential = Path(env["CODESTRA_AMI_CREDENTIAL_FILE"])
+    credential.chmod(0o600)
     credential.write_text(json.dumps({"host": "127.0.0.1", "port": 5038}))
+    credential.chmod(0o400)
     assert run(env).returncode != 0
     env = environment(tmp_path, "production-candidate")
     env["ENABLE_PROVISIONING"] = "true"

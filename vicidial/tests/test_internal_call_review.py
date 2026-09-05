@@ -486,6 +486,7 @@ def test_socket_transport_matches_action_id_and_never_opens_remote_ami(monkeypat
 
 @pytest.mark.parametrize("mode,uid,gid", [
     (0o100644, 0, 0), (0o100660, 0, 1000), (0o100600, 1000, 2000),
+    (0o100600, 1000, 1000),
 ])
 def test_protected_policy_permissions_fail_closed(tmp_path, monkeypatch, mode, uid, gid):
     from types import SimpleNamespace
@@ -516,6 +517,28 @@ def test_root_owned_group_readonly_policy_is_service_readable(tmp_path, monkeypa
     assert module.load_protected_json(path) == {"scope": "synthetic"}
 
 
+def test_service_owned_readonly_policy_is_readable(tmp_path, monkeypatch):
+    from types import SimpleNamespace
+
+    import codestra_vicidial.internal_call_transport as module
+
+    path = tmp_path / "policy.json"
+    path.write_text('{"scope":"synthetic"}')
+    monkeypatch.setattr(
+        module.os, "fstat", lambda fd: SimpleNamespace(
+            st_mode=0o100400, st_uid=os.geteuid(), st_gid=os.getegid(),
+        ),
+    )
+    assert module.load_protected_json(path) == {"scope": "synthetic"}
+
+
+def test_container_internal_profile_runs_runtime_preflight():
+    root = Path(__file__).resolve().parents[1]
+    entrypoint = (root / "docker/entrypoint.sh").read_text()
+    assert 'if [ "$profile" = production-internal-test ]' in entrypoint
+    assert 'python "$CODESTRA_RELEASE_ROOT/scripts/validate_runtime.py"' in entrypoint
+
+
 def test_protected_policy_rejects_duplicate_keys_and_symlinks(tmp_path, monkeypatch):
     from types import SimpleNamespace
 
@@ -525,7 +548,7 @@ def test_protected_policy_rejects_duplicate_keys_and_symlinks(tmp_path, monkeypa
     path.write_text('{"max_calls":1,"max_calls":10}')
     monkeypatch.setattr(
         module.os, "fstat", lambda fd: SimpleNamespace(
-            st_mode=0o100600, st_uid=os.geteuid(), st_gid=os.getegid(),
+            st_mode=0o100400, st_uid=os.geteuid(), st_gid=os.getegid(),
         )
     )
     with pytest.raises(CallDenied, match="duplicate"):

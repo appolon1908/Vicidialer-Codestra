@@ -79,4 +79,8 @@ if os.environ.get("SOURCE_SHA") != sha:
     raise SystemExit("container revision mismatch")
 PY
 
+if [ "$profile" = production-internal-test ]; then
+  python "$CODESTRA_RELEASE_ROOT/scripts/validate_runtime.py"
+fi
+
 exec "$@"

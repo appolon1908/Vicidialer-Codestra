@@ -10,7 +10,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 from codestra_vicidial.reconciliation import ReconciliationDenied, ReconciliationPolicy
 from codestra_vicidial.internal_calling import InternalCallError, InternalCallPolicy, validate_lifecycle_schema
-from codestra_vicidial.internal_call_transport import CallDenied, load_protected_json
+from codestra_vicidial.internal_call_transport import CallDenied, load_protected_json, valid_ami_header_value
 from codestra_vicidial.release import load_release_info
 
 ALWAYS_FALSE_FLAGS = (
@@ -103,7 +103,7 @@ elif deployment == "production-internal-test":
             raise CallDenied("AMI must remain loopback-only")
         if type(document["port"]) is not int or not 1 <= document["port"] <= 65535:
             raise CallDenied("invalid AMI port")
-        if not all(isinstance(document[key], str) and document[key]
+        if not all(valid_ami_header_value(document[key])
                    for key in ("username", "secret")):
             raise CallDenied("AMI identity is incomplete")
     except (OSError, ValueError, TypeError, KeyError, CallDenied) as exc:
