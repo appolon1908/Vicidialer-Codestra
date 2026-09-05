@@ -47,6 +47,8 @@ def environment(tmp_path, deployment):
     }))
     db_secret.chmod(0o600)
     call_policy = tmp_path / "internal-call-policy.json"
+    if call_policy.exists():
+        call_policy.chmod(0o600)
     call_policy.write_text(json.dumps({
         "schema_version": "1.0", "release_sha": source_sha,
         "authorization_reference": "CHG-APPOLON-INTERNAL-0001",
@@ -63,6 +65,8 @@ def environment(tmp_path, deployment):
     from codestra_vicidial.ami_gateway import LifecycleStore
     LifecycleStore(lifecycle)
     ami_credential = tmp_path / "ami.json"
+    if ami_credential.exists():
+        ami_credential.chmod(0o600)
     ami_credential.write_text(json.dumps({
         "host": "127.0.0.1", "port": 5038, "username": "synthetic",
         "secret": "synthetic-private-value",
