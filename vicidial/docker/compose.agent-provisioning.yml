@@ -1,0 +1,9 @@
+# Apply only through an approved, time-bounded deployment change together with
+# compose.production.yml. The protected file must contain one exact grant.
+services:
+  restricted-adapter:
+    volumes:
+      - ${CODESTRA_AGENT_PROVISIONING_POLICY_SECRET_FILE:?protected policy file required}:/run/provisioning-policy/agent-provisioning-policy.json:ro
+    environment:
+      ENABLE_AGENT_PROVISIONING: "true"
+      CODESTRA_AGENT_PROVISIONING_POLICY_FILE: /run/provisioning-policy/agent-provisioning-policy.json

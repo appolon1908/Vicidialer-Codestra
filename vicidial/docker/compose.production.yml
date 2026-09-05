@@ -37,6 +37,8 @@ services:
       ENABLE_VICIDIAL_WRITES: "false"
       ENABLE_PROVISIONING: "false"
       ENABLE_AGENT_SYNC: "false"
+      # Independently enabled only with a protected exact-user policy file.
+      ENABLE_AGENT_PROVISIONING: "false"
       ENABLE_LEAD_PUBLICATION: "false"
       ENABLE_LIVE_CALL_CONTROL: "false"
       ENABLE_WARM_TRANSFER: "false"
