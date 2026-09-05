@@ -96,7 +96,7 @@ def test_vulnerability_policy_is_exact_and_verifier_fails_closed(tmp_path):
     regression = {"python_short": "3.11.16", "implementation": "cpython",
                       "expat_short": "2.8.3", "openssl_short": "3.5.8",
                       "libcrypto3": "3.5.8-r0", "libssl3": "3.5.8-r0",
-                      "libuuid": "2.42.3-r0",
+                      "libuuid": "2.42.1-r0",
                   **{x["required_regression"]: "PASS" for x in policy["adjudications"]}}
     match = {"vulnerability": {"id": "CVE-2026-4224", "severity": "High"},
              "artifact": {"name": "python", "version": "3.11.16"}}
