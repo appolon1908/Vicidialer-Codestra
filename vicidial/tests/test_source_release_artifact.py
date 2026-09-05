@@ -1,12 +1,14 @@
-import hashlib, json, subprocess, sys, tarfile
+import hashlib, json, os, subprocess, sys, tarfile
 from pathlib import Path
 ROOT = Path(__file__).resolve().parents[2]
+SOURCE_ROOT = Path(os.environ.get("SOURCE_RELEASE_TEST_ROOT", ROOT / "vicidial")).resolve()
 SCRIPT = ROOT / "vicidial/scripts/build_source_release.py"
+VERIFY = ROOT / "vicidial/scripts/verify_source_release.py"
 SHA = "75f48ffe9f4a48f76bc5ed0ecb3dc5770933d98a"
 
 def build(tmp_path, name):
     output = tmp_path / name; metadata = tmp_path / f"{name}.json"
-    subprocess.run([sys.executable, str(SCRIPT), "--source-root", str(ROOT / "vicidial"), "--source-sha", SHA, "--builder-sha", "b" * 40, "--output", str(output), "--metadata", str(metadata)], check=True)
+    subprocess.run([sys.executable, str(SCRIPT), "--source-root", str(SOURCE_ROOT), "--source-sha", SHA, "--builder-sha", "b" * 40, "--output", str(output), "--metadata", str(metadata)], check=True)
     return output, json.loads(metadata.read_text())
 
 def test_archive_matches_existing_installer_contract(tmp_path):
@@ -30,8 +32,30 @@ def test_archive_is_accepted_by_existing_pip_install_step(tmp_path):
     target = tmp_path / "installed"
     result = subprocess.run([sys.executable, "-m", "pip", "install", "--no-deps", "--target", str(target), str(extracted)], text=True, capture_output=True)
     assert result.returncode == 0, result.stderr
-    # The host installer reuses its release venv (with the locked modern
-    # setuptools) and executes this exact no-dependency local-project shape.
-    # Older distribution pip may label PEP 621 metadata UNKNOWN, so package
-    # content is asserted from the extracted input rather than pip internals.
-    assert (extracted / "src/codestra_vicidial/app.py").is_file()
+    check = subprocess.run([sys.executable, "-c", "import importlib.metadata as m; import codestra_vicidial.app as a; assert m.version('codestra-vicidial-adapter') == '0.2.0rc1'; assert a.__file__.startswith(r'%s')" % target], cwd=tmp_path, env={"PYTHONPATH": str(target)}, text=True, capture_output=True)
+    assert check.returncode == 0, check.stderr
+
+def test_verifier_rejects_tampering_and_wrong_bindings(tmp_path):
+    archive, _ = build(tmp_path, "release.tar.gz")
+    command=[sys.executable,str(VERIFY),"--archive",str(archive),"--source-sha",SHA,"--builder-sha","b"*40]
+    assert subprocess.run(command).returncode == 0
+    assert subprocess.run(command[:-3]+["a"*40,"--builder-sha","b"*40]).returncode != 0
+    tampered=tmp_path/"tampered"; tampered.mkdir()
+    with tarfile.open(archive,"r:gz") as bundle: bundle.extractall(tampered,filter="data")
+    (tampered/"src/codestra_vicidial/app.py").write_text("# tampered\n")
+    broken=tmp_path/"broken.tar.gz"
+    with tarfile.open(broken,"w:gz") as bundle:
+        for path in sorted(tampered.rglob("*")): bundle.add(path,arcname="./"+path.relative_to(tampered).as_posix())
+    assert subprocess.run([sys.executable,str(VERIFY),"--archive",str(broken),"--source-sha",SHA,"--builder-sha","b"*40]).returncode != 0
+
+def test_sensitive_files_fail_closed(tmp_path):
+    source=tmp_path/"source"; subprocess.run(["cp","-a",str(SOURCE_ROOT),str(source)],check=True); (source/"credentials.json").write_text("synthetic")
+    result=subprocess.run([sys.executable,str(SCRIPT),"--source-root",str(source),"--source-sha",SHA,"--builder-sha","b"*40,"--output",str(tmp_path/"x.tar.gz"),"--metadata",str(tmp_path/"x.json")],capture_output=True,text=True)
+    assert result.returncode != 0 and "prohibited" in result.stderr
+
+def test_uploaded_artifact_root_checksum_layout(tmp_path):
+    archive, _ = build(tmp_path, "codestra-vicidial-adapter.tar.gz")
+    sidecar = tmp_path / "codestra-vicidial-adapter.tar.gz.sha256"
+    sidecar.write_text(f"{hashlib.sha256(archive.read_bytes()).hexdigest()}  {archive.name}\n")
+    result = subprocess.run(["sha256sum", "--check", sidecar.name], cwd=tmp_path, capture_output=True, text=True)
+    assert result.returncode == 0, result.stderr

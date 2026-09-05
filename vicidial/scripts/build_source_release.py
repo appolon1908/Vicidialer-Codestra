@@ -5,7 +5,8 @@ import argparse, gzip, hashlib, json, os, stat, tarfile, tempfile
 from pathlib import Path
 
 EXCLUDED = {".git", ".pytest_cache", ".mypy_cache", ".ruff_cache", "__pycache__", "evidence", "reports", ".venv"}
-SUFFIXES = {".pyc", ".pyo", ".pem", ".key", ".crt", ".sqlite3"}
+SUFFIXES = {".pyc", ".pyo", ".pem", ".key", ".crt", ".cer", ".der", ".p12", ".pfx", ".jks", ".keystore", ".sqlite", ".sqlite3", ".db", ".sql", ".dump"}
+SENSITIVE_NAMES = {"credentials.json", "secrets.json", "id_rsa", "id_dsa", "id_ecdsa", "id_ed25519", ".netrc", ".npmrc", ".pypirc"}
 REQUIRED = {"pyproject.toml", "src/codestra_vicidial/app.py", "src/codestra_vicidial/internal_calling.py", "scripts/validate_runtime.py"}
 
 def sha256(path: Path) -> str:
@@ -17,8 +18,8 @@ def source_files(root: Path) -> list[Path]:
         relative = path.relative_to(root)
         if any(part in EXCLUDED for part in relative.parts) or path.is_symlink() or not path.is_file():
             continue
-        if path.suffix.lower() in SUFFIXES or path.name.startswith(".env"):
-            continue
+        if path.suffix.lower() in SUFFIXES or path.name.startswith(".env") or path.name.lower() in SENSITIVE_NAMES:
+            raise ValueError("sensitive or runtime-generated file is prohibited: " + relative.as_posix())
         result.append(relative)
     missing = REQUIRED - {item.as_posix() for item in result}
     if missing:

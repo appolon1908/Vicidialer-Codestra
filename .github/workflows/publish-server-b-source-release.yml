@@ -34,11 +34,11 @@ jobs:
         run: |
           set -Eeuo pipefail
           python -m pip install pytest==8.4.2
-          python -m pytest -q vicidial/tests/test_source_release_artifact.py
+          SOURCE_RELEASE_TEST_ROOT="$PWD/exact-source/vicidial" python -m pytest -q vicidial/tests/test_source_release_artifact.py
           mkdir -p dist
           name="codestra-vicidial-adapter-${SOURCE_SHA}.tar.gz"
           python vicidial/scripts/build_source_release.py --source-root exact-source/vicidial --source-sha "$SOURCE_SHA" --builder-sha "$GITHUB_SHA" --output "dist/$name" --metadata dist/source-release-metadata.json
-          sha256sum "dist/$name" > "dist/$name.sha256"
+          (cd dist && sha256sum "$name" > "$name.sha256")
           python - "$name" <<'PY'
           import hashlib, json, os, pathlib, sys
           name = sys.argv[1]
@@ -58,6 +58,7 @@ jobs:
           }
           pathlib.Path("dist/source-release-provenance.json").write_text(json.dumps(provenance, indent=2, sort_keys=True) + "\n")
           PY
+          python vicidial/scripts/verify_source_release.py --archive "dist/$name" --source-sha "$SOURCE_SHA" --builder-sha "$GITHUB_SHA"
       - name: Sign and verify archive
         run: |
           set -Eeuo pipefail
@@ -70,6 +71,18 @@ jobs:
           "$cosign" verify-blob --bundle dist/source-release.sigstore.json --certificate-identity-regexp '^https://github.com/appolon1908-hue/Vicidialer-Codestra/.github/workflows/publish-server-b-source-release.yml@refs/heads/main$' --certificate-oidc-issuer https://token.actions.githubusercontent.com "$archive"
           "$cosign" sign-blob --yes --bundle dist/source-release-provenance.sigstore.json dist/source-release-provenance.json
           "$cosign" verify-blob --bundle dist/source-release-provenance.sigstore.json --certificate-identity-regexp '^https://github.com/appolon1908-hue/Vicidialer-Codestra/.github/workflows/publish-server-b-source-release.yml@refs/heads/main$' --certificate-oidc-issuer https://token.actions.githubusercontent.com dist/source-release-provenance.json
+          python - "$archive" <<'PY'
+          import hashlib, json, os, pathlib, sys
+          archive=pathlib.Path(sys.argv[1]); statement=json.loads(pathlib.Path("dist/source-release-provenance.json").read_text())
+          assert statement.get("_type")=="https://in-toto.io/Statement/v1"
+          assert statement.get("predicateType")=="https://slsa.dev/provenance/v1"
+          assert statement.get("subject")==[{"name":archive.name,"digest":{"sha256":hashlib.sha256(archive.read_bytes()).hexdigest()}}]
+          predicate=statement["predicate"]; definition=predicate["buildDefinition"]; details=predicate["runDetails"]
+          assert definition["externalParameters"]=={"source_sha":os.environ["SOURCE_SHA"]}
+          assert definition["resolvedDependencies"]==[{"uri":"git+https://github.com/appolon1908-hue/Vicidialer-Codestra","digest":{"gitCommit":os.environ["SOURCE_SHA"]}}]
+          assert details["builder"]["id"]==os.environ["GITHUB_WORKFLOW_REF"]
+          assert details["metadata"]["invocationId"]==os.environ["GITHUB_RUN_ID"]+"/"+os.environ["GITHUB_RUN_ATTEMPT"]
+          PY
       - name: Upload protected source release
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
