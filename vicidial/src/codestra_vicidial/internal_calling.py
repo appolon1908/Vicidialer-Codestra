@@ -404,11 +404,12 @@ class InternalCallExecutor:
             db.commit()
             if claimed != 1:
                 raise InternalCallError("hangup claim was not acquired")
+            channel = rows[0][0]
         self.transport.action(
             {
                 "Action": "Hangup",
                 "ActionID": operation_id + ":hangup",
-                "Channel": current["asterisk_uniqueid"],
+                "Channel": channel,
             }
         )
         with closing(sqlite3.connect(self.state_path)) as db:

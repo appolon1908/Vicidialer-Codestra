@@ -143,7 +143,7 @@ def test_readback_and_hangup_use_authoritative_lifecycle_channel(tmp_path):
     assert transport.actions[-1] == {
         "Action": "Hangup",
         "ActionID": "operation-internal-0001:hangup",
-        "Channel": accepted["asterisk_uniqueid"],
+        "Channel": "PJSIP/6901-00000001",
     }
     assert service.hangup(command().operation_id)["duplicate"] is True
     assert len(transport.actions) == 2

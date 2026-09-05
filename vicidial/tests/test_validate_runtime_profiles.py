@@ -60,7 +60,8 @@ def environment(tmp_path, deployment):
     }))
     call_policy.chmod(0o600)
     lifecycle = tmp_path / "ami-events.sqlite3"
-    lifecycle.touch(mode=0o600)
+    from codestra_vicidial.ami_gateway import LifecycleStore
+    LifecycleStore(lifecycle)
     ami_credential = tmp_path / "ami.json"
     ami_credential.write_text(json.dumps({
         "host": "127.0.0.1", "port": 5038, "username": "synthetic",
@@ -180,6 +181,15 @@ def test_production_internal_test_requires_exact_policy_and_lifecycle(tmp_path):
     assert run(env).returncode != 0
     env = environment(tmp_path, "production-internal-test")
     Path(env["CODESTRA_AMI_LIFECYCLE_STATE"]).unlink()
+    assert run(env).returncode != 0
+    env = environment(tmp_path, "production-internal-test")
+    lifecycle = Path(env["CODESTRA_AMI_LIFECYCLE_STATE"])
+    lifecycle.unlink()
+    lifecycle.touch(mode=0o600)
+    assert run(env).returncode != 0
+    env = environment(tmp_path, "production-internal-test")
+    credential = Path(env["CODESTRA_AMI_CREDENTIAL_FILE"])
+    credential.write_text(json.dumps({"host": "127.0.0.1", "port": 5038}))
     assert run(env).returncode != 0
     env = environment(tmp_path, "production-candidate")
     env["ENABLE_PROVISIONING"] = "true"

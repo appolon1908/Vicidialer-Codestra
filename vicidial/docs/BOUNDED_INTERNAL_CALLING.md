@@ -87,9 +87,13 @@ ID and bounded duration/cause evidence. AMI success only means accepted; neither
 originate nor hangup acknowledgement proves call completion or audio.
 
 Turning off the originate gate keeps same-call hangup/readback available in the
-installed dedicated profile. Expiry, policy removal or replacement also denies
-cleanup through this API; administrator recovery must remain available for that
-case. No automated replacement call or broad fallback is permitted.
+installed dedicated profile. For an operation already admitted by the running
+process, expiry, removal, or replacement of the start policy denies new calls but
+does not remove operation-bound readback or hangup; those use the immutable policy
+snapshot that authorized the stored operation. Authentication and ownership checks
+remain enforced. Administrator recovery is still required after a process restart
+if the installed profile or its protected startup inputs are unavailable. No
+automated replacement call or broad fallback is permitted.
 
 A container must share an explicitly reviewed transport to Asterisk's loopback
 AMI and MariaDB. The existing bridge-network deployment does not establish that

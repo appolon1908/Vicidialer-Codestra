@@ -4,12 +4,14 @@ from __future__ import annotations
 
 import json
 import os
+import sqlite3
 import sys
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 from codestra_vicidial.reconciliation import ReconciliationDenied, ReconciliationPolicy
 from codestra_vicidial.internal_calling import InternalCallError, InternalCallPolicy
+from codestra_vicidial.internal_call_transport import CallDenied, load_protected_json
 from codestra_vicidial.release import load_release_info
 
 ALWAYS_FALSE_FLAGS = (
@@ -89,9 +91,33 @@ elif deployment == "production-internal-test":
     ))
     if not lifecycle.is_absolute() or not lifecycle.is_file():
         raise SystemExit("authoritative AMI lifecycle database unavailable")
+    try:
+        with sqlite3.connect(lifecycle.as_uri() + "?mode=ro", uri=True) as db:
+            required = {
+                "calls": {"call_key", "linkedid", "asterisk_uniqueid", "state", "terminal", "created_at", "answered_at", "ended_at"},
+                "channels": {"call_key", "uniqueid", "channel", "active"},
+                "event_outbox": {"event_id", "call_key", "sequence", "event_type", "envelope_json"},
+            }
+            for table, columns in required.items():
+                present = {row[1] for row in db.execute(f"PRAGMA table_info({table})")}
+                if not columns <= present:
+                    raise ValueError("schema mismatch")
+    except (OSError, sqlite3.Error, ValueError) as exc:
+        raise SystemExit("authoritative AMI lifecycle database schema invalid") from exc
     credential = Path(os.environ["CODESTRA_AMI_CREDENTIAL_FILE"])
-    if not credential.is_file() or credential.stat().st_mode & 0o077:
-        raise SystemExit("AMI credential is unavailable or permissions are unsafe")
+    try:
+        document = load_protected_json(credential)
+        if set(document) != {"host", "port", "username", "secret"}:
+            raise CallDenied("AMI credential schema invalid")
+        if document["host"] not in {"127.0.0.1", "localhost"}:
+            raise CallDenied("AMI must remain loopback-only")
+        if type(document["port"]) is not int or not 1 <= document["port"] <= 65535:
+            raise CallDenied("invalid AMI port")
+        if not all(isinstance(document[key], str) and document[key]
+                   for key in ("username", "secret")):
+            raise CallDenied("AMI identity is incomplete")
+    except (OSError, ValueError, TypeError, KeyError, CallDenied) as exc:
+        raise SystemExit("AMI credential is unavailable or invalid") from exc
 elif deployment == "production-reconciliation":
     if backend != "mysql":
         raise SystemExit("production reconciliation requires loopback mysql backend")
