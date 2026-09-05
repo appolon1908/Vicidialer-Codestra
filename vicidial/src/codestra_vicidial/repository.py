@@ -845,6 +845,23 @@ class MySQLRepository:
         row["inbound_groups"] = normalize_allowed_campaigns(row.pop("closer_campaigns"))
         return row
 
+    def internal_call_identity_ready(self) -> bool:
+        """Read-only exact activation/binding check for the internal echo lane."""
+        # End the prior read transaction so repeated calls see current kill/identity state.
+        self.db.rollback()
+        user = self._agent("appolon")
+        phone = self._one(
+            "SELECT p.extension,p.active,p.dialplan_number FROM phones p "
+            "JOIN vicidial_users u ON u.phone_login=p.login "
+            "WHERE u.user=%s AND p.login=%s AND p.extension=%s",
+            ("appolon", "6901", "6901"),
+        )
+        campaign = self._one("SELECT active FROM vicidial_campaigns WHERE campaign_id=%s", ("TEST_SYN",))
+        return bool(user and user["active"] == "Y" and str(user["user_level"]) == "8"
+                    and user["user_group"] == "WEBTEST_SYN" and user["campaigns"] == ["TEST_SYN"]
+                    and phone and phone["active"] == "Y" and phone["dialplan_number"] == "6901"
+                    and campaign and campaign["active"] == "Y")
+
     def agent(self, user_id: str) -> dict | None:
         return self._agent(user_id)
 

@@ -56,6 +56,7 @@ def environment(tmp_path, deployment):
         "destination_alias": "internal:TEST_ECHO", "destination_extension": "6000",
         "dialplan_context": "codestra-internal-test", "internal_only": True,
         "external_dialing": False, "recording": False, "max_calls": 1,
+        "route_sha256": "a" * 64,
     }))
     call_policy.chmod(0o600)
     lifecycle = tmp_path / "ami-events.sqlite3"

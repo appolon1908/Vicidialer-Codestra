@@ -5,6 +5,11 @@ set -eu
 # deployment manifests. Only the exact, policy-backed single-agent profile may
 # enable its two dedicated gates; every unrelated capability remains false.
 profile="${CODESTRA_ADAPTER_DEPLOYMENT:-production-candidate}"
+case "${ENABLE_INTERNAL_TEST_CALLING:-false}" in
+  false) ;;
+  true) [ "$profile" = production-internal-test ] || exit 78 ;;
+  *) exit 78 ;;
+esac
 if [ "$profile" = production-agent-provisioning ]; then
   [ "${ENABLE_VICIDIAL_WRITES:-false}" = true ] || {
     echo "refusing to start: bounded profile requires ENABLE_VICIDIAL_WRITES=true" >&2

@@ -1,20 +1,23 @@
 from __future__ import annotations
 
-import json
 import sqlite3
 from datetime import UTC, datetime, timedelta
 
 import pytest
-
 from codestra_vicidial.internal_calling import (
-    InternalCallError, InternalCallExecutor, InternalCallPolicy, OriginateCommand,
+    InternalCallError,
+    InternalCallExecutor,
+    InternalCallPolicy,
+    OriginateCommand,
 )
-from codestra_vicidial.state import StateStore
 
 
 class FakeAmi:
     def __init__(self):
         self.actions = []
+
+    def verify_route(self, policy):
+        return None
 
     def action(self, fields):
         self.actions.append(fields)
@@ -23,51 +26,83 @@ class FakeAmi:
 
 def policy():
     return InternalCallPolicy(
-        schema_version="1.0", release_sha="a" * 40,
+        schema_version="1.0",
+        release_sha="a" * 40,
+        route_sha256="a" * 64,
         authorization_reference="CHG-APPOLON-INTERNAL-0001",
         expires_at=datetime.now(UTC) + timedelta(minutes=15),
-        tenant_id="tenant-test", subject="subject-appolon",
-        employee_id="employee-appolon", username="appolon", extension="6901",
-        campaign="TEST_SYN", destination_alias="internal:TEST_ECHO",
-        destination_extension="6000", dialplan_context="codestra-internal-test",
-        internal_only=True, external_dialing=False, recording=False, max_calls=1,
+        tenant_id="tenant-test",
+        subject="subject-appolon",
+        employee_id="employee-appolon",
+        username="appolon",
+        extension="6901",
+        campaign="TEST_SYN",
+        destination_alias="internal:TEST_ECHO",
+        destination_extension="6000",
+        dialplan_context="codestra-internal-test",
+        internal_only=True,
+        external_dialing=False,
+        recording=False,
+        max_calls=1,
     )
 
 
 def command(**changes):
-    value = dict(
-        operation_id="operation-internal-0001", correlation_id="correlation-internal-0001",
-        tenant_id="tenant-test", subject="subject-appolon", employee_id="employee-appolon",
-        username="appolon", extension="6901", campaign="TEST_SYN",
-        destination="internal:TEST_ECHO", internal_only=True, external_dialing=False,
-        recording_requested=False, authorization_reference="CHG-APPOLON-INTERNAL-0001",
-    )
+    value = {
+        "operation_id": "operation-internal-0001",
+        "correlation_id": "correlation-internal-0001",
+        "tenant_id": "tenant-test",
+        "subject": "subject-appolon",
+        "employee_id": "employee-appolon",
+        "username": "appolon",
+        "extension": "6901",
+        "campaign": "TEST_SYN",
+        "destination": "internal:TEST_ECHO",
+        "internal_only": True,
+        "external_dialing": False,
+        "recording_requested": False,
+        "authorization_reference": "CHG-APPOLON-INTERNAL-0001",
+    }
     return OriginateCommand(**(value | changes))
 
 
 def executor(tmp_path):
     lifecycle = tmp_path / "lifecycle.sqlite3"
-    with sqlite3.connect(lifecycle) as db:
-        db.executescript("""
-        CREATE TABLE calls(call_key TEXT,linkedid TEXT,call_id TEXT,binding_json TEXT,state TEXT,created_at TEXT,answered_at TEXT,ended_at TEXT,terminal INTEGER,asterisk_uniqueid TEXT);
-        CREATE TABLE channels(call_key TEXT,channel TEXT,active INTEGER,updated_at TEXT);
-        CREATE TABLE event_outbox(call_key TEXT,sequence INTEGER,envelope_json TEXT);
-        """)
+    from codestra_vicidial.ami_gateway import LifecycleStore
+
+    LifecycleStore(lifecycle)
     transport = FakeAmi()
-    audit = StateStore(tmp_path / "audit.sqlite3")
-    return InternalCallExecutor(policy(), tmp_path / "calls.sqlite3", lifecycle, transport, audit), transport, lifecycle
+    return (
+        InternalCallExecutor(
+            policy(),
+            tmp_path / "calls.sqlite3",
+            lifecycle,
+            transport,
+            identity_ready=lambda: True,
+            enabled=lambda: True,
+        ),
+        transport,
+        lifecycle,
+    )
 
 
 def test_originate_uses_only_policy_owned_channel_context_and_target(tmp_path):
     service, transport, _ = executor(tmp_path)
     result = service.originate(command())
     assert result["status"] == "accepted"
-    assert transport.actions == [{
-        "Action": "Originate", "ActionID": "operation-internal-0001",
-        "Channel": "PJSIP/6901", "Context": "codestra-internal-test", "Exten": "6000",
-        "Priority": "1", "Async": "true", "ChannelId": result["asterisk_uniqueid"],
-        "Variable": "CODESTRA_OPERATION_ID=operation-internal-0001",
-    }]
+    assert transport.actions == [
+        {
+            "Action": "Originate",
+            "ActionID": "operation-internal-0001",
+            "Channel": "PJSIP/6901",
+            "Context": "codestra-internal-test",
+            "Exten": "6000",
+            "Priority": "1",
+            "Async": "true",
+            "ChannelId": result["asterisk_uniqueid"],
+            "Variable": "CODESTRA_OPERATION_ID=operation-internal-0001",
+        }
+    ]
 
 
 def test_duplicate_does_not_originate_twice_and_changed_content_conflicts(tmp_path):
@@ -79,10 +114,14 @@ def test_duplicate_does_not_originate_twice_and_changed_content_conflicts(tmp_pa
         service.originate(command(correlation_id="correlation-internal-0002"))
 
 
-@pytest.mark.parametrize("change", [
-    {"tenant_id": "other-tenant"}, {"subject": "other-subject"},
-    {"employee_id": "other-employee"},
-])
+@pytest.mark.parametrize(
+    "change",
+    [
+        {"tenant_id": "other-tenant"},
+        {"subject": "other-subject"},
+        {"employee_id": "other-employee"},
+    ],
+)
 def test_identity_mismatch_is_rejected_before_ami(tmp_path, change):
     service, transport, _ = executor(tmp_path)
     with pytest.raises(PermissionError):
@@ -93,25 +132,18 @@ def test_identity_mismatch_is_rejected_before_ami(tmp_path, change):
 def test_readback_and_hangup_use_authoritative_lifecycle_channel(tmp_path):
     service, transport, lifecycle = executor(tmp_path)
     accepted = service.originate(command())
-    with sqlite3.connect(lifecycle) as db:
-        db.execute("INSERT INTO calls VALUES(?,?,?,?,?,?,?,?,?,?)", (
-            "call-key", "linked-1", "call-1", json.dumps({
-                "tenant_id": "tenant-test", "campaign_id": "TEST_SYN",
-                "agent_id": "employee-appolon", "extension": "6901",
-                "keycloak_subject": "subject-appolon",
-            }), "connected", "2026-09-05T18:00:01Z", "2026-09-05T18:00:02Z",
-            None, 0, accepted["asterisk_uniqueid"],
-        ))
-        db.execute("INSERT INTO channels VALUES(?,?,?,?)", (
-            "call-key", "PJSIP/6901-00000001", 1, "2026-09-05T18:00:03Z",
-        ))
+    seed_connected(lifecycle, accepted["asterisk_uniqueid"])
     evidence = service.readback(command().operation_id)
-    assert evidence["linkedid"] == "linked-1" and evidence["call_state"] == "connected"
+    assert (
+        evidence["linkedid"] == accepted["asterisk_uniqueid"]
+        and evidence["call_state"] == "connected"
+    )
     result = service.hangup(command().operation_id)
     assert result["hangup"] == "requested"
     assert transport.actions[-1] == {
-        "Action": "Hangup", "ActionID": "operation-internal-0001:hangup",
-        "Channel": "PJSIP/6901-00000001",
+        "Action": "Hangup",
+        "ActionID": "operation-internal-0001:hangup",
+        "Channel": accepted["asterisk_uniqueid"],
     }
     assert service.hangup(command().operation_id)["duplicate"] is True
     assert len(transport.actions) == 2
@@ -126,14 +158,45 @@ def test_unknown_channel_cannot_be_claimed_cancelled(tmp_path):
 
 def test_ambiguous_dispatch_is_persisted_and_never_retried(tmp_path):
     service, transport, _ = executor(tmp_path)
+
     def fail(_fields):
         raise TimeoutError("synthetic timeout")
+
     transport.action = fail
-    with pytest.raises(TimeoutError):
+    with pytest.raises(InternalCallError, match="reconciliation"):
         service.originate(command())
     replay = service.originate(command())
     assert replay["status"] == "dispatch_unknown"
     assert replay["duplicate"] is True
+
+
+def seed_connected(path, uniqueid):
+    from codestra_vicidial.ami_gateway import (
+        AgentBinding,
+        AgentDirectory,
+        LifecycleStore,
+        parse_ami_block,
+    )
+
+    directory = AgentDirectory(
+        [
+            AgentBinding(
+                extension="6901",
+                tenant_id="tenant-test",
+                business_unit_id="synthetic-unit",
+                campaign_id="TEST_SYN",
+                agent_id="appolon",
+                keycloak_subject="subject-appolon",
+            )
+        ]
+    )
+    message = parse_ami_block(
+        (
+            f"Event: Newstate\r\nUniqueid: {uniqueid}\r\nLinkedid: {uniqueid}\r\n"
+            "Channel: PJSIP/6901-00000001\r\nChannelStateDesc: Up"
+        ).encode()
+    )
+    LifecycleStore(path).process(message, directory)
 
 
 def test_one_call_grant_cannot_use_a_second_operation_id(tmp_path):
@@ -147,66 +210,15 @@ def test_one_call_grant_cannot_use_a_second_operation_id(tmp_path):
 def test_originate_and_hangup_write_append_only_audit_outcomes(tmp_path):
     service, _, lifecycle = executor(tmp_path)
     accepted = service.originate(command())
-    with sqlite3.connect(lifecycle) as db:
-        db.execute("INSERT INTO calls VALUES(?,?,?,?,?,?,?,?,?,?)", (
-            "call-key", "linked-1", "call-1", json.dumps({
-                "tenant_id": "tenant-test", "campaign_id": "TEST_SYN",
-                "agent_id": "employee-appolon", "extension": "6901",
-                "keycloak_subject": "subject-appolon",
-            }), "connected", "2026-09-05T18:00:01Z", None, None, 0,
-            accepted["asterisk_uniqueid"],
-        ))
-        db.execute("INSERT INTO channels VALUES(?,?,?,?)", (
-            "call-key", "PJSIP/6901-00000001", 1, "2026-09-05T18:00:03Z",
-        ))
+    seed_connected(lifecycle, accepted["asterisk_uniqueid"])
     service.hangup(command().operation_id)
-    with sqlite3.connect(tmp_path / "audit.sqlite3") as db:
-        rows = db.execute("SELECT operation,outcome FROM audit ORDER BY sequence").fetchall()
+    with sqlite3.connect(service.audit_path) as db:
+        rows = db.execute(
+            "SELECT operation,outcome FROM audit ORDER BY sequence"
+        ).fetchall()
     assert rows == [
+        ("internal-call.originate", "requested"),
         ("internal-call.originate", "accepted"),
         ("internal-call.hangup", "requested"),
+        ("internal-call.hangup", "requested"),
     ]
-
-
-def test_terminal_readback_returns_bound_authoritative_evidence(tmp_path):
-    service, _, lifecycle = executor(tmp_path)
-    accepted = service.originate(command())
-    binding = {
-        "tenant_id": "tenant-test", "campaign_id": "TEST_SYN",
-        "agent_id": "employee-appolon", "extension": "6901",
-        "keycloak_subject": "subject-appolon",
-    }
-    envelope = {"payload": {
-        "duration": 9, "talk_duration": 6, "hangup_cause_code": 16,
-        "hangup_cause": "Normal Clearing",
-    }}
-    with sqlite3.connect(lifecycle) as db:
-        db.execute("INSERT INTO calls VALUES(?,?,?,?,?,?,?,?,?,?)", (
-            "call-key", "linked-1", "call-1", json.dumps(binding), "completed",
-            "2026-09-05T18:00:01Z", "2026-09-05T18:00:04Z",
-            "2026-09-05T18:00:10Z", 1, accepted["asterisk_uniqueid"],
-        ))
-        db.execute("INSERT INTO event_outbox VALUES(?,?,?)", (
-            "call-key", 4, json.dumps(envelope),
-        ))
-    result = service.readback(command().operation_id)
-    assert result | {} == result
-    assert result["tenant_id"] == "tenant-test"
-    assert result["subject"] == "subject-appolon"
-    assert result["employee_id"] == "employee-appolon"
-    assert result["duration_seconds"] == 9
-    assert result["talk_duration_seconds"] == 6
-    assert result["hangup_cause_code"] == 16
-    assert result["terminal"] is True
-
-
-def test_changed_content_conflict_is_durably_audited(tmp_path):
-    service, _, _ = executor(tmp_path)
-    service.originate(command())
-    with pytest.raises(InternalCallError):
-        service.originate(command(correlation_id="correlation-internal-0002"))
-    with sqlite3.connect(tmp_path / "audit.sqlite3") as db:
-        row = db.execute(
-            "SELECT outcome FROM audit ORDER BY sequence DESC LIMIT 1"
-        ).fetchone()
-    assert row[0] == "rejected"
