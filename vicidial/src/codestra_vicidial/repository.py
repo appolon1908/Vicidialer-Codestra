@@ -325,23 +325,6 @@ class MemoryRepository:
         self.agents[spec.user_id] = desired
         return deepcopy(desired)
 
-    def _require_transactional_agent_tables(self) -> None:
-        """Reject multi-table creation unless both tables support rollback."""
-        rows = self._all(
-            "SELECT table_name,engine FROM information_schema.tables "
-            "WHERE table_schema=DATABASE() AND table_name IN (%s,%s)",
-            ("vicidial_users", "phones"),
-        )
-        engines = {
-            str(row.get("table_name")): str(row.get("engine", "")).upper()
-            for row in rows
-        }
-        if engines != {"vicidial_users": "INNODB", "phones": "INNODB"}:
-            raise RuntimeError(
-                "agent provisioning requires transactional InnoDB "
-                "vicidial_users and phones tables"
-            )
-
     def provision_agent_disabled(self, spec: AgentSpec, credential: str) -> dict:
         if spec.user_id in self.agents:
             raise CollisionError("agent identifier already exists")
@@ -922,6 +905,23 @@ class MySQLRepository:
                 self.release_agent_adoption_lock()
             raise
         return self.agent(spec.user_id) or {}
+
+    def _require_transactional_agent_tables(self) -> None:
+        """Reject multi-table creation unless both tables support rollback."""
+        rows = self._all(
+            "SELECT table_name,engine FROM information_schema.tables "
+            "WHERE table_schema=DATABASE() AND table_name IN (%s,%s)",
+            ("vicidial_users", "phones"),
+        )
+        engines = {
+            str(row.get("table_name")): str(row.get("engine", "")).upper()
+            for row in rows
+        }
+        if engines != {"vicidial_users": "INNODB", "phones": "INNODB"}:
+            raise RuntimeError(
+                "agent provisioning requires transactional InnoDB "
+                "vicidial_users and phones tables"
+            )
 
     def provision_agent_disabled(self, spec: AgentSpec, credential: str) -> dict:
         """Create one disabled user through a fixed, parameterized DB operation.
