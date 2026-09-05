@@ -364,10 +364,12 @@ class InternalCallExecutor:
                 "SELECT correlation_id FROM internal_calls WHERE operation_id=?",
                 (operation_id,),
             ).fetchone()
+        if row is None:
+            raise KeyError(operation_id)
         return self._execute(
             "hangup",
             operation_id,
-            row[0] if row else operation_id,
+            row[0],
             actor,
             lambda: self._hangup(operation_id),
         )
@@ -410,6 +412,7 @@ class InternalCallExecutor:
                 "Action": "Hangup",
                 "ActionID": operation_id + ":hangup",
                 "Channel": channel,
+                "ExpectedUniqueid": current["asterisk_uniqueid"],
             }
         )
         with closing(sqlite3.connect(self.state_path)) as db:

@@ -246,7 +246,10 @@ def test_live_hangup_status_must_match_exact_agent_and_uniqueid(channel, uniquei
 
     transport._request = perform
     with pytest.raises(CallDenied):
-        transport.action({"Action": "Hangup", "Channel": uid})
+        transport.action({
+            "Action": "Hangup", "Channel": "PJSIP/6901-0001",
+            "ExpectedUniqueid": uid,
+        })
     assert actions == ["Status"]
 
 
@@ -264,8 +267,14 @@ def test_hangup_uses_uniqueid_after_live_status():
         )
 
     transport._request = perform
-    transport.action({"Action": "Hangup", "Channel": uid})
-    assert actions == [("Status", {"Channel": uid}), ("Hangup", {"Channel": uid})]
+    transport.action({
+        "Action": "Hangup", "Channel": "PJSIP/6901-0001",
+        "ExpectedUniqueid": uid,
+    })
+    assert actions == [
+        ("Status", {"Channel": "PJSIP/6901-0001"}),
+        ("Hangup", {"Channel": "PJSIP/6901-0001"}),
+    ]
 
 
 def test_legacy_unbound_intent_store_cannot_be_silently_adopted(tmp_path):

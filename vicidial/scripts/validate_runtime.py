@@ -94,7 +94,7 @@ elif deployment == "production-internal-test":
     try:
         with sqlite3.connect(lifecycle.as_uri() + "?mode=ro", uri=True) as db:
             required = {
-                "calls": {"call_key", "linkedid", "asterisk_uniqueid", "state", "terminal", "created_at", "answered_at", "ended_at"},
+                "calls": {"call_key", "linkedid", "extension", "call_id", "binding_json", "asterisk_uniqueid", "state", "answered", "terminal", "created_at", "answered_at", "ended_at", "updated_at"},
                 "channels": {"call_key", "uniqueid", "channel", "active"},
                 "event_outbox": {"event_id", "call_key", "sequence", "event_type", "envelope_json"},
             }

@@ -172,15 +172,18 @@ class SocketAmiTransport:
         if action == "Originate":
             self._request(action, values)
         elif action == "Hangup":
-            uniqueid = values.get("Channel", "")
+            uniqueid = values.pop("ExpectedUniqueid", "")
+            channel = values.get("Channel", "")
             if not re.fullmatch(r"codestra-[a-f0-9]{32}", uniqueid):
                 raise CallDenied("invalid stored channel identity")
-            rows = self._request("Status", {"Channel": uniqueid}, "StatusComplete")
+            if not re.fullmatch(r"PJSIP/6901-[A-Fa-f0-9]+", channel):
+                raise CallDenied("invalid resolved channel name")
+            rows = self._request("Status", {"Channel": channel}, "StatusComplete")
             if (
                 len(rows) != 1
                 or rows[0].event != "Status"
                 or rows[0].get("Uniqueid") != uniqueid
-                or not re.fullmatch(r"PJSIP/6901-[A-Fa-f0-9]+", rows[0].get("Channel"))
+                or rows[0].get("Channel") != channel
             ):
                 raise CallDenied("hangup channel is not the originated appolon leg")
             self._request(action, values)
