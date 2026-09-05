@@ -65,15 +65,24 @@ def main() -> int:
     generator.add_argument("--backup-created-at", required=True)
     generator.add_argument("--backup-artifact", type=Path, required=True)
     generator.add_argument("--runtime-backup-artifact", required=True)
+    generator.add_argument("--runtime-gid", type=int, required=True)
     generator.add_argument("--output", type=Path, required=True)
     args = parser.parse_args()
     if args.operation == "generate":
         document = build(args)
         validate(document, args.release_sha, backup_artifact_source=args.backup_artifact)
         content = (json.dumps(document, indent=2, sort_keys=True) + "\n").encode()
-        descriptor = os.open(args.output, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
-        with os.fdopen(descriptor, "wb") as stream:
-            stream.write(content)
+        descriptor = os.open(args.output, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o640)
+        try:
+            os.fchown(descriptor, -1, args.runtime_gid)
+            with os.fdopen(descriptor, "wb") as stream:
+                descriptor = -1
+                stream.write(content)
+        except BaseException:
+            if descriptor >= 0:
+                os.close(descriptor)
+            args.output.unlink(missing_ok=True)
+            raise
         print(f"POLICY_GENERATED={args.output}")
     else:
         document = json.loads(args.policy.read_text(encoding="utf-8"))

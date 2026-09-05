@@ -2,6 +2,7 @@ import argparse
 import hashlib
 import importlib.util
 import json
+import os
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
@@ -82,9 +83,11 @@ def test_cli_writes_runtime_path_with_private_mode(tmp_path):
         "--backup-reference", document["backup"]["reference"], "--backup-created-at",
         document["backup"]["created_at"], "--backup-artifact", str(backup),
         "--runtime-backup-artifact", "/run/provisioning-backup/synthetic-backup.enc",
+        "--runtime-gid", str(os.getgid()),
         "--output", str(output),
     ]
     completed = subprocess.run(command, capture_output=True, text=True)
     assert completed.returncode == 0, completed.stderr
-    assert output.stat().st_mode & 0o777 == 0o600
+    assert output.stat().st_mode & 0o777 == 0o640
+    assert output.stat().st_gid == os.getgid()
     assert json.loads(output.read_text())["backup"]["artifact"].startswith("/run/provisioning-backup/")

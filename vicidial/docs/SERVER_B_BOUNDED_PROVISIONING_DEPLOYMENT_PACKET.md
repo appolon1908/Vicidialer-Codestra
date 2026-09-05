@@ -95,12 +95,13 @@ step creates and hashes their evidence.
    and validate its structure against
    `vicidial/config/agent-provisioning-policy.schema.json`. Supply
    `--agent-json`, `--release-sha`, `--authorization-reference`, `--expires-at`,
-   `--backup-reference`, `--backup-created-at`, the readable host checksum
+   `--backup-reference`, `--backup-created-at`, `--runtime-gid 10001`, the readable host checksum
    source in `--backup-artifact`, and its container-visible path under
    `/run/provisioning-backup/` in `--runtime-backup-artifact`. Supply the
-   protected destination as `--output`; the generator creates a new `0600`
-   file and refuses to overwrite one. Run it through the existing authorized
-   root administrative session so runtime ownership is compatible. Revalidate
+   protected destination as `--output`; the generator creates a new root-owned,
+   runtime-group-owned `0640` file and refuses to overwrite one. Run it through
+   the existing authorized root administrative session so it can assign GID 10001.
+   Revalidate
    with `agent_provisioning_policy.py validate --policy <path> --release-sha
    <sha> --backup-artifact-source <host backup path>`. Never place policy
    contents in evidence.
