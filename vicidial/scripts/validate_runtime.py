@@ -55,6 +55,11 @@ if (
     if release_info.get("verified") is not True:
         raise SystemExit("release metadata is not verified")
 
+if os.environ.get("ENABLE_INTERNAL_TEST_CALLING", "false") not in {"true", "false"}:
+    raise SystemExit("invalid internal call gate")
+if deployment != "production-internal-test":
+    require_false("ENABLE_INTERNAL_TEST_CALLING")
+
 backend = os.environ.get("CODESTRA_ADAPTER_BACKEND", "memory")
 if deployment == "staging-read-only":
     if backend != "memory":
@@ -66,6 +71,15 @@ elif deployment == "production-candidate":
         raise SystemExit("production candidate requires loopback mysql backend")
     for name in ("ENABLE_VICIDIAL_WRITES", "ENABLE_PROVISIONING"):
         require_false(name)
+elif deployment == "production-internal-test":
+    from codestra_vicidial.internal_calling import InternalCallPolicy
+    if backend != "mysql" or release_info is None:
+        raise SystemExit("internal tests require mysql and verified release metadata")
+    for name in ("ENABLE_VICIDIAL_WRITES", "ENABLE_PROVISIONING", "ENABLE_AGENT_PROVISIONING"):
+        require_false(name)
+    policy = InternalCallPolicy.from_file(Path(os.environ["CODESTRA_INTERNAL_CALL_POLICY_FILE"]), release_info["git_sha"])
+    if policy.release_sha != release_info.get("git_sha"):
+        raise SystemExit("internal call policy release mismatch")
 elif deployment == "production-reconciliation":
     if backend != "mysql":
         raise SystemExit("production reconciliation requires loopback mysql backend")

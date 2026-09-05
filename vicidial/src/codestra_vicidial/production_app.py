@@ -113,7 +113,6 @@ def _repository_ready(profile: str) -> tuple[bool, str]:
             "development-loopback",
             "staging-read-only",
             "production-candidate",
-            INTERNAL_TEST_PROFILE,
         }, backend
     if backend == "mysql":
         ok, _database = _mysql_ready()
@@ -124,10 +123,7 @@ def _repository_ready(profile: str) -> tuple[bool, str]:
 def _release_ready(profile: str) -> tuple[bool, str | None, dict]:
     required = (
         os.environ.get("CODESTRA_RELEASE_METADATA_REQUIRED", "false").lower() == "true"
-        or profile in {
-            "production-candidate", "production-reconciliation",
-            INTERNAL_TEST_PROFILE,
-        }
+        or profile in {"production-candidate", "production-reconciliation", INTERNAL_TEST_PROFILE}
     )
     try:
         release = load_release_info(required=required)
@@ -163,16 +159,15 @@ def _kill_switch_ready(profile: str, reconciliation_policy_verified: bool) -> bo
     if any(name in os.environ for name in LEGACY_FLAGS):
         return False
 
+    internal_gate = os.environ.get("ENABLE_INTERNAL_TEST_CALLING", "false")
+    if internal_gate not in {"true", "false"} or (internal_gate == "true" and profile != INTERNAL_TEST_PROFILE):
+        return False
+    if profile == INTERNAL_TEST_PROFILE and _enabled("ENABLE_AGENT_PROVISIONING"):
+        return False
+    if internal_gate == "true" and getattr(app.state, "internal_call_executor", None) is None:
+        return False
     writes = _enabled("ENABLE_VICIDIAL_WRITES")
     provisioning = _enabled("ENABLE_PROVISIONING")
-    internal_calling = _enabled("ENABLE_INTERNAL_TEST_CALLING")
-    if internal_calling:
-        return (
-            profile == INTERNAL_TEST_PROFILE
-            and getattr(app.state, "internal_call_executor", None) is not None
-            and not writes
-            and not provisioning
-        )
     if profile == "production-reconciliation":
         # Reconciliation is the one bounded exception: both switches must be on,
         # the immutable request-bound policy must be verified, and every live
@@ -199,11 +194,15 @@ def build_readiness() -> tuple[int, dict]:
     }
     if profile == "production-reconciliation":
         checks["reconciliation_policy"] = reconciliation_policy_verified
+
     if profile == INTERNAL_TEST_PROFILE:
-        checks["internal_call_policy"] = (
-            _enabled("ENABLE_INTERNAL_TEST_CALLING")
-            and getattr(app.state, "internal_call_executor", None) is not None
-        )
+        from .internal_calling import InternalCallPolicy
+        try:
+            policy = InternalCallPolicy.from_file(Path(os.environ["CODESTRA_INTERNAL_CALL_POLICY_FILE"]), release_sha)
+            checks["internal_call_policy"] = (policy.release_sha == release_sha
+                                               and getattr(app.state, "internal_call_executor", None) is not None)
+        except Exception:
+            checks["internal_call_policy"] = False
 
     status = "ready" if all(checks.values()) else "not_ready"
     writes_enabled = (
@@ -221,12 +220,9 @@ def build_readiness() -> tuple[int, dict]:
         "reconciliation_policy_verified": reconciliation_policy_verified,
         "checks": checks,
         "writes_enabled": writes_enabled,
+        "internal_test_calling": profile == INTERNAL_TEST_PROFILE and _enabled("ENABLE_INTERNAL_TEST_CALLING"),
         "production_dialing": False,
         "customer_traffic_authorized": False,
-        "internal_test_calling": (
-            profile == INTERNAL_TEST_PROFILE
-            and _enabled("ENABLE_INTERNAL_TEST_CALLING")
-        ),
     }
     return (200 if status == "ready" else 503), body
 
