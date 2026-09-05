@@ -376,7 +376,7 @@ def create_app(
         except PermissionError as exc:
             raise HTTPException(403, str(exc)) from exc
         except ValueError as exc:
-            service.state.audit(key, identity, "internal-call:originate", key, "invalid_request", {})
+            internal_call_executor._audit("originate", key, key, identity, "invalid_request")
             raise HTTPException(422, "invalid internal call command") from exc
 
     @app.get("/v1/calls/internal/{operation_id}")

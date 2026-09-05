@@ -24,7 +24,9 @@ class CallUnavailable(RuntimeError):
 
 
 def digest(value):
-    return hashlib.sha256(json.dumps(value, sort_keys=True, separators=(",", ":")).encode()).hexdigest()
+    return hashlib.sha256(
+        json.dumps(value, sort_keys=True, separators=(",", ":")).encode()
+    ).hexdigest()
 
 
 def load_protected_json(path):
@@ -38,6 +40,7 @@ def load_protected_json(path):
         raw = stream.read(65537)
         if len(raw) > 65536:
             raise CallDenied("configuration too large")
+
         def unique(pairs):
             value = {}
             for key, item in pairs:
@@ -45,6 +48,7 @@ def load_protected_json(path):
                     raise CallDenied("duplicate configuration key")
                 value[key] = item
             return value
+
         return json.loads(raw, object_pairs_hook=unique)
 
 
@@ -56,6 +60,8 @@ class SocketAmiTransport:
         if action not in {"ShowDialPlan", "Originate", "Status", "Hangup"}:
             raise CallDenied("AMI action outside internal call contract")
         config = load_protected_json(self.credential_file)
+        if config.get("host", "127.0.0.1") not in {"127.0.0.1", "localhost"}:
+            raise CallDenied("AMI must remain loopback-only")
         port = config.get("port", 5038)
         if type(port) is not int or not 1 <= port <= 65535:
             raise CallDenied("invalid loopback AMI port")
@@ -170,9 +176,12 @@ class SocketAmiTransport:
             if not re.fullmatch(r"codestra-[a-f0-9]{32}", uniqueid):
                 raise CallDenied("invalid stored channel identity")
             rows = self._request("Status", {"Channel": uniqueid}, "StatusComplete")
-            if (len(rows) != 1 or rows[0].event != "Status"
-                    or rows[0].get("Uniqueid") != uniqueid
-                    or not re.fullmatch(r"PJSIP/6901-[A-Fa-f0-9]+", rows[0].get("Channel"))):
+            if (
+                len(rows) != 1
+                or rows[0].event != "Status"
+                or rows[0].get("Uniqueid") != uniqueid
+                or not re.fullmatch(r"PJSIP/6901-[A-Fa-f0-9]+", rows[0].get("Channel"))
+            ):
                 raise CallDenied("hangup channel is not the originated appolon leg")
             self._request(action, values)
         else:
