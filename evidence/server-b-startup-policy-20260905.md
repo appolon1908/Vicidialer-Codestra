@@ -13,7 +13,15 @@ cover tenant, subject, employee, authorization reference, route digest and expir
 replacement; they require no AMI action or consumed intent and verify that the
 unchanged startup policy can still originate. Existing cleanup behavior remains.
 
-Local isolated Python 3.12.14 validation:
+Corrected source identity: commit
+`e36c15b1ba6953f336903f4c59b6d57d9f9cdf3f` on
+`fix/internal-call-startup-policy`. Exact-head GitHub source validation
+[run 33997378660](https://github.com/appolon1908-hue/Vicidialer-Codestra/actions/runs/33997378660)
+completed successfully at 2026-09-05T22:59:00Z with 421 passed, 6 skipped and
+one dependency warning, on Python 3.11.16. This subsequent documentation update
+does not change the tested Python source. No production gate is certified here.
+
+Local isolated Python 3.12.14 validation of the same implementation:
 `python -m pytest -q -rs vicidial/tests tests`: 421 passed, 6 skipped,
 1 dependency deprecation warning. Five skips require isolated MariaDB and one
 requires a built container. No production service was contacted by these tests.
