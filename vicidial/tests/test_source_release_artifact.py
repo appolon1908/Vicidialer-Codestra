@@ -4,7 +4,7 @@ ROOT = Path(__file__).resolve().parents[2]
 SOURCE_ROOT = Path(os.environ.get("SOURCE_RELEASE_TEST_ROOT", ROOT / "vicidial")).resolve()
 SCRIPT = ROOT / "vicidial/scripts/build_source_release.py"
 VERIFY = ROOT / "vicidial/scripts/verify_source_release.py"
-SHA = "75f48ffe9f4a48f76bc5ed0ecb3dc5770933d98a"
+SHA = "9ac8ef4840f78ba4ad9b816e4e409298505103ce"
 
 def build(tmp_path, name):
     output = tmp_path / name; metadata = tmp_path / f"{name}.json"
@@ -36,7 +36,7 @@ def test_archive_is_accepted_by_existing_pip_install_step(tmp_path):
     credential.write_bytes(b"isolated-test-credential-not-for-production" * 2)
     credential.chmod(0o600)
     installed_check = """
-import importlib.metadata as metadata, pathlib, runpy, sys
+import importlib.metadata as metadata, pathlib, runpy, sys, types
 import codestra_vicidial.app as application
 import codestra_vicidial.reconciliation
 import codestra_vicidial.release
@@ -51,6 +51,21 @@ assert {('POST', '/v1/calls/internal/originate'),
 # Preload the installed modules before the canonical script adds its source path.
 # After validation, reject any package module resolved from extracted source.
 runpy.run_path(sys.argv[2], run_name='__main__')
+# Execute selected payload regressions against the already installed modules.
+# Only test helpers are loaded from extracted source; every runtime import below
+# must still resolve into pip's installed target.
+source_tests = pathlib.Path(sys.argv[2]).parents[1] / 'tests'
+helper = types.ModuleType('test_internal_calling')
+helper.__dict__.update(runpy.run_path(str(source_tests / 'test_internal_calling.py')))
+sys.modules['test_internal_calling'] = helper
+regressions = runpy.run_path(str(source_tests / 'test_internal_call_review.py'))
+for label, function, args in (
+    ('substitution', 'test_replaced_policy_cannot_start_an_uncleanable_call', ({'tenant_id': 'replacement-tenant'},)),
+    ('cleanup', 'test_expired_start_policy_denies_new_start_but_preserves_read_and_end', ()),
+):
+    isolated = target.parent / label
+    isolated.mkdir()
+    regressions[function](isolated, *args)
 for name, module in tuple(sys.modules.items()):
     if name.startswith('codestra_vicidial') and getattr(module, '__file__', None):
         assert pathlib.Path(module.__file__).resolve().is_relative_to(target), name

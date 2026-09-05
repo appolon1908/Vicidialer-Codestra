@@ -75,3 +75,25 @@ rollback read-back. A failure must remain a failure with delivery disabled.
 If the installed operator lacks these properties, its owner must submit the bounded
 correction through the existing operator source/review/deployment process. Do not
 hot-patch the host or introduce a replacement installer in packaging PR #28.
+
+
+## Selected correction and publication binding
+
+The selected runtime payload is `9ac8ef4840f78ba4ad9b816e4e409298505103ce`,
+which contains PR #29's startup-policy substitution repair. The publication
+confirmation is `PUBLISH_SERVER_B_SOURCE_RELEASE_9AC8EF48`. The previously
+selected 75f48ffe source remains historical evidence and is not this payload.
+
+The workflow/builder SHA is the protected merge of PR #28 (or a separately
+reviewed successor); it is recorded separately from the runtime source SHA.
+Both the signed archive manifest and signed provenance bind the builder SHA.
+Provenance also binds source repository/SHA, archive name/digest, the exact
+workflow identity and run/attempt. Verification must use the observed protected
+run's head SHA and run ID/attempt, never values trusted solely from a downloaded
+manifest. After downloading, verify both Sigstore bundles and rerun the archive
+and provenance semantic checks with those independent expected values.
+
+The selected archive's installed package is exercised outside the checkout,
+including the canonical runtime validator, startup-policy substitution rejection
+and same-call cleanup after new-start authority expiry. These are isolated
+contract tests, not browser/SIP/audio or production deployment certification.

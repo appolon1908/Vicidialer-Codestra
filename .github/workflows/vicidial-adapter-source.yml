@@ -52,13 +52,13 @@ jobs:
       - name: Check out selected source archive payload
         uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8
         with:
-          ref: 75f48ffe9f4a48f76bc5ed0ecb3dc5770933d98a
+          ref: 9ac8ef4840f78ba4ad9b816e4e409298505103ce
           path: exact-source
           persist-credentials: false
 
       - name: Verify and install the exact selected source archive
         run: |
-          test "$(git -C exact-source rev-parse HEAD)" = 75f48ffe9f4a48f76bc5ed0ecb3dc5770933d98a
+          test "$(git -C exact-source rev-parse HEAD)" = 9ac8ef4840f78ba4ad9b816e4e409298505103ce
           SOURCE_RELEASE_TEST_ROOT="$PWD/exact-source/vicidial" \
             python -m pytest -q vicidial/tests/test_source_release_artifact.py
 
