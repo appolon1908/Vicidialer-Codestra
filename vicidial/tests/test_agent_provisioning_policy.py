@@ -6,7 +6,7 @@ import pytest
 from codestra_vicidial.agent_provisioning import AgentProvisioningPolicy
 from codestra_vicidial.models import ProvisionAgentCommand
 from codestra_vicidial.reconciliation import ReconciliationDenied, canonical_sha256
-from codestra_vicidial.repository import CollisionError, MemoryRepository
+from codestra_vicidial.repository import CollisionError, MemoryRepository, MySQLRepository
 from codestra_vicidial.service import AdapterService, FeatureFlags
 from codestra_vicidial.state import StateStore
 from codestra_vicidial.credential_authority import IssuedCredential
@@ -194,3 +194,23 @@ def test_partial_phone_failure_rolls_back_user(tmp_path):
         service.provision_agent("idempotency-rollback-0001", command())
     assert "appolon" not in repo.agents
     assert "6901" not in repo.phones
+
+
+def test_mysql_agent_provisioning_rejects_nontransactional_tables(monkeypatch):
+    repository = MySQLRepository(object())
+    monkeypatch.setattr(repository, "_all", lambda *_args: [
+        {"table_name": "vicidial_users", "engine": "MyISAM"},
+        {"table_name": "phones", "engine": "MyISAM"},
+    ])
+    with pytest.raises(RuntimeError, match="requires transactional InnoDB"):
+        repository._require_transactional_agent_tables()
+
+
+def test_agent_provisioning_compose_requires_secret_authority_socket():
+    compose = (
+        __import__("pathlib").Path(__file__).parents[1]
+        / "docker/compose.agent-provisioning.yml"
+    ).read_text(encoding="utf-8")
+    assert "CODESTRA_SECRET_AUTHORITY_SOCKET:?" in compose
+    assert ":/run/secret-authority/authority.sock" in compose
+    assert "CODESTRA_SECRET_AUTHORITY_SOCKET: /run/secret-authority/authority.sock" in compose

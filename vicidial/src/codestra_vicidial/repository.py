@@ -906,19 +906,30 @@ class MySQLRepository:
             raise
         return self.agent(spec.user_id) or {}
 
+    def _require_transactional_agent_tables(self) -> None:
+        """Reject multi-table creation unless both tables support rollback."""
+        rows = self._all(
+            "SELECT table_name,engine FROM information_schema.tables "
+            "WHERE table_schema=DATABASE() AND table_name IN (%s,%s)",
+            ("vicidial_users", "phones"),
+        )
+        engines = {
+            str(row.get("table_name")): str(row.get("engine", "")).upper()
+            for row in rows
+        }
+        if engines != {"vicidial_users": "INNODB", "phones": "INNODB"}:
+            raise RuntimeError(
+                "agent provisioning requires transactional InnoDB "
+                "vicidial_users and phones tables"
+            )
+
     def provision_agent_disabled(self, spec: AgentSpec, credential: str) -> dict:
         """Create one disabled user through a fixed, parameterized DB operation.
 
         The generated bootstrap password is intentionally neither returned nor logged.
         A separately governed activation/credential rotation workflow must replace it.
         """
-        engines = self._all(
-            "SELECT TABLE_NAME,ENGINE FROM information_schema.TABLES "
-            "WHERE TABLE_SCHEMA=DATABASE() AND TABLE_NAME IN ('vicidial_users','phones')"
-        )
-        engine_map = {row["TABLE_NAME"]: row["ENGINE"] for row in engines}
-        if engine_map != {"vicidial_users": "InnoDB", "phones": "InnoDB"}:
-            raise RuntimeError("transactional InnoDB user and phone tables required")
+        self._require_transactional_agent_tables()
         availability = self.agent_availability(spec.user_id, spec.extension)
         if not availability["username_available"]:
             raise CollisionError("agent identifier already exists")
