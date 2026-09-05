@@ -39,6 +39,25 @@ jobs:
           name="codestra-vicidial-adapter-${SOURCE_SHA}.tar.gz"
           python vicidial/scripts/build_source_release.py --source-root exact-source/vicidial --source-sha "$SOURCE_SHA" --builder-sha "$GITHUB_SHA" --output "dist/$name" --metadata dist/source-release-metadata.json
           sha256sum "dist/$name" > "dist/$name.sha256"
+          python - "$name" <<'PY'
+          import hashlib, json, os, pathlib, sys
+          name = sys.argv[1]
+          archive = pathlib.Path("dist") / name
+          provenance = {
+              "_type": "https://in-toto.io/Statement/v1",
+              "subject": [{"name": name, "digest": {"sha256": hashlib.sha256(archive.read_bytes()).hexdigest()}}],
+              "predicateType": "https://slsa.dev/provenance/v1",
+              "predicate": {
+                  "buildDefinition": {
+                      "buildType": "https://github.com/appolon1908-hue/Vicidialer-Codestra/server-b-source-release/v1",
+                      "externalParameters": {"source_sha": os.environ["SOURCE_SHA"]},
+                      "resolvedDependencies": [{"uri": "git+https://github.com/appolon1908-hue/Vicidialer-Codestra", "digest": {"gitCommit": os.environ["SOURCE_SHA"]}}],
+                  },
+                  "runDetails": {"builder": {"id": os.environ["GITHUB_WORKFLOW_REF"]}, "metadata": {"invocationId": os.environ["GITHUB_RUN_ID"] + "/" + os.environ["GITHUB_RUN_ATTEMPT"]}},
+              },
+          }
+          pathlib.Path("dist/source-release-provenance.json").write_text(json.dumps(provenance, indent=2, sort_keys=True) + "\n")
+          PY
       - name: Sign and verify archive
         run: |
           set -Eeuo pipefail
@@ -49,6 +68,8 @@ jobs:
           archive="dist/codestra-vicidial-adapter-${SOURCE_SHA}.tar.gz"
           "$cosign" sign-blob --yes --bundle dist/source-release.sigstore.json "$archive"
           "$cosign" verify-blob --bundle dist/source-release.sigstore.json --certificate-identity-regexp '^https://github.com/appolon1908-hue/Vicidialer-Codestra/.github/workflows/publish-server-b-source-release.yml@refs/heads/main$' --certificate-oidc-issuer https://token.actions.githubusercontent.com "$archive"
+          "$cosign" sign-blob --yes --bundle dist/source-release-provenance.sigstore.json dist/source-release-provenance.json
+          "$cosign" verify-blob --bundle dist/source-release-provenance.sigstore.json --certificate-identity-regexp '^https://github.com/appolon1908-hue/Vicidialer-Codestra/.github/workflows/publish-server-b-source-release.yml@refs/heads/main$' --certificate-oidc-issuer https://token.actions.githubusercontent.com dist/source-release-provenance.json
       - name: Upload protected source release
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
