@@ -55,6 +55,27 @@ def test_generator_constructs_runtime_valid_policy(tmp_path):
     assert document["agent"] == AGENT
 
 
+@pytest.mark.parametrize(("field", "value"), [
+    ("authorization_reference", "foo"),
+    ("backup_reference", "short"),
+])
+def test_generator_rejects_references_invalid_for_canonical_request(tmp_path, field, value):
+    _, backup = generated(tmp_path)
+    agent = tmp_path / "agent.json"
+    agent.write_text(json.dumps(AGENT), encoding="utf-8")
+    now = datetime.now(UTC)
+    args = argparse.Namespace(
+        backup_artifact=backup, agent_json=agent, release_sha="a" * 40,
+        runtime_backup_artifact="/run/provisioning-backup/synthetic-backup.enc",
+        authorization_reference="CHG-SYNTHETIC-00001",
+        expires_at=(now + timedelta(hours=1)).isoformat(),
+        backup_reference="synthetic/backup-0001", backup_created_at=now.isoformat(),
+    )
+    setattr(args, field, value)
+    with pytest.raises(ValueError):
+        module.build(args)
+
+
 @pytest.mark.parametrize("mutation", [
     lambda value: value.pop("agent"),
     lambda value: value.update(extra=True),
@@ -91,3 +112,11 @@ def test_cli_writes_runtime_path_with_private_mode(tmp_path):
     assert output.stat().st_mode & 0o777 == 0o640
     assert output.stat().st_gid == os.getgid()
     assert json.loads(output.read_text())["backup"]["artifact"].startswith("/run/provisioning-backup/")
+
+
+def test_cli_forces_group_read_permission_under_hardened_umask(tmp_path):
+    previous = os.umask(0o077)
+    try:
+        test_cli_writes_runtime_path_with_private_mode(tmp_path)
+    finally:
+        os.umask(previous)

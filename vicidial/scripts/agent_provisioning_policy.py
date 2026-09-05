@@ -10,12 +10,21 @@ import os
 import sys
 from datetime import UTC, datetime
 from pathlib import Path
+from typing import Annotated
+
+from pydantic import TypeAdapter
 
 SOURCE = Path(__file__).resolve().parents[1] / "src"
 sys.path.insert(0, str(SOURCE))
 
 from codestra_vicidial.agent_provisioning import AgentProvisioningPolicy  # noqa: E402
-from codestra_vicidial.models import AgentSpec  # noqa: E402
+from codestra_vicidial.models import AgentSpec, ProvisionAgentCommand  # noqa: E402
+
+
+def validate_request_reference(field_name: str, value: str) -> str:
+    field = ProvisionAgentCommand.model_fields[field_name]
+    constrained = Annotated.__class_getitem__((field.annotation, *field.metadata))
+    return TypeAdapter(constrained).validate_python(value)
 
 
 def build(args: argparse.Namespace) -> dict:
@@ -24,12 +33,18 @@ def build(args: argparse.Namespace) -> dict:
     if not runtime_artifact.is_absolute():
         raise ValueError("runtime backup artifact must be absolute")
     agent = AgentSpec.model_validate(json.loads(args.agent_json.read_text(encoding="utf-8")))
+    authorization_reference = validate_request_reference(
+        "authorization_reference", args.authorization_reference
+    )
+    backup_reference = validate_request_reference(
+        "backup_reference", args.backup_reference
+    )
     return {
         "protected_sha": args.release_sha,
-        "authorization_reference": args.authorization_reference,
+        "authorization_reference": authorization_reference,
         "expires_at": args.expires_at,
         "backup": {
-            "reference": args.backup_reference,
+            "reference": backup_reference,
             "created_at": args.backup_created_at,
             "artifact": str(runtime_artifact),
             "sha256": hashlib.sha256(artifact.read_bytes()).hexdigest(),
@@ -74,6 +89,7 @@ def main() -> int:
         content = (json.dumps(document, indent=2, sort_keys=True) + "\n").encode()
         descriptor = os.open(args.output, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o640)
         try:
+            os.fchmod(descriptor, 0o640)
             os.fchown(descriptor, -1, args.runtime_gid)
             with os.fdopen(descriptor, "wb") as stream:
                 descriptor = -1

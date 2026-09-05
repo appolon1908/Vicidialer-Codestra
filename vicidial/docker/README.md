@@ -41,5 +41,5 @@ artifacts. Neither Compose file mounts the Docker socket.
 Production Compose requires `VICIDIAL_ADAPTER_IMAGE` to contain the complete
 verified release reference, including the permitted GHCR repository and
 immutable `sha256` digest. Generate it only with
-`scripts/validate_deployment_artifact.py`; a tag or digest-only variable is not
+`vicidial/scripts/validate_deployment_artifact.py`; a tag or digest-only variable is not
 accepted.
