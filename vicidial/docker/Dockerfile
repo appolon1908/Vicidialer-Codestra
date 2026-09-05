@@ -16,7 +16,7 @@ ARG SOURCE_SHA
 ARG BUILD_DATE
 ARG RELEASE_ENVIRONMENT=production-candidate
 ARG OPENSSL_PACKAGE_VERSION=3.5.8-r0
-ARG LIBUUID_PACKAGE_VERSION=2.42.3-r0
+ARG LIBUUID_PACKAGE_VERSION=2.42.1-r0
 LABEL org.opencontainers.image.title="Codestra VICIdial Restricted Adapter" \
       org.opencontainers.image.revision="${SOURCE_SHA}" \
       org.opencontainers.image.created="${BUILD_DATE}" \
