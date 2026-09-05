@@ -2,3 +2,6 @@
 GRANT INSERT (user, pass, full_name, user_level, user_group, active, closer_campaigns),
       UPDATE (active)
 ON asterisk.vicidial_users TO 'codestra-adapter'@'localhost';
+GRANT INSERT (extension, dialplan_number, voicemail_id, server_ip, login, pass,
+              status, active, phone_type, fullname, company, protocol, local_gmt)
+ON asterisk.phones TO 'codestra-adapter'@'localhost';
