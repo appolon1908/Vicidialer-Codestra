@@ -608,3 +608,25 @@ def test_startup_entrypoints_reject_ordinary_profile_call_enablement(tmp_path, t
     assert result.returncode != 0
     if target == "validator":
         assert "ENABLE_INTERNAL_TEST_CALLING must remain false" in result.stderr
+
+
+@pytest.mark.parametrize("changes", [
+    {"tenant_id": "replacement-tenant"},
+    {"subject": "replacement-subject"},
+    {"employee_id": "replacement-employee"},
+    {"authorization_reference": "CHG-REPLACEMENT-INTERNAL-0001"},
+    {"route_sha256": "b" * 64},
+    {"expires_at": datetime.now(UTC) + timedelta(hours=2)},
+])
+def test_replaced_policy_cannot_start_an_uncleanable_call(tmp_path, changes):
+    service, transport, _ = executor(tmp_path)
+    original = service.policy
+    service.policy_provider = lambda: original.model_copy(update=changes)
+    command_changes = {k: v for k, v in changes.items() if k in type(command()).model_fields}
+    with pytest.raises(PermissionError, match="startup authorization"):
+        service.originate(command(**command_changes))
+    assert not transport.actions
+    with sqlite3.connect(service.state_path) as db:
+        assert db.execute("SELECT count(*) FROM internal_calls").fetchone()[0] == 0
+    service.policy_provider = lambda: original.model_copy()
+    assert service.originate(command())["status"] == "accepted"
