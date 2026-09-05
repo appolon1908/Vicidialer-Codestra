@@ -1,0 +1,4 @@
+-- Temporary, column-scoped authority for the bounded disabled-user profile.
+GRANT INSERT (user, pass, full_name, user_level, user_group, active, closer_campaigns),
+      UPDATE (active)
+ON asterisk.vicidial_users TO 'codestra-adapter'@'localhost';

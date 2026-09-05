@@ -135,6 +135,13 @@ class AgentCommand(StrictModel):
     agent: AgentSpec
 
 
+class ProvisionAgentCommand(AgentCommand):
+    user_level: Literal[9]
+    authorization_reference: Annotated[str, Field(pattern=r"^CHG-[A-Z0-9-]{10,80}$")]
+    plan_sha256: Annotated[str, Field(pattern=r"^[a-f0-9]{64}$")]
+    backup_reference: Annotated[str, Field(pattern=r"^[A-Za-z0-9._:/-]{8,255}$")]
+
+
 class DisableAgentCommand(StrictModel):
     context: RequestContext
     user_id: Annotated[str, Field(pattern=r"^[A-Z]{3}[0-9]{4,12}$")]

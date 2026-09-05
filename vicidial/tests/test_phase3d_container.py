@@ -20,6 +20,7 @@ LIVE_FLAGS = (
     "ENABLE_VICIDIAL_WRITES",
     "ENABLE_PROVISIONING",
     "ENABLE_AGENT_SYNC",
+    "ENABLE_AGENT_PROVISIONING",
     "ENABLE_LEAD_PUBLICATION",
     "ENABLE_LIVE_CALL_CONTROL",
     "ENABLE_WARM_TRANSFER",
@@ -53,7 +54,9 @@ def test_dockerfile_is_pinned_multistage_nonroot_and_amd64_buildable():
     assert "9443" not in text
     assert '"libcrypto3=${OPENSSL_PACKAGE_VERSION}"' in text
     assert '"libssl3=${OPENSSL_PACKAGE_VERSION}"' in text
+    assert '"libuuid=${LIBUUID_PACKAGE_VERSION}"' in text
     assert "OPENSSL_PACKAGE_VERSION=3.5.8-r0" in text
+    assert "LIBUUID_PACKAGE_VERSION=2.42.3-r0" in text
     assert "https://github.com/appolon1908-hue/Vicidialer-Codestra" in text
     assert "codestra_vicidial.production_app:app" in text
     for flag in LIVE_FLAGS:
@@ -91,8 +94,9 @@ def test_vulnerability_policy_is_exact_and_verifier_fails_closed(tmp_path):
     metadata = {"Id": image_id,
                 "Config": {"Labels": {"org.opencontainers.image.revision": "a" * 40}}}
     regression = {"python_short": "3.11.16", "implementation": "cpython",
-                  "expat_short": "2.8.3", "openssl_short": "3.5.8",
-                  "libcrypto3": "3.5.8-r0", "libssl3": "3.5.8-r0",
+                      "expat_short": "2.8.3", "openssl_short": "3.5.8",
+                      "libcrypto3": "3.5.8-r0", "libssl3": "3.5.8-r0",
+                      "libuuid": "2.42.3-r0",
                   **{x["required_regression"]: "PASS" for x in policy["adjudications"]}}
     match = {"vulnerability": {"id": "CVE-2026-4224", "severity": "High"},
              "artifact": {"name": "python", "version": "3.11.16"}}

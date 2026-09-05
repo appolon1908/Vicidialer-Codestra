@@ -9,9 +9,16 @@ from fastapi.openapi.utils import get_openapi
 from fastapi.responses import JSONResponse
 
 from . import __version__
+from .agent_provisioning import AgentProvisioningPolicy
 from .models import (
-    AgentCommand, CallbackCommand, CampaignCommand, DisableAgentCommand,
-    LeadCommand, ReconciliationCampaignCommand, TransferPolicyCommand,
+    AgentCommand,
+    CallbackCommand,
+    CampaignCommand,
+    DisableAgentCommand,
+    LeadCommand,
+    ProvisionAgentCommand,
+    ReconciliationCampaignCommand,
+    TransferPolicyCommand,
 )
 from .reconciliation import ReconciliationPolicy
 from .release import load_release_info
@@ -19,7 +26,6 @@ from .repository import CollisionError, MemoryRepository, MySQLRepository
 from .security import RequestAuthenticator
 from .service import AdapterService, FeatureFlags, ReadbackMismatch
 from .state import StateStore
-
 
 _AUTHENTICATION_HEADERS = (
     "X-Service-Identity",
@@ -36,6 +42,7 @@ _PROTECTED_SCOPE_BY_ROUTE = {
     ("post", "/v1/campaigns/disable"): "telephony:provision",
     ("get", "/v1/campaigns/{campaign_id}/actual-state"): "telephony:read",
     ("post", "/v1/agents/sync"): "telephony:agent-sync",
+    ("post", "/v1/agents/provision-disabled"): "telephony:agent-provision",
     ("post", "/v1/agents/disable"): "telephony:agent-sync",
     ("get", "/v1/agents/{user_id}/actual-state"): "telephony:read",
     ("post", "/v1/leads/publish"): "telephony:lead-publish",
@@ -153,6 +160,7 @@ def create_app(
     service: AdapterService,
     authenticator: RequestAuthenticator,
     reconciliation_policy: ReconciliationPolicy | None = None,
+    agent_provisioning_policy: AgentProvisioningPolicy | None = None,
     release_info: Mapping[str, object] | None = None,
 ) -> FastAPI:
     release_document = dict(
@@ -298,6 +306,24 @@ def create_app(
         return await mutation(request, AgentCommand, service.sync_agent,
                               "telephony:agent-sync", *values)
 
+    @app.post("/v1/agents/provision-disabled")
+    async def agent_provision(request: Request, values=Depends(headers)):
+        if agent_provisioning_policy is None:
+            raise HTTPException(403, "agent provisioning profile is disabled")
+        key, identity, scopes, timestamp, nonce, signature, signature_version = values
+        body = await authorize(
+            request, "telephony:agent-provision", identity, scopes, timestamp,
+            nonce, signature, signature_version, key,
+        )
+        try:
+            command = ProvisionAgentCommand.model_validate_json(body)
+            agent_provisioning_policy.authorize(command)
+            return service.provision_agent(key, command)
+        except PermissionError as exc:
+            raise HTTPException(status_code=403, detail=str(exc)) from exc
+        except ValueError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+
     @app.post("/v1/agents/disable")
     async def agent_disable(request: Request, values=Depends(headers)):
         return await mutation(request, DisableAgentCommand, service.disable_agent,
@@ -399,6 +425,7 @@ def app_from_environment() -> FastAPI:
         writes=os.environ.get("ENABLE_VICIDIAL_WRITES") == "true",
         provisioning=os.environ.get("ENABLE_PROVISIONING") == "true",
         agent_sync=os.environ.get("ENABLE_AGENT_SYNC") == "true",
+        agent_provisioning=os.environ.get("ENABLE_AGENT_PROVISIONING") == "true",
         lead_publication=os.environ.get("ENABLE_LEAD_PUBLICATION") == "true",
         allowed_lead_list_ids=parse_allowed_lead_list_ids(
             os.environ.get("CODESTRA_ALLOWED_LEAD_LIST_IDS", "")
@@ -494,10 +521,20 @@ def app_from_environment() -> FastAPI:
             Path(os.environ["CODESTRA_RECONCILIATION_POLICY_FILE"]),
             expected_release_sha=release_sha,
         )
+    agent_policy = None
+    if os.environ.get("ENABLE_AGENT_PROVISIONING") == "true":
+        release_sha = release_info.get("git_sha")
+        if release_info.get("verified") is not True or not isinstance(release_sha, str):
+            raise RuntimeError("verified release metadata required for agent provisioning")
+        agent_policy = AgentProvisioningPolicy.from_file(
+            Path(os.environ["CODESTRA_AGENT_PROVISIONING_POLICY_FILE"]),
+            expected_release_sha=release_sha,
+        )
     return create_app(
         service,
         auth,
         policy,
+        agent_policy,
         release_info=release_info,
     )
 
