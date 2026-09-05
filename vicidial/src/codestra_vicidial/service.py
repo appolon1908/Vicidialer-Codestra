@@ -9,6 +9,7 @@ from .models import (
     CampaignCommand,
     DisableAgentCommand,
     LeadCommand,
+    ProvisionAgentCommand,
     TransferPolicyCommand,
 )
 from .repository import CollisionError, Repository, normalize_allowed_campaigns
@@ -27,6 +28,7 @@ class FeatureFlags:
     writes: bool = False
     provisioning: bool = False
     agent_sync: bool = False
+    agent_provisioning: bool = False
     lead_publication: bool = False
     allowed_lead_list_ids: frozenset[int] = frozenset()
     callback_writes: bool = False
@@ -399,6 +401,49 @@ class AdapterService:
                     release_lock()
 
         return self._execute("agent.sync", key, command, command.agent.user_id, apply)
+
+    def provision_agent(self, key: str, command: ProvisionAgentCommand) -> dict:
+        self._require(self.flags.agent_provisioning, "agent provisioning")
+
+        def apply() -> dict:
+            desired = command.agent.model_dump(mode="json")
+            desired["adopt_existing_sha256"] = None
+            desired_hash = self.state.digest(desired)
+            intent = self.state.agent_adoption_intent(command.agent.user_id)
+            actual = self.repository.agent(command.agent.user_id)
+            if intent is None:
+                if actual is not None:
+                    raise CollisionError("agent identifier already exists")
+                self.state.put_agent_adoption_intent(
+                    command.agent.user_id, "missing", desired_hash
+                )
+                actual = self.repository.provision_agent_disabled(command.agent)
+            elif intent["original_hash"] != "missing" or intent["desired_hash"] != desired_hash:
+                raise CollisionError("agent provisioning intent mismatch")
+            elif actual is None:
+                actual = self.repository.provision_agent_disabled(command.agent)
+            mismatches = [field for field in ("user_id", "full_name", "user_group")
+                          if actual.get(field) != desired[field]]
+            if actual.get("active") not in (False, "N"):
+                mismatches.append("active")
+            if int(actual.get("user_level", 0)) != command.user_level:
+                mismatches.append("user_level")
+            if not set(desired["campaigns"]).issubset(set(actual.get("campaigns", []))):
+                mismatches.append("campaigns")
+            if set(actual.get("inbound_groups", [])) != set(desired["inbound_groups"]):
+                mismatches.append("inbound_groups")
+            if mismatches:
+                self.repository.disable_agent(command.agent.user_id)
+                raise ReadbackMismatch([{"type": "agent", "id": command.agent.user_id,
+                                         "mismatches": sorted(set(mismatches))}])
+            self.state.finalize_agent_adoption(
+                command.agent.user_id, command.agent.user_id, desired_hash, desired
+            )
+            return {"status": "complete_disabled", "actual": actual,
+                    "recovered_after_commit": intent is not None}
+
+        return self._execute("agent.provision-disabled", key, command,
+                             command.agent.user_id, apply)
 
     def disable_agent(self, key: str, command: DisableAgentCommand) -> dict:
         self._require(self.flags.agent_sync, "agent sync")

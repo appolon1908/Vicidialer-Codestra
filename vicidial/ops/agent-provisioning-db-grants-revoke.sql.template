@@ -1,0 +1,3 @@
+-- Emergency revoke for the bounded disabled-user profile.
+REVOKE INSERT, UPDATE ON asterisk.vicidial_users
+FROM 'codestra-adapter'@'localhost';
