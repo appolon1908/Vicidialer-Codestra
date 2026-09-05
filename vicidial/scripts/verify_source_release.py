@@ -11,7 +11,7 @@ def main():
         members=b.getmembers(); names=[]; file_names=set()
         for m in members:
             n=m.name.removeprefix("./"); q=PurePosixPath(n)
-            if not n or q.is_absolute() or ".." in q.parts or m.issym() or m.islnk() or not (m.isfile() or m.isdir()) or n in names: raise ValueError("unsafe or duplicate archive member")
+            if m.name != "./" + q.as_posix() or n != q.as_posix() or not n or q.is_absolute() or ".." in q.parts or m.issym() or m.islnk() or not (m.isfile() or m.isdir()) or n in names: raise ValueError("unsafe or duplicate archive member")
             names.append(n)
             if m.isfile(): file_names.add(n)
         if not REQUIRED <= set(names): raise ValueError("required archive member missing")

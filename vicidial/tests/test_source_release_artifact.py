@@ -140,3 +140,35 @@ def test_modes_come_from_source_commit_and_are_nonroot_readable(tmp_path):
                         '[p.read_bytes() for p in root.rglob("*") if p.is_file()]; '
                         'assert (root/"SOURCE_SHA").read_text().strip()==sys.argv[2]',
                         str(extracted), SHA], check=True, cwd='/tmp', **options)
+
+
+def test_verifier_rejects_checksum_valid_path_alias(tmp_path):
+    import io
+    archive, _ = build(tmp_path, 'release.tar.gz')
+    alias_archive = tmp_path / 'alias.tar.gz'
+    with tarfile.open(archive, 'r:gz') as bundle:
+        files = {m.name: (m, bundle.extractfile(m).read() if m.isfile() else None)
+                 for m in bundle.getmembers()}
+    alias_name = '././pyproject.toml'
+    original, payload = files['./pyproject.toml']
+    import copy
+    alias = copy.copy(original)
+    alias.name = alias_name
+    files[alias_name] = (alias, payload)
+    info, sums = files['./SHA256SUMS']
+    sums += (hashlib.sha256(payload).hexdigest() + '  ./pyproject.toml\n').encode()
+    info.size = len(sums)
+    files['./SHA256SUMS'] = (info, sums)
+    info, raw = files['./SOURCE_RELEASE_MANIFEST.json']
+    manifest = json.loads(raw)
+    manifest['file_count'] += 1
+    manifest['checksums_sha256'] = hashlib.sha256(sums).hexdigest()
+    raw = (json.dumps(manifest) + '\n').encode()
+    info.size = len(raw)
+    files['./SOURCE_RELEASE_MANIFEST.json'] = (info, raw)
+    with tarfile.open(alias_archive, 'w:gz') as bundle:
+        for info, payload in files.values():
+            bundle.addfile(info, io.BytesIO(payload) if payload is not None else None)
+    result = subprocess.run([sys.executable, str(VERIFY), '--archive', str(alias_archive),
+                             '--source-sha', SHA, '--builder-sha', 'b' * 40], capture_output=True, text=True)
+    assert result.returncode != 0, 'checksum-valid alias archive must be rejected'
