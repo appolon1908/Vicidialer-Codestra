@@ -76,13 +76,15 @@ class AmiTransport(Protocol):
 
 class InternalCallExecutor:
     def __init__(self, policy: InternalCallPolicy, state_path: Path, lifecycle_path: Path,
-                 transport: AmiTransport, *, policy_provider=None, identity_ready=None,
+                 transport: AmiTransport, audit: StateStore | None = None, *, policy_provider=None, identity_ready=None,
                  enabled=None, audit_path=None) -> None:
         self.policy, self.state_path, self.lifecycle_path, self.transport = policy, state_path, lifecycle_path, transport
         self.policy_provider = policy_provider or (lambda: self.policy)
         self.identity_ready = identity_ready or (lambda: False)
         self.enabled = enabled or (lambda: False)
-        self.audit_path = audit_path or state_path
+        self.audit = audit
+        audit_file = Path(audit.db.execute("PRAGMA database_list").fetchone()[2]) if audit else state_path
+        self.audit_path = audit_path or audit_file
         state_path.parent.mkdir(parents=True, exist_ok=True)
         with closing(sqlite3.connect(state_path)) as db:
             db.execute("CREATE TABLE IF NOT EXISTS internal_calls(operation_id TEXT PRIMARY KEY,request_hash TEXT NOT NULL,correlation_id TEXT NOT NULL,uniqueid TEXT NOT NULL UNIQUE,state TEXT NOT NULL,hangup_state TEXT,created_at TEXT NOT NULL,policy_hash TEXT NOT NULL)")
@@ -109,7 +111,7 @@ class InternalCallExecutor:
     def _audit(self, operation, operation_id, correlation_id, actor, outcome):
         store = StateStore(self.audit_path)
         try:
-            store.audit(correlation_id, actor, "internal-call:" + operation, operation_id,
+            store.audit(correlation_id, actor, "internal-call." + operation, operation_id,
                         outcome, {"operation_id": operation_id, "outcome": outcome})
         finally:
             store.db.close()
@@ -124,7 +126,7 @@ class InternalCallExecutor:
         except Exception:
             self._audit(operation, operation_id, correlation_id, actor, "failed_or_uncertain")
             raise
-        self._audit(operation, operation_id, correlation_id, actor, "duplicate" if result.get("duplicate") else "accepted_not_terminal")
+        self._audit(operation, operation_id, correlation_id, actor, "duplicate" if result.get("duplicate") else ("requested" if operation == "hangup" else "accepted"))
         return result
 
     def originate(self, command: OriginateCommand, actor="codestra-middleware") -> dict:
@@ -148,7 +150,7 @@ class InternalCallExecutor:
             # One operation for the lifetime of this execution store. A new
             # authorization cannot conceal an unresolved call by changing policy.
             if db.execute("SELECT count(*) FROM internal_calls").fetchone()[0] >= policy.max_calls:
-                raise PermissionError("one-call authorization exhausted; administrator reconciliation required")
+                raise PermissionError("one-call authorization already consumed; administrator reconciliation required")
             if not self.identity_ready():
                 raise PermissionError("live appolon/6901 activation and campaign binding not verified")
             self.transport.verify_route(policy)

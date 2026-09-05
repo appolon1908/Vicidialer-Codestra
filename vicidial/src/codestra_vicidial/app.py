@@ -184,6 +184,7 @@ def create_app(
         version=__version__,
     )
     app.state.adapter_service = service
+    app.state.internal_call_executor = internal_call_executor
 
     @app.exception_handler(CollisionError)
     async def collision_handler(_request: Request, exc: CollisionError):

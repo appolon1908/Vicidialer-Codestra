@@ -135,3 +135,26 @@ def seed_connected(path, uniqueid):
     message = parse_ami_block((f"Event: Newstate\r\nUniqueid: {uniqueid}\r\nLinkedid: {uniqueid}\r\n"
                                "Channel: PJSIP/6901-00000001\r\nChannelStateDesc: Up").encode())
     LifecycleStore(path).process(message, directory)
+
+
+def test_one_call_grant_cannot_use_a_second_operation_id(tmp_path):
+    service, transport, _ = executor(tmp_path)
+    service.originate(command())
+    with pytest.raises(PermissionError, match="already consumed"):
+        service.originate(command(operation_id="operation-internal-0002"))
+    assert len(transport.actions) == 1
+
+
+def test_originate_and_hangup_write_append_only_audit_outcomes(tmp_path):
+    service, _, lifecycle = executor(tmp_path)
+    accepted = service.originate(command())
+    seed_connected(lifecycle, accepted["asterisk_uniqueid"])
+    service.hangup(command().operation_id)
+    with sqlite3.connect(service.audit_path) as db:
+        rows = db.execute("SELECT operation,outcome FROM audit ORDER BY sequence").fetchall()
+    assert rows == [
+        ("internal-call.originate", "requested"),
+        ("internal-call.originate", "accepted"),
+        ("internal-call.hangup", "requested"),
+        ("internal-call.hangup", "requested"),
+    ]

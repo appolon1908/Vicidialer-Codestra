@@ -26,6 +26,7 @@ def load_production_app(monkeypatch, tmp_path):
         "ENABLE_CALLBACK_WRITES",
         "ENABLE_TRANSFER_POLICY_SYNC",
         "ENABLE_PSTN_DIALING",
+        "ENABLE_INTERNAL_TEST_CALLING",
     ):
         monkeypatch.delenv(name, raising=False)
     for name in ("codestra_vicidial.production_app", "codestra_vicidial.app"):
@@ -50,6 +51,16 @@ def test_any_live_capability_fails_readiness(monkeypatch, tmp_path):
     status, body = module.build_readiness()
     assert status == 503
     assert body["checks"]["kill_switches"] is False
+
+
+def test_internal_calling_requires_exact_profile_and_loaded_policy(monkeypatch, tmp_path):
+    module = load_production_app(monkeypatch, tmp_path)
+    monkeypatch.setenv("ENABLE_INTERNAL_TEST_CALLING", "true")
+    module.app.state.internal_call_executor = object()
+    assert module._kill_switch_ready("development-loopback", False) is False
+    assert module._kill_switch_ready("production-internal-test", False) is True
+    module.app.state.internal_call_executor = None
+    assert module._kill_switch_ready("production-internal-test", False) is False
 
 
 def test_deprecated_activation_alias_fails_even_when_false(monkeypatch, tmp_path):

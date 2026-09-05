@@ -162,6 +162,8 @@ def _kill_switch_ready(profile: str, reconciliation_policy_verified: bool) -> bo
         return False
     if profile == "production-internal-test" and _enabled("ENABLE_AGENT_PROVISIONING"):
         return False
+    if internal_gate == "true" and getattr(app.state, "internal_call_executor", None) is None:
+        return False
     writes = _enabled("ENABLE_VICIDIAL_WRITES")
     provisioning = _enabled("ENABLE_PROVISIONING")
     if profile == "production-reconciliation":
@@ -195,7 +197,8 @@ def build_readiness() -> tuple[int, dict]:
         from .internal_calling import InternalCallPolicy
         try:
             policy = InternalCallPolicy.from_file(Path(os.environ["CODESTRA_INTERNAL_CALL_POLICY_FILE"]), release_sha)
-            checks["internal_call_policy"] = policy.release_sha == release_sha
+            checks["internal_call_policy"] = (policy.release_sha == release_sha
+                                               and getattr(app.state, "internal_call_executor", None) is not None)
         except Exception:
             checks["internal_call_policy"] = False
 
@@ -215,7 +218,7 @@ def build_readiness() -> tuple[int, dict]:
         "reconciliation_policy_verified": reconciliation_policy_verified,
         "checks": checks,
         "writes_enabled": writes_enabled,
-        "internal_test_calls_enabled": profile == "production-internal-test" and _enabled("ENABLE_INTERNAL_TEST_CALLING"),
+        "internal_test_calling": profile == "production-internal-test" and _enabled("ENABLE_INTERNAL_TEST_CALLING"),
         "production_dialing": False,
         "customer_traffic_authorized": False,
     }

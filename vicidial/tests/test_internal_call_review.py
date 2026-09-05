@@ -40,7 +40,7 @@ def test_one_call_quota_is_atomic_across_distinct_operation_ids(tmp_path):
     results = race(lambda: service.originate(command()), lambda: service.originate(command(operation_id="second-operation-0001")))
     assert results.count("denied") == 1
     assert len(transport.actions) == 1
-    with pytest.raises(PermissionError, match="exhausted"):
+    with pytest.raises(PermissionError, match="consumed"):
         service.originate(command(operation_id="third-operation-0001"))
 
 
@@ -209,6 +209,8 @@ def test_readiness_rejects_internal_calling_in_ordinary_profiles(monkeypatch, pr
 def test_dedicated_profile_does_not_enable_other_capabilities(monkeypatch):
     from codestra_vicidial.production_app import _kill_switch_ready
     monkeypatch.setenv("ENABLE_INTERNAL_TEST_CALLING", "true")
+    from codestra_vicidial.production_app import app
+    monkeypatch.setattr(app.state, "internal_call_executor", object(), raising=False)
     assert _kill_switch_ready("production-internal-test", False)
     monkeypatch.setenv("ENABLE_LIVE_CALL_CONTROL", "true")
     assert not _kill_switch_ready("production-internal-test", False)
