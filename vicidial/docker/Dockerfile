@@ -16,7 +16,7 @@ ARG SOURCE_SHA
 ARG BUILD_DATE
 ARG RELEASE_ENVIRONMENT=production-candidate
 ARG OPENSSL_PACKAGE_VERSION=3.5.8-r0
-ARG LIBUUID_PACKAGE_VERSION=2.42.3-r0
+ARG LIBUUID_PACKAGE_VERSION=2.42.3-r1
 LABEL org.opencontainers.image.title="Codestra VICIdial Restricted Adapter" \
       org.opencontainers.image.revision="${SOURCE_SHA}" \
       org.opencontainers.image.created="${BUILD_DATE}" \
@@ -48,7 +48,7 @@ COPY .github/workflows/vicidial-adapter-container.yml /tmp/release-src/.github/w
 COPY vicidial/docker/entrypoint.sh /usr/local/bin/codestra-vicidial-entrypoint
 COPY vicidial/docker/security_regression.py /usr/local/libexec/codestra-security-regression
 RUN apk add --no-cache \
-      --repository=https://dl-cdn.alpinelinux.org/alpine/edge/main \
+      --repository=https://dl-cdn.alpinelinux.org/alpine/v3.24/main \
       "libcrypto3=${OPENSSL_PACKAGE_VERSION}" \
       "libssl3=${OPENSSL_PACKAGE_VERSION}" \
       "libuuid=${LIBUUID_PACKAGE_VERSION}" \

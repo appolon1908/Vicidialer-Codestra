@@ -54,8 +54,14 @@ jobs:
           export CODESTRA_ADAPTER_HMAC_SECRET_FILE="${RUNNER_TEMP}/adapter-hmac"
           export CODESTRA_VICIDIAL_DB_SECRET_FILE="${RUNNER_TEMP}/vicidial-db.json"
           export VICIDIAL_DB_SOCKET_DIR="${RUNNER_TEMP}/mysqld"
+          export CODESTRA_AGENT_PROVISIONING_POLICY_SECRET_FILE="${RUNNER_TEMP}/agent-policy.json"
+          export CODESTRA_AGENT_PROVISIONING_BACKUP_DIR="${RUNNER_TEMP}/backup"
+          export CODESTRA_SECRET_AUTHORITY_SOCKET="${RUNNER_TEMP}/authority.sock"
+          touch "${CODESTRA_AGENT_PROVISIONING_POLICY_SECRET_FILE}"
+          mkdir -p "${CODESTRA_AGENT_PROVISIONING_BACKUP_DIR}"
           docker compose -f vicidial/docker/compose.shadow.yml config --quiet
           docker compose -f vicidial/docker/compose.production.yml config --quiet
+          docker compose -f vicidial/docker/compose.production.yml -f vicidial/docker/compose.agent-provisioning.yml config --quiet
       - uses: actions/setup-python@v5
         with:
           python-version: "3.11"
@@ -72,6 +78,39 @@ jobs:
           test -z "$(python -m pip show httpx 2>/dev/null)"
           PYTHONPATH=vicidial/src python -m pytest -q \
             vicidial/tests/test_httpx2_testclient.py
+      - name: Prove user and phone rollback on isolated MariaDB
+        env:
+          VICIDIAL_TEST_MYSQL_PASSWORD: synthetic-ci-only-password
+          VICIDIAL_TEST_MYSQL_PORT: "33067"
+        run: |
+          docker run --detach --rm --name vicidial-agent-rollback-db \
+            --publish 127.0.0.1:33067:3306 \
+            --env MARIADB_ROOT_PASSWORD="${VICIDIAL_TEST_MYSQL_PASSWORD}" \
+            --env MARIADB_DATABASE=asterisk \
+            mariadb:11.4@sha256:611a2fcc5fa7c6ceb8644c6f74b25ede004ff6c3a6b38c8f8c23d3bbf6c26430
+          trap 'docker stop vicidial-agent-rollback-db >/dev/null 2>&1 || true' EXIT
+          for attempt in $(seq 1 60); do
+            python - <<'PY' && break
+          import os
+          import pymysql
+          connection = pymysql.connect(
+              host="127.0.0.1",
+              port=int(os.environ["VICIDIAL_TEST_MYSQL_PORT"]),
+              user="root",
+              password=os.environ["VICIDIAL_TEST_MYSQL_PASSWORD"],
+              database="asterisk",
+              connect_timeout=2,
+          )
+          with connection.cursor() as cursor:
+              cursor.execute("SELECT 1")
+              assert cursor.fetchone()[0] == 1
+          connection.close()
+          PY
+            test "$attempt" -lt 60
+            sleep 2
+          done
+          PYTHONPATH=vicidial/src python -m pytest -q \
+            vicidial/tests/test_agent_provisioning_mysql.py
       - name: Run Phase 3 and complete VICIdial suites
         env:
           CODESTRA_ADAPTER_STATE: "${{ runner.temp }}/vicidial-container-test-state.sqlite3"
@@ -156,6 +195,49 @@ jobs:
           VICIDIAL_CONTAINER_TEST_IMAGE: codestra/vicidial-restricted-adapter:${{ env.SOURCE_SHA }}
           VICIDIAL_CONTAINER_ENGINE: docker
         run: python -m pytest -q vicidial/tests/test_phase3d_container.py
+      - name: Verify scoped secret-authority socket as runtime UID and GID
+        run: |
+          authority_dir="${RUNNER_TEMP}/synthetic-authority"
+          authority_socket="${authority_dir}/authority.sock"
+          mkdir -m 0711 "${authority_dir}"
+          AUTHORITY_SOCKET="${authority_socket}" python - <<'PY' &
+          import json
+          import os
+          import socket
+
+          path = os.environ["AUTHORITY_SOCKET"]
+          with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as server:
+              server.bind(path)
+              os.chmod(path, 0o660)
+              server.listen(1)
+              connection, _ = server.accept()
+              with connection:
+                  request = json.loads(connection.makefile("rb").readline(4097))
+                  assert request == {
+                      "operation": "vicidial-bootstrap",
+                      "username": "appolon",
+                      "extension": "6901",
+                      "idempotency_key": "synthetic-profile-proof",
+                  }
+                  connection.sendall(json.dumps({
+                      "credential": "synthetic-value-never-persisted-0001",
+                      "reference": "synthetic-authority-reference",
+                  }).encode() + b"\n")
+          PY
+          authority_pid=$!
+          trap 'kill "${authority_pid}" >/dev/null 2>&1 || true' EXIT
+          for attempt in $(seq 1 30); do
+            test -S "${authority_socket}" && break
+            test "$attempt" -lt 30
+            sleep 1
+          done
+          sudo chown "$(id -u):10001" "${authority_socket}"
+          docker run --rm --user 10001:10001 --entrypoint python \
+            --volume "${authority_dir}:/run/secret-authority" \
+            codestra/vicidial-restricted-adapter:${SOURCE_SHA} -c \
+            'import os; from pathlib import Path; from codestra_vicidial.credential_authority import UnixCredentialAuthority; assert (os.getuid(), os.getgid()) == (10001, 10001); issued = UnixCredentialAuthority(Path("/run/secret-authority/authority.sock")).issue(username="appolon", extension="6901", idempotency_key="synthetic-profile-proof"); assert issued.reference == "synthetic-authority-reference" and len(issued.value) >= 24'
+          wait "${authority_pid}"
+          echo "SCOPED_AUTHORITY_SOCKET=PASS UID=10001 GID=10001"
       - name: Capture exact image metadata and runtime regression
         run: |
           mkdir -p evidence

@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import hashlib
 import json
-import secrets
 from copy import deepcopy
 from datetime import datetime, timezone
 from typing import Any, Protocol
@@ -80,8 +79,9 @@ class Repository(Protocol):
     def disable_campaign_resources(self, spec: CampaignSpec) -> None: ...
     def disable_campaign(self, actual_id: str) -> None: ...
     def agent(self, user_id: str) -> dict | None: ...
+    def agent_availability(self, user_id: str, extension: str) -> dict: ...
     def sync_agent_disabled(self, spec: AgentSpec) -> dict: ...
-    def provision_agent_disabled(self, spec: AgentSpec) -> dict: ...
+    def provision_agent_disabled(self, spec: AgentSpec, credential: str) -> dict: ...
     def disable_agent(self, user_id: str) -> dict: ...
     def lead_by_external_id(self, external_id: str) -> dict | None: ...
     def publish_lead(self, spec: LeadSpec) -> dict: ...
@@ -111,6 +111,7 @@ class MemoryRepository:
         self.scripts: dict[str, dict] = {}
         self.dispositions: dict[tuple[str, str], dict] = {}
         self.agents: dict[str, dict] = {}
+        self.phones: dict[str, dict] = {}
         self.leads: dict[int, dict] = {}
         self.callbacks: dict[int, dict] = {}
 
@@ -309,18 +310,39 @@ class MemoryRepository:
     def agent(self, user_id: str) -> dict | None:
         return deepcopy(self.agents.get(user_id))
 
+    def agent_availability(self, user_id: str, extension: str) -> dict:
+        return {
+            "username": user_id, "extension": extension,
+            "username_available": user_id not in self.agents,
+            "extension_available": extension not in self.phones,
+            "user_identifier": user_id if user_id in self.agents else None,
+            "phone_identifier": extension if extension in self.phones else None,
+        }
+
     def sync_agent_disabled(self, spec: AgentSpec) -> dict:
         desired = spec.model_dump(mode="json") | {"active": False}
         desired.pop("adopt_existing_sha256", None)
         self.agents[spec.user_id] = desired
         return deepcopy(desired)
 
-    def provision_agent_disabled(self, spec: AgentSpec) -> dict:
+    def provision_agent_disabled(self, spec: AgentSpec, credential: str) -> dict:
         if spec.user_id in self.agents:
             raise CollisionError("agent identifier already exists")
-        actual = self.sync_agent_disabled(spec)
-        self.agents[spec.user_id]["user_level"] = 9
-        return deepcopy(self.agents[spec.user_id])
+        extension = getattr(spec, "extension", None)
+        if extension in self.phones:
+            raise CollisionError("extension identifier already exists")
+        agents_before, phones_before = deepcopy(self.agents), deepcopy(self.phones)
+        try:
+            self.sync_agent_disabled(spec)
+            self.agents[spec.user_id]["user_level"] = 8
+            self.agents[spec.user_id]["extension"] = extension
+            self.phones[extension] = {
+                "extension": extension, "user_id": spec.user_id, "active": False,
+            }
+            return deepcopy(self.agents[spec.user_id])
+        except Exception:
+            self.agents, self.phones = agents_before, phones_before
+            raise
 
     def disable_agent(self, user_id: str) -> dict:
         if user_id not in self.agents:
@@ -826,6 +848,17 @@ class MySQLRepository:
     def agent(self, user_id: str) -> dict | None:
         return self._agent(user_id)
 
+    def agent_availability(self, user_id: str, extension: str) -> dict:
+        user = self._one("SELECT user FROM vicidial_users WHERE user=%s", (user_id,))
+        phone = self._one("SELECT extension FROM phones WHERE extension=%s OR login=%s", (extension, extension))
+        return {
+            "username": user_id, "extension": extension,
+            "username_available": user is None,
+            "extension_available": phone is None,
+            "user_identifier": user and user["user"],
+            "phone_identifier": phone and phone["extension"],
+        }
+
     def _agent_disable_view(self, user_id: str) -> dict | None:
         """Read only fields needed to prove disablement, without parsing legacy ACLs."""
         return self._one(
@@ -873,14 +906,35 @@ class MySQLRepository:
             raise
         return self.agent(spec.user_id) or {}
 
-    def provision_agent_disabled(self, spec: AgentSpec) -> dict:
+    def _require_transactional_agent_tables(self) -> None:
+        """Reject multi-table creation unless both tables support rollback."""
+        rows = self._all(
+            "SELECT table_name,engine FROM information_schema.tables "
+            "WHERE table_schema=DATABASE() AND table_name IN (%s,%s)",
+            ("vicidial_users", "phones"),
+        )
+        engines = {
+            str(row.get("table_name")): str(row.get("engine", "")).upper()
+            for row in rows
+        }
+        if engines != {"vicidial_users": "INNODB", "phones": "INNODB"}:
+            raise RuntimeError(
+                "agent provisioning requires transactional InnoDB "
+                "vicidial_users and phones tables"
+            )
+
+    def provision_agent_disabled(self, spec: AgentSpec, credential: str) -> dict:
         """Create one disabled user through a fixed, parameterized DB operation.
 
         The generated bootstrap password is intentionally neither returned nor logged.
         A separately governed activation/credential rotation workflow must replace it.
         """
-        if self._agent_disable_view(spec.user_id) is not None:
+        self._require_transactional_agent_tables()
+        availability = self.agent_availability(spec.user_id, spec.extension)
+        if not availability["username_available"]:
             raise CollisionError("agent identifier already exists")
+        if not availability["extension_available"]:
+            raise CollisionError("extension identifier already exists")
         group = self._one(
             "SELECT user_group,allowed_campaigns FROM vicidial_user_groups "
             "WHERE user_group=%s", (spec.user_group,)
@@ -890,23 +944,34 @@ class MySQLRepository:
         allowed = set(normalize_allowed_campaigns(group["allowed_campaigns"]))
         if not set(spec.campaigns).issubset(allowed):
             raise CollisionError("approved campaigns are absent from user group")
-        bootstrap = secrets.token_urlsafe(32)
         try:
             self._execute(
                 "INSERT INTO vicidial_users "
                 "(user,pass,full_name,user_level,user_group,active,closer_campaigns) "
                 "VALUES (%s,%s,%s,%s,%s,'N',%s)",
-                (spec.user_id, bootstrap, spec.full_name, 9, spec.user_group,
+                (spec.user_id, credential, spec.full_name, 8, spec.user_group,
                  format_allowed_campaigns(spec.inbound_groups)),
             )
+            self._execute(
+                "INSERT INTO phones "
+                "(extension,dialplan_number,voicemail_id,server_ip,login,pass,status,active,"
+                "phone_type,fullname,company,protocol,local_gmt) "
+                "VALUES (%s,%s,%s,'127.0.0.1',%s,%s,'ACTIVE','N','SIP',%s,'Appolon','SIP','-4.00')",
+                (spec.extension, spec.extension, spec.extension, spec.extension,
+                 credential, spec.full_name),
+            )
+            actual = self.agent(spec.user_id)
+            phone = self._one(
+                "SELECT extension,active FROM phones WHERE extension=%s AND login=%s",
+                (spec.extension, spec.extension),
+            )
+            if actual is None or actual.get("active") != "N" or phone is None or phone.get("active") != "N":
+                raise RuntimeError("disabled agent creation read-back failed")
+            actual["extension"] = phone["extension"]
             self.db.commit()
         except Exception:
             self.db.rollback()
             raise
-        actual = self.agent(spec.user_id)
-        if actual is None or actual.get("active") != "N":
-            self.disable_agent(spec.user_id)
-            raise RuntimeError("disabled agent creation read-back failed")
         return actual
 
     def release_agent_adoption_lock(self) -> None:

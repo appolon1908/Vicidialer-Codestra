@@ -196,6 +196,7 @@ def test_route_contract_is_present(harness):
         ("GET", "/v1/campaigns/{campaign_id}/actual-state"),
         ("POST", "/v1/agents/sync"), ("POST", "/v1/agents/disable"),
         ("GET", "/v1/agents/{user_id}/actual-state"),
+        ("GET", "/v1/agents/availability/{user_id}/{extension}"),
         ("POST", "/v1/leads/publish"),
         ("GET", "/v1/leads/by-external-id/{external_id}"),
         ("POST", "/v1/callbacks/create"), ("GET", "/v1/callbacks/{callback_id}"),

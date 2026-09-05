@@ -5,8 +5,10 @@ services:
     volumes:
       - ${CODESTRA_AGENT_PROVISIONING_POLICY_SECRET_FILE:?protected policy file required}:/run/provisioning-policy/agent-provisioning-policy.json:ro
       - ${CODESTRA_AGENT_PROVISIONING_BACKUP_DIR:?validated backup directory required}:/run/provisioning-backup:ro
+      - ${CODESTRA_SECRET_AUTHORITY_SOCKET:?approved secret authority socket required}:/run/secret-authority/authority.sock
     environment:
       CODESTRA_ADAPTER_DEPLOYMENT: production-agent-provisioning
       ENABLE_VICIDIAL_WRITES: "true"
       ENABLE_AGENT_PROVISIONING: "true"
       CODESTRA_AGENT_PROVISIONING_POLICY_FILE: /run/provisioning-policy/agent-provisioning-policy.json
+      CODESTRA_SECRET_AUTHORITY_SOCKET: /run/secret-authority/authority.sock
