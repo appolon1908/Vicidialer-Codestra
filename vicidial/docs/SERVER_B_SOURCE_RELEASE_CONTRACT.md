@@ -3,9 +3,13 @@
 Server B's existing restricted operator consumes a gzip tar rooted at the
 contents of `vicidial/`. It installs that Python project into a new
 `/opt/codestra/vicidial-restricted-adapter/releases/<source-sha>` directory,
-reuses the validated virtual environment, atomically changes `current`, and
-restarts only `codestra-vicidial-restricted-adapter.service`. Failed validation
-restores the effective previously running release.
+requires a release-local virtual environment with correctly bound entrypoints,
+atomically changes `current`, and restarts only
+`codestra-vicidial-restricted-adapter.service` after the administrator deployment
+gates pass. Reusing or copying a venv is not proof of this requirement: console
+scripts can retain a predecessor interpreter path. Failed validation must restore
+the effective previously running release and verify the restored process; the
+current symlink alone does not establish that rollback target.
 
 The archive contains `pyproject.toml`, `src/`, `scripts/`, `config/`, `ops/`,
 dependency locks, tests and docs, plus `SOURCE_SHA`, `SHA256SUMS`, and
@@ -44,3 +48,30 @@ checksums, and opens extracted files as a non-root process. It also deliberately
 changes working-tree modes after committing executable intent to prove Git metadata
 is authoritative. These tests establish source-archive readability; live service
 UID/GID, environment, loaded package and rollback identity still require preflight.
+
+## Administrator deployment prerequisite: venv and effective predecessor
+
+Do not deploy while the effective process and `current` disagree. Before approving
+an existing installer, inspect its actual deployed source/hash and argv contract;
+a historical local script is not current operator authority. The source archive
+does not authorize `stage`, `deploy`, a restart, or a symlink change.
+
+The existing administrator procedure must create a fresh venv at its final
+release-local path, install pinned dependencies and the verified selected package,
+and verify every console-script shebang and installed import path against that
+release. Do not copy/move a venv or upgrade the predecessor in place. Rehearse this
+in disposable directories; hash predecessor files before and after and require
+no changes. Resolve the discrepancy inside the reviewed transaction, never with a
+standalone `ln -sfn` or broad restart. Only the affected adapter unit may restart.
+
+Record the actual process UID/GID, interpreter, working directory, loaded module
+identity, distribution versions, source and installed manifests, immutable dependency
+bytes, protected configuration references and durable-state compatibility. Readiness
+and a directory named after a SHA are insufficient. Capture an independently usable
+predecessor and the configuration/state it needs, validate backup encryption and
+off-server/isolated-restore evidence under the current freshness policy, and test
+rollback read-back. A failure must remain a failure with delivery disabled.
+
+If the installed operator lacks these properties, its owner must submit the bounded
+correction through the existing operator source/review/deployment process. Do not
+hot-patch the host or introduce a replacement installer in packaging PR #28.
