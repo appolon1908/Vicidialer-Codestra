@@ -39,13 +39,15 @@ permissions:
 
 jobs:
   deploy-readiness:
-    uses: appolon1908-hue/Infustruction-repo/.github/workflows/reusable-codestra-deploy-readiness.yml@7db424a47c5556dd473268fa484665c0bb5ee215
+    uses: appolon1908-hue/Infustruction-repo/.github/workflows/reusable-codestra-deploy-readiness.yml@a645b4adf13d417891e31553988a63d9e8c2b648
     with:
       repository_class: service
       run_stack_tests: false
       dockerfile_path: vicidial/docker/Dockerfile
       docker_build_context: .
       artifact_strategy: oci
+      dockerfile_path: vicidial/docker/Dockerfile
+      docker_build_context: .
       runtime_deployable: true
       health_paths: "/health,/ready,/version"
       operation: ${{ github.event_name == 'workflow_dispatch' && inputs.operation || 'verify' }}

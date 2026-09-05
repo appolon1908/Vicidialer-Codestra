@@ -6,6 +6,7 @@ APP = ROOT / "vicidial" / "src" / "codestra_vicidial" / "app.py"
 PRODUCTION_COMPOSE = ROOT / "vicidial" / "docker" / "compose.production.yml"
 SHADOW_COMPOSE = ROOT / "vicidial" / "docker" / "compose.shadow.yml"
 ENTRYPOINT = ROOT / "vicidial" / "docker" / "entrypoint.sh"
+DEPLOY_READINESS = ROOT / ".github" / "workflows" / "codestra-deploy-readiness.yml"
 ADAPTER_ENV = ROOT / "vicidial" / "config" / "adapter.env.example"
 SYSTEMD_UNITS = (
     ROOT / "vicidial" / "ops" / "codestra-vicidial-restricted-adapter.service",
@@ -130,3 +131,10 @@ def test_deployment_authority_does_not_execute_reference_or_candidate_files():
             text = path.read_text(errors="ignore")
             for name in forbidden:
                 assert name not in text, f"{path} executes legacy {name}"
+
+
+def test_deploy_readiness_uses_repository_root_container_contract():
+    workflow = DEPLOY_READINESS.read_text()
+    assert "@7db424a47c5556dd473268fa484665c0bb5ee215" in workflow
+    assert "dockerfile_path: vicidial/docker/Dockerfile" in workflow
+    assert "docker_build_context: ." in workflow
