@@ -208,7 +208,6 @@ jobs:
           with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as server:
               server.bind(path)
               os.chmod(path, 0o660)
-              os.chown(path, os.getuid(), 10001)
               server.listen(1)
               connection, _ = server.accept()
               with connection:
@@ -231,6 +230,7 @@ jobs:
             test "$attempt" -lt 30
             sleep 1
           done
+          sudo chown "$(id -u):10001" "${authority_socket}"
           docker run --rm --user 10001:10001 --entrypoint python \
             --volume "${authority_dir}:/run/secret-authority" \
             codestra/vicidial-restricted-adapter:${SOURCE_SHA} -c \
