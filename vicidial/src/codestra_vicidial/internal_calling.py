@@ -397,7 +397,10 @@ class InternalCallExecutor:
                 (operation_id,),
             ).fetchone()
         if row is None:
-            raise KeyError(operation_id)
+            return self._execute(
+                "hangup", operation_id, operation_id, actor,
+                lambda: (_ for _ in ()).throw(KeyError(operation_id)),
+            )
         return self._execute(
             "hangup",
             operation_id,
@@ -479,6 +482,8 @@ class LifecycleEvidence:
                     raise PermissionError("ambiguous Asterisk call evidence")
                 row = rows[0]
                 binding = json.loads(row["binding_json"])
+                if not isinstance(binding, dict):
+                    raise ValueError("call binding must be an object")
                 if (
                     any(
                         binding.get(k) != v
@@ -509,7 +514,11 @@ class LifecycleEvidence:
                 terminal_details = None
                 if terminal:
                     envelope = json.loads(events[-1]["envelope_json"])
+                    if not isinstance(envelope, dict):
+                        raise ValueError("terminal envelope must be an object")
                     payload = envelope.get("payload", {})
+                    if not isinstance(payload, dict):
+                        raise ValueError("terminal payload must be an object")
                     expected = {
                         "call_id": row["call_id"],
                         "asterisk_uniqueid": uniqueid,
@@ -558,5 +567,5 @@ class LifecycleEvidence:
                 }
         except PermissionError:
             raise
-        except (OSError, sqlite3.Error) as exc:
+        except (OSError, sqlite3.Error, ValueError, TypeError, AttributeError) as exc:
             raise InternalCallError("AMI evidence store unavailable") from exc

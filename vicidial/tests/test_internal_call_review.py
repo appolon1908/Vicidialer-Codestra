@@ -1,6 +1,7 @@
 """Regression evidence for the exact PR26 authorization and concurrency findings."""
 
 import json
+import os
 import sqlite3
 from concurrent.futures import ThreadPoolExecutor
 from datetime import UTC, datetime, timedelta
@@ -386,6 +387,11 @@ def test_unknown_hangup_preserves_not_found_semantics(tmp_path):
     with pytest.raises(KeyError):
         service.hangup("missing-operation")
     assert transport.actions == []
+    with sqlite3.connect(service.audit_path) as db:
+        assert db.execute(
+            "SELECT outcome FROM audit WHERE operation='internal-call.hangup' "
+            "ORDER BY sequence"
+        ).fetchall() == [("requested",), ("not_found",)]
 
 
 def test_hangup_readback_race_preserves_not_found_semantics(tmp_path, monkeypatch):
@@ -405,6 +411,20 @@ def test_hangup_readback_race_preserves_not_found_semantics(tmp_path, monkeypatc
             "SELECT outcome FROM audit WHERE operation='internal-call.hangup' "
             "ORDER BY sequence DESC LIMIT 1"
         ).fetchone()[0] == "not_found"
+
+
+@pytest.mark.parametrize("field,value", [
+    ("binding_json", "not-json"),
+    ("binding_json", "[]"),
+])
+def test_malformed_lifecycle_binding_requires_reconciliation(tmp_path, field, value):
+    service, _, lifecycle = executor(tmp_path)
+    accepted = service.originate(command())
+    seed_connected(lifecycle, accepted["asterisk_uniqueid"])
+    with sqlite3.connect(lifecycle) as db:
+        db.execute(f"UPDATE calls SET {field}=?", (value,))
+    with pytest.raises(InternalCallError, match="evidence store unavailable"):
+        service.readback(command().operation_id)
 
 
 def test_socket_transport_matches_action_id_and_never_opens_remote_ami(monkeypatch):
@@ -464,8 +484,10 @@ def test_socket_transport_matches_action_id_and_never_opens_remote_ami(monkeypat
         SocketAmiTransport(Path("/unused")).action({"Action": "Originate"})
 
 
-@pytest.mark.parametrize("mode,uid", [(0o100644, 0), (0o100660, 0), (0o100600, 1000)])
-def test_protected_policy_permissions_fail_closed(tmp_path, monkeypatch, mode, uid):
+@pytest.mark.parametrize("mode,uid,gid", [
+    (0o100644, 0, 0), (0o100660, 0, 1000), (0o100600, 1000, 2000),
+])
+def test_protected_policy_permissions_fail_closed(tmp_path, monkeypatch, mode, uid, gid):
     from types import SimpleNamespace
 
     import codestra_vicidial.internal_call_transport as module
@@ -473,10 +495,25 @@ def test_protected_policy_permissions_fail_closed(tmp_path, monkeypatch, mode, u
     path = tmp_path / "policy.json"
     path.write_text(policy().model_dump_json())
     monkeypatch.setattr(
-        module.os, "fstat", lambda fd: SimpleNamespace(st_mode=mode, st_uid=uid)
+        module.os, "fstat", lambda fd: SimpleNamespace(st_mode=mode, st_uid=uid, st_gid=gid)
     )
     with pytest.raises(CallDenied):
         module.load_protected_json(path)
+
+
+def test_root_owned_group_readonly_policy_is_service_readable(tmp_path, monkeypatch):
+    from types import SimpleNamespace
+
+    import codestra_vicidial.internal_call_transport as module
+
+    path = tmp_path / "policy.json"
+    path.write_text('{"scope":"synthetic"}')
+    monkeypatch.setattr(
+        module.os, "fstat", lambda fd: SimpleNamespace(
+            st_mode=0o100440, st_uid=0, st_gid=os.getegid(),
+        ),
+    )
+    assert module.load_protected_json(path) == {"scope": "synthetic"}
 
 
 def test_protected_policy_rejects_duplicate_keys_and_symlinks(tmp_path, monkeypatch):
@@ -487,7 +524,9 @@ def test_protected_policy_rejects_duplicate_keys_and_symlinks(tmp_path, monkeypa
     path = tmp_path / "policy.json"
     path.write_text('{"max_calls":1,"max_calls":10}')
     monkeypatch.setattr(
-        module.os, "fstat", lambda fd: SimpleNamespace(st_mode=0o100600, st_uid=0)
+        module.os, "fstat", lambda fd: SimpleNamespace(
+            st_mode=0o100600, st_uid=os.geteuid(), st_gid=os.getegid(),
+        )
     )
     with pytest.raises(CallDenied, match="duplicate"):
         module.load_protected_json(path)

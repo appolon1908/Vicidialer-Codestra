@@ -35,7 +35,16 @@ def load_protected_json(path):
     fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW)
     with os.fdopen(fd) as stream:
         info = os.fstat(stream.fileno())
-        if not stat.S_ISREG(info.st_mode) or info.st_uid != 0 or info.st_mode & 0o037:
+        service_owned = info.st_uid == os.geteuid() and not info.st_mode & 0o077
+        root_group_readable = (
+            info.st_uid == 0
+            and info.st_gid == os.getegid()
+            and info.st_mode & 0o040
+            and not info.st_mode & 0o037
+        )
+        if not stat.S_ISREG(info.st_mode) or not (
+            service_owned or root_group_readable
+        ):
             raise CallDenied("configuration must be root-owned and protected")
         raw = stream.read(65537)
         if len(raw) > 65536:
