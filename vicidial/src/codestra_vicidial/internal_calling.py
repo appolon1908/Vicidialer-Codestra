@@ -122,7 +122,7 @@ class InternalCallExecutor:
         self.policy, self.state_path, self.lifecycle_path, self.transport, self.audit = policy, state_path, lifecycle_path, transport, audit
         state_path.parent.mkdir(parents=True, exist_ok=True)
         with sqlite3.connect(state_path) as db:
-            db.execute("CREATE TABLE IF NOT EXISTS internal_calls(operation_id TEXT PRIMARY KEY,request_hash TEXT NOT NULL,correlation_id TEXT NOT NULL,authorization_reference TEXT NOT NULL UNIQUE,uniqueid TEXT NOT NULL UNIQUE,state TEXT NOT NULL,hangup_state TEXT,created_at TEXT NOT NULL)")
+            db.execute("CREATE TABLE IF NOT EXISTS internal_calls(operation_id TEXT PRIMARY KEY,request_hash TEXT NOT NULL,request_json TEXT NOT NULL,correlation_id TEXT NOT NULL,authorization_reference TEXT NOT NULL UNIQUE,uniqueid TEXT NOT NULL UNIQUE,state TEXT NOT NULL,hangup_state TEXT,created_at TEXT NOT NULL)")
 
     def _audit(self, command: OriginateCommand, operation: str, outcome: str, detail: object) -> None:
         self.audit.audit(command.correlation_id, command.subject, operation,
@@ -149,6 +149,7 @@ class InternalCallExecutor:
             row = db.execute("SELECT request_hash,uniqueid,state,created_at FROM internal_calls WHERE operation_id=?", (command.operation_id,)).fetchone()
             if row:
                 if row[0] != digest:
+                    self._audit(command, "internal-call.originate", "rejected", {"reason": "idempotency_conflict"})
                     raise InternalCallError("operation identity was reused with different content")
                 self._audit(command, "internal-call.originate", "duplicate", {"dispatch_state": row[2]})
                 return {"status": row[2], "operation_id": command.operation_id, "asterisk_uniqueid": row[1], "created_at": row[3], "duplicate": True}
@@ -161,7 +162,7 @@ class InternalCallExecutor:
             # Commit the immutable intent before the external effect. A crash or
             # timeout remains unknown and is read back; it is never re-originated.
             try:
-                db.execute("INSERT INTO internal_calls VALUES(?,?,?,?,?,?,?,?)", (command.operation_id, digest, command.correlation_id, command.authorization_reference, uniqueid, "dispatch_unknown", None, created))
+                db.execute("INSERT INTO internal_calls VALUES(?,?,?,?,?,?,?,?,?)", (command.operation_id, digest, command.model_dump_json(), command.correlation_id, command.authorization_reference, uniqueid, "dispatch_unknown", None, created))
             except sqlite3.IntegrityError as exc:
                 self._audit(command, "internal-call.originate", "rejected", {"reason": "one_call_consumed"})
                 raise PermissionError("one-call authorization was already consumed") from exc
@@ -182,17 +183,49 @@ class InternalCallExecutor:
 
     def readback(self, operation_id: str) -> dict:
         with sqlite3.connect(self.state_path) as db:
-            row = db.execute("SELECT correlation_id,uniqueid,state,created_at FROM internal_calls WHERE operation_id=?", (operation_id,)).fetchone()
+            row = db.execute("SELECT request_json,correlation_id,uniqueid,state,created_at,authorization_reference FROM internal_calls WHERE operation_id=?", (operation_id,)).fetchone()
         if not row:
             raise KeyError(operation_id)
+        command = OriginateCommand.model_validate_json(row[0])
         with sqlite3.connect(f"file:{self.lifecycle_path}?mode=ro", uri=True) as db:
             db.row_factory = sqlite3.Row
-            call = db.execute("SELECT linkedid,call_id,state,answered_at,ended_at,terminal FROM calls WHERE asterisk_uniqueid=?", (row[1],)).fetchone()
-        return {"operation_id": operation_id, "correlation_id": row[0], "dispatch_state": row[2], "asterisk_uniqueid": row[1],
+            call = db.execute("SELECT call_key,linkedid,call_id,binding_json,state,created_at,answered_at,ended_at,terminal FROM calls WHERE asterisk_uniqueid=?", (row[2],)).fetchone()
+            terminal_envelope = None
+            if call and call["terminal"]:
+                event = db.execute(
+                    "SELECT envelope_json FROM event_outbox WHERE call_key=? ORDER BY sequence DESC LIMIT 1",
+                    (call["call_key"],),
+                ).fetchone()
+                if event:
+                    terminal_envelope = json.loads(event[0])
+        duration = talk_duration = hangup_cause = hangup_cause_code = None
+        if terminal_envelope:
+            payload = terminal_envelope.get("payload", {})
+            duration = payload.get("duration")
+            talk_duration = payload.get("talk_duration")
+            hangup_cause = payload.get("hangup_cause")
+            hangup_cause_code = payload.get("hangup_cause_code")
+        if call:
+            binding = json.loads(call["binding_json"])
+            expected = {
+                "tenant_id": command.tenant_id, "campaign_id": command.campaign,
+                "agent_id": command.employee_id, "extension": command.extension,
+                "keycloak_subject": command.subject,
+            }
+            if any(binding.get(key) != value for key, value in expected.items()):
+                raise InternalCallError("authoritative lifecycle identity binding mismatch")
+        return {"operation_id": operation_id, "correlation_id": row[1], "dispatch_state": row[3], "asterisk_uniqueid": row[2],
                 "linkedid": call["linkedid"] if call else None, "call_id": call["call_id"] if call else None,
                 "call_state": call["state"] if call else "unknown", "answered_at": call["answered_at"] if call else None,
                 "ended_at": call["ended_at"] if call else None, "terminal": bool(call["terminal"]) if call else False,
-                "internal_only": True, "external_dialing": False}
+                "created_at": call["created_at"] if call else row[4],
+                "duration_seconds": duration, "talk_duration_seconds": talk_duration,
+                "hangup_cause": hangup_cause, "hangup_cause_code": hangup_cause_code,
+                "tenant_id": command.tenant_id, "subject": command.subject,
+                "employee_id": command.employee_id, "username": command.username,
+                "extension": command.extension, "campaign": command.campaign,
+                "authorization_reference": row[5], "internal_only": True,
+                "external_dialing": False, "recording": False}
 
     def hangup(self, operation_id: str) -> dict:
         current = self.readback(operation_id)

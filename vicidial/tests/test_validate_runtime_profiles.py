@@ -46,7 +46,29 @@ def environment(tmp_path, deployment):
         "database": "asterisk",
     }))
     db_secret.chmod(0o600)
-    mysql_profile = deployment in {"production-candidate", "production-reconciliation"}
+    call_policy = tmp_path / "internal-call-policy.json"
+    call_policy.write_text(json.dumps({
+        "schema_version": "1.0", "release_sha": source_sha,
+        "authorization_reference": "CHG-APPOLON-INTERNAL-0001",
+        "expires_at": "2099-09-05T20:00:00Z", "tenant_id": "tenant-test",
+        "subject": "subject-appolon", "employee_id": "employee-appolon",
+        "username": "appolon", "extension": "6901", "campaign": "TEST_SYN",
+        "destination_alias": "internal:TEST_ECHO", "destination_extension": "6000",
+        "dialplan_context": "codestra-internal-test", "internal_only": True,
+        "external_dialing": False, "recording": False, "max_calls": 1,
+    }))
+    call_policy.chmod(0o600)
+    lifecycle = tmp_path / "ami-events.sqlite3"
+    lifecycle.touch(mode=0o600)
+    ami_credential = tmp_path / "ami.json"
+    ami_credential.write_text(json.dumps({
+        "host": "127.0.0.1", "port": 5038, "username": "synthetic",
+        "secret": "synthetic-private-value",
+    }))
+    ami_credential.chmod(0o600)
+    mysql_profile = deployment in {
+        "production-candidate", "production-reconciliation", "production-internal-test",
+    }
     env = {
         **os.environ,
         "CODESTRA_ADAPTER_DEPLOYMENT": deployment,
@@ -72,8 +94,16 @@ def environment(tmp_path, deployment):
         "CODESTRA_ADAPTER_HMAC_FILE": str(secret),
         "CODESTRA_VICIDIAL_DB_FILE": str(db_secret),
         "CODESTRA_RECONCILIATION_POLICY_FILE": str(policy),
+        "CODESTRA_INTERNAL_CALL_POLICY_FILE": str(call_policy),
+        "CODESTRA_AMI_LIFECYCLE_STATE": str(lifecycle),
+        "CODESTRA_AMI_CREDENTIAL_FILE": str(ami_credential),
+        "ENABLE_INTERNAL_TEST_CALLING": (
+            "true" if deployment == "production-internal-test" else "false"
+        ),
         "CODESTRA_RELEASE_METADATA_REQUIRED": (
-            "true" if deployment == "production-reconciliation" else "false"
+            "true" if deployment in {
+                "production-reconciliation", "production-internal-test",
+            } else "false"
         ),
         "CODESTRA_BUILD_INFO_FILE": str(build_info),
     }
@@ -134,6 +164,16 @@ def test_production_candidate_requires_mysql_but_keeps_writes_off(tmp_path):
     env = environment(tmp_path, "production-candidate")
     assert run(env).returncode == 0
     env["CODESTRA_ADAPTER_BACKEND"] = "memory"
+    assert run(env).returncode != 0
+
+
+def test_production_internal_test_requires_exact_policy_and_lifecycle(tmp_path):
+    env = environment(tmp_path, "production-internal-test")
+    assert run(env).returncode == 0
+    env["ENABLE_INTERNAL_TEST_CALLING"] = "false"
+    assert run(env).returncode != 0
+    env = environment(tmp_path, "production-internal-test")
+    Path(env["CODESTRA_AMI_LIFECYCLE_STATE"]).unlink()
     assert run(env).returncode != 0
     env = environment(tmp_path, "production-candidate")
     env["ENABLE_PROVISIONING"] = "true"

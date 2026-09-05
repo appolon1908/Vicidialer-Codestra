@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import sqlite3
 from datetime import UTC, datetime, timedelta
 
@@ -48,8 +49,9 @@ def executor(tmp_path):
     lifecycle = tmp_path / "lifecycle.sqlite3"
     with sqlite3.connect(lifecycle) as db:
         db.executescript("""
-        CREATE TABLE calls(call_key TEXT,linkedid TEXT,call_id TEXT,state TEXT,answered_at TEXT,ended_at TEXT,terminal INTEGER,asterisk_uniqueid TEXT);
+        CREATE TABLE calls(call_key TEXT,linkedid TEXT,call_id TEXT,binding_json TEXT,state TEXT,created_at TEXT,answered_at TEXT,ended_at TEXT,terminal INTEGER,asterisk_uniqueid TEXT);
         CREATE TABLE channels(call_key TEXT,channel TEXT,active INTEGER,updated_at TEXT);
+        CREATE TABLE event_outbox(call_key TEXT,sequence INTEGER,envelope_json TEXT);
         """)
     transport = FakeAmi()
     audit = StateStore(tmp_path / "audit.sqlite3")
@@ -92,8 +94,12 @@ def test_readback_and_hangup_use_authoritative_lifecycle_channel(tmp_path):
     service, transport, lifecycle = executor(tmp_path)
     accepted = service.originate(command())
     with sqlite3.connect(lifecycle) as db:
-        db.execute("INSERT INTO calls VALUES(?,?,?,?,?,?,?,?)", (
-            "call-key", "linked-1", "call-1", "connected", "2026-09-05T18:00:02Z",
+        db.execute("INSERT INTO calls VALUES(?,?,?,?,?,?,?,?,?,?)", (
+            "call-key", "linked-1", "call-1", json.dumps({
+                "tenant_id": "tenant-test", "campaign_id": "TEST_SYN",
+                "agent_id": "employee-appolon", "extension": "6901",
+                "keycloak_subject": "subject-appolon",
+            }), "connected", "2026-09-05T18:00:01Z", "2026-09-05T18:00:02Z",
             None, 0, accepted["asterisk_uniqueid"],
         ))
         db.execute("INSERT INTO channels VALUES(?,?,?,?)", (
@@ -142,8 +148,12 @@ def test_originate_and_hangup_write_append_only_audit_outcomes(tmp_path):
     service, _, lifecycle = executor(tmp_path)
     accepted = service.originate(command())
     with sqlite3.connect(lifecycle) as db:
-        db.execute("INSERT INTO calls VALUES(?,?,?,?,?,?,?,?)", (
-            "call-key", "linked-1", "call-1", "connected", None, None, 0,
+        db.execute("INSERT INTO calls VALUES(?,?,?,?,?,?,?,?,?,?)", (
+            "call-key", "linked-1", "call-1", json.dumps({
+                "tenant_id": "tenant-test", "campaign_id": "TEST_SYN",
+                "agent_id": "employee-appolon", "extension": "6901",
+                "keycloak_subject": "subject-appolon",
+            }), "connected", "2026-09-05T18:00:01Z", None, None, 0,
             accepted["asterisk_uniqueid"],
         ))
         db.execute("INSERT INTO channels VALUES(?,?,?,?)", (
@@ -156,3 +166,47 @@ def test_originate_and_hangup_write_append_only_audit_outcomes(tmp_path):
         ("internal-call.originate", "accepted"),
         ("internal-call.hangup", "requested"),
     ]
+
+
+def test_terminal_readback_returns_bound_authoritative_evidence(tmp_path):
+    service, _, lifecycle = executor(tmp_path)
+    accepted = service.originate(command())
+    binding = {
+        "tenant_id": "tenant-test", "campaign_id": "TEST_SYN",
+        "agent_id": "employee-appolon", "extension": "6901",
+        "keycloak_subject": "subject-appolon",
+    }
+    envelope = {"payload": {
+        "duration": 9, "talk_duration": 6, "hangup_cause_code": 16,
+        "hangup_cause": "Normal Clearing",
+    }}
+    with sqlite3.connect(lifecycle) as db:
+        db.execute("INSERT INTO calls VALUES(?,?,?,?,?,?,?,?,?,?)", (
+            "call-key", "linked-1", "call-1", json.dumps(binding), "completed",
+            "2026-09-05T18:00:01Z", "2026-09-05T18:00:04Z",
+            "2026-09-05T18:00:10Z", 1, accepted["asterisk_uniqueid"],
+        ))
+        db.execute("INSERT INTO event_outbox VALUES(?,?,?)", (
+            "call-key", 4, json.dumps(envelope),
+        ))
+    result = service.readback(command().operation_id)
+    assert result | {} == result
+    assert result["tenant_id"] == "tenant-test"
+    assert result["subject"] == "subject-appolon"
+    assert result["employee_id"] == "employee-appolon"
+    assert result["duration_seconds"] == 9
+    assert result["talk_duration_seconds"] == 6
+    assert result["hangup_cause_code"] == 16
+    assert result["terminal"] is True
+
+
+def test_changed_content_conflict_is_durably_audited(tmp_path):
+    service, _, _ = executor(tmp_path)
+    service.originate(command())
+    with pytest.raises(InternalCallError):
+        service.originate(command(correlation_id="correlation-internal-0002"))
+    with sqlite3.connect(tmp_path / "audit.sqlite3") as db:
+        row = db.execute(
+            "SELECT outcome FROM audit ORDER BY sequence DESC LIMIT 1"
+        ).fetchone()
+    assert row[0] == "rejected"

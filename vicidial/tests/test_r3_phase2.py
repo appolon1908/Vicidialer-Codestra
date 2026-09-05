@@ -346,6 +346,16 @@ def test_operational_document_validation() -> None:
         version=version, expected_sha=SHA,
         deployment_profile="production-reconciliation",
     )
+    module.validate_documents(
+        health={"status": "live"},
+        ready={"status": "ready", "writes_enabled": False,
+               "release_verified": True,
+               "deployment_profile": "production-internal-test",
+               "internal_test_calling": True,
+               "checks": {"internal_call_policy": True}},
+        version=version, expected_sha=SHA,
+        deployment_profile="production-internal-test",
+    )
 
 
 def test_systemd_uses_complete_operational_contract() -> None:

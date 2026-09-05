@@ -12,7 +12,8 @@ from fastapi.responses import JSONResponse
 from . import __version__
 from .agent_provisioning import AgentProvisioningPolicy
 from .internal_calling import (
-    InternalCallExecutor, InternalCallPolicy, OriginateCommand, SocketAmiTransport,
+    InternalCallError, InternalCallExecutor, InternalCallPolicy, OriginateCommand,
+    SocketAmiTransport,
 )
 from .credential_authority import UnixCredentialAuthority
 from .models import (
@@ -370,6 +371,8 @@ def create_app(
             return internal_call_executor.originate(command)
         except PermissionError as exc:
             raise HTTPException(403, str(exc)) from exc
+        except InternalCallError as exc:
+            raise HTTPException(409, str(exc)) from exc
         except ValueError as exc:
             raise HTTPException(422, str(exc)) from exc
 
@@ -618,7 +621,7 @@ def app_from_environment() -> FastAPI:
         internal_executor = InternalCallExecutor(
             call_policy,
             Path(os.environ.get("CODESTRA_INTERNAL_CALL_STATE", "/var/lib/codestra-vicidial/internal-calls.sqlite3")),
-            Path(os.environ.get("CODESTRA_AMI_LIFECYCLE_STATE", "/var/lib/codestra-vicidial/ami-lifecycle.sqlite3")),
+            Path(os.environ.get("CODESTRA_AMI_LIFECYCLE_STATE", os.environ.get("AMI_EVENT_STATE_DB", "/var/lib/codestra-vicidial/ami-events.sqlite3"))),
             SocketAmiTransport(Path(os.environ["CODESTRA_AMI_CREDENTIAL_FILE"])),
             state,
         )

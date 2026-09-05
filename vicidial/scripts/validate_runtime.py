@@ -9,6 +9,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 from codestra_vicidial.reconciliation import ReconciliationDenied, ReconciliationPolicy
+from codestra_vicidial.internal_calling import InternalCallError, InternalCallPolicy
 from codestra_vicidial.release import load_release_info
 
 ALWAYS_FALSE_FLAGS = (
@@ -83,6 +84,31 @@ elif deployment == "production-reconciliation":
         )
     except (KeyError, ReconciliationDenied, ValueError) as exc:
         raise SystemExit("request-bound reconciliation policy invalid: {}".format(exc)) from exc
+elif deployment == "production-internal-test":
+    if backend != "mysql":
+        raise SystemExit("production internal test requires loopback mysql backend")
+    for name in ("ENABLE_VICIDIAL_WRITES", "ENABLE_PROVISIONING"):
+        require_false(name)
+    if os.environ.get("ENABLE_INTERNAL_TEST_CALLING", "").lower() != "true":
+        raise SystemExit("bounded internal calling must be explicitly enabled")
+    if release_info is None or not isinstance(release_info.get("git_sha"), str):
+        raise SystemExit("verified release metadata required for internal calling")
+    try:
+        InternalCallPolicy.from_file(
+            Path(os.environ["CODESTRA_INTERNAL_CALL_POLICY_FILE"]),
+            release_info["git_sha"],
+        )
+    except (KeyError, OSError, InternalCallError, ValueError) as exc:
+        raise SystemExit("bounded internal call policy invalid: {}".format(exc)) from exc
+    lifecycle = Path(os.environ.get(
+        "CODESTRA_AMI_LIFECYCLE_STATE",
+        os.environ.get("AMI_EVENT_STATE_DB", "/var/lib/codestra-vicidial/ami-events.sqlite3"),
+    ))
+    if not lifecycle.is_absolute() or not lifecycle.is_file():
+        raise SystemExit("authoritative AMI lifecycle database unavailable")
+    credential = Path(os.environ["CODESTRA_AMI_CREDENTIAL_FILE"])
+    if not credential.is_file() or credential.stat().st_mode & 0o077:
+        raise SystemExit("AMI credential is unavailable or permissions are unsafe")
 else:
     raise SystemExit("unsupported adapter deployment profile")
 
