@@ -20,6 +20,33 @@ class InternalCallError(RuntimeError):
     pass
 
 
+LIFECYCLE_REQUIRED_COLUMNS = {
+    "calls": frozenset({
+        "call_key", "linkedid", "extension", "call_id", "binding_json",
+        "asterisk_uniqueid", "state", "answered", "terminal", "created_at",
+        "answered_at", "ended_at", "updated_at",
+    }),
+    "channels": frozenset({"call_key", "uniqueid", "channel", "active"}),
+    "event_outbox": frozenset({
+        "event_id", "call_key", "sequence", "event_type", "envelope_json",
+    }),
+}
+
+
+def validate_lifecycle_schema(path: Path) -> None:
+    """Validate every SQLite column consumed by authoritative call readback."""
+    try:
+        with closing(sqlite3.connect(path.as_uri() + "?mode=ro", uri=True)) as db:
+            for table, required in LIFECYCLE_REQUIRED_COLUMNS.items():
+                present = {row[1] for row in db.execute(f"PRAGMA table_info({table})")}
+                if not required <= present:
+                    raise ValueError("schema mismatch")
+    except (OSError, sqlite3.Error, ValueError) as exc:
+        raise InternalCallError(
+            "authoritative AMI lifecycle database schema invalid"
+        ) from exc
+
+
 class StrictModel(BaseModel):
     model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
 

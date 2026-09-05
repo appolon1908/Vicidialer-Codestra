@@ -4,13 +4,12 @@ from __future__ import annotations
 
 import json
 import os
-import sqlite3
 import sys
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 from codestra_vicidial.reconciliation import ReconciliationDenied, ReconciliationPolicy
-from codestra_vicidial.internal_calling import InternalCallPolicy
+from codestra_vicidial.internal_calling import InternalCallError, InternalCallPolicy, validate_lifecycle_schema
 from codestra_vicidial.internal_call_transport import CallDenied, load_protected_json
 from codestra_vicidial.release import load_release_info
 
@@ -92,17 +91,8 @@ elif deployment == "production-internal-test":
     if not lifecycle.is_absolute() or not lifecycle.is_file():
         raise SystemExit("authoritative AMI lifecycle database unavailable")
     try:
-        with sqlite3.connect(lifecycle.as_uri() + "?mode=ro", uri=True) as db:
-            required = {
-                "calls": {"call_key", "linkedid", "extension", "call_id", "binding_json", "asterisk_uniqueid", "state", "answered", "terminal", "created_at", "answered_at", "ended_at", "updated_at"},
-                "channels": {"call_key", "uniqueid", "channel", "active"},
-                "event_outbox": {"event_id", "call_key", "sequence", "event_type", "envelope_json"},
-            }
-            for table, columns in required.items():
-                present = {row[1] for row in db.execute(f"PRAGMA table_info({table})")}
-                if not columns <= present:
-                    raise ValueError("schema mismatch")
-    except (OSError, sqlite3.Error, ValueError) as exc:
+        validate_lifecycle_schema(lifecycle)
+    except InternalCallError as exc:
         raise SystemExit("authoritative AMI lifecycle database schema invalid") from exc
     credential = Path(os.environ["CODESTRA_AMI_CREDENTIAL_FILE"])
     try:

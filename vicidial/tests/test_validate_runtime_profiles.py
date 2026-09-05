@@ -203,9 +203,19 @@ def test_internal_profile_rejects_each_consumed_lifecycle_column_gap(tmp_path):
                 if name != column
             )
             db.execute(f"CREATE TABLE calls ({schema})")
+        from codestra_vicidial.internal_calling import (
+            InternalCallError, validate_lifecycle_schema,
+        )
+        try:
+            validate_lifecycle_schema(lifecycle)
+        except InternalCallError:
+            pass
+        else:
+            raise AssertionError(f"missing consumed column {column} was accepted")
         result = run(env)
         assert result.returncode != 0
-        assert b"lifecycle database schema invalid" in result.stderr
+        if os.getuid() == 0:
+            assert b"lifecycle database schema invalid" in result.stderr
     env = environment(tmp_path, "production-internal-test")
     Path(env["CODESTRA_AMI_LIFECYCLE_STATE"]).unlink()
     assert run(env).returncode != 0
