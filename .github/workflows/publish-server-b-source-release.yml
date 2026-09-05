@@ -1,0 +1,95 @@
+name: Publish Server B source release
+on:
+  workflow_dispatch:
+    inputs:
+      confirmation:
+        description: Exact publication confirmation
+        required: true
+        type: string
+permissions:
+  contents: read
+  id-token: write
+jobs:
+  publish:
+    if: github.ref == 'refs/heads/main' && inputs.confirmation == 'PUBLISH_SERVER_B_SOURCE_RELEASE_9AC8EF48'
+    runs-on: ubuntu-24.04
+    env:
+      SOURCE_SHA: 9ac8ef4840f78ba4ad9b816e4e409298505103ce
+      COSIGN_VERSION: v3.1.2
+      COSIGN_SHA256: f7622ed3cf22e55e1ae6377c080979ff77a22da9981c11df222a2e444991e7cf
+    steps:
+      - name: Check out protected workflow authority
+        uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8
+        with: {fetch-depth: 0}
+      - name: Check out exact protected adapter source
+        uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8
+        with: {ref: "${{ env.SOURCE_SHA }}", path: exact-source, fetch-depth: 1}
+      - name: Verify authority and source
+        run: |
+          set -Eeuo pipefail
+          test "$(git -C exact-source rev-parse HEAD)" = "$SOURCE_SHA"
+          test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
+          git merge-base --is-ancestor "$SOURCE_SHA" origin/main
+          python -m compileall -q exact-source/vicidial/src exact-source/vicidial/scripts
+      - name: Build and test deterministic installer-compatible archive
+        run: |
+          set -Eeuo pipefail
+          python -m pip install "exact-source/vicidial[test]" pytest==8.4.2
+          SOURCE_RELEASE_TEST_ROOT="$PWD/exact-source/vicidial" python -m pytest -q vicidial/tests/test_source_release_artifact.py
+          git -C exact-source diff --exit-code HEAD
+          mkdir -p dist
+          name="codestra-vicidial-adapter-${SOURCE_SHA}.tar.gz"
+          python vicidial/scripts/build_source_release.py --source-root exact-source/vicidial --source-sha "$SOURCE_SHA" --builder-sha "$GITHUB_SHA" --output "dist/$name" --metadata dist/source-release-metadata.json
+          (cd dist && sha256sum "$name" > "$name.sha256")
+          python - "$name" <<'PY'
+          import hashlib, json, os, pathlib, sys
+          name = sys.argv[1]
+          archive = pathlib.Path("dist") / name
+          provenance = {
+              "_type": "https://in-toto.io/Statement/v1",
+              "subject": [{"name": name, "digest": {"sha256": hashlib.sha256(archive.read_bytes()).hexdigest()}}],
+              "predicateType": "https://slsa.dev/provenance/v1",
+              "predicate": {
+                  "buildDefinition": {
+                      "buildType": "https://github.com/appolon1908-hue/Vicidialer-Codestra/server-b-source-release/v1",
+                      "externalParameters": {"source_sha": os.environ["SOURCE_SHA"], "builder_sha": os.environ["GITHUB_SHA"]},
+                      "resolvedDependencies": [{"uri": "git+https://github.com/appolon1908-hue/Vicidialer-Codestra", "digest": {"gitCommit": os.environ["SOURCE_SHA"]}}],
+                  },
+                  "runDetails": {"builder": {"id": os.environ["GITHUB_WORKFLOW_REF"]}, "metadata": {"invocationId": os.environ["GITHUB_RUN_ID"] + "/" + os.environ["GITHUB_RUN_ATTEMPT"]}},
+              },
+          }
+          pathlib.Path("dist/source-release-provenance.json").write_text(json.dumps(provenance, indent=2, sort_keys=True) + "\n")
+          PY
+          python vicidial/scripts/verify_source_release.py --archive "dist/$name" --source-sha "$SOURCE_SHA" --builder-sha "$GITHUB_SHA"
+      - name: Sign and verify archive
+        run: |
+          set -Eeuo pipefail
+          cosign="$RUNNER_TEMP/cosign"
+          curl --fail --location --proto '=https' --tlsv1.2 "https://github.com/sigstore/cosign/releases/download/${COSIGN_VERSION}/cosign-linux-amd64" --output "$cosign"
+          echo "${COSIGN_SHA256}  ${cosign}" | sha256sum --check --strict
+          chmod 0755 "$cosign"
+          archive="dist/codestra-vicidial-adapter-${SOURCE_SHA}.tar.gz"
+          "$cosign" sign-blob --yes --bundle dist/source-release.sigstore.json "$archive"
+          "$cosign" verify-blob --bundle dist/source-release.sigstore.json --certificate-identity-regexp '^https://github.com/appolon1908-hue/Vicidialer-Codestra/.github/workflows/publish-server-b-source-release.yml@refs/heads/main$' --certificate-oidc-issuer https://token.actions.githubusercontent.com "$archive"
+          "$cosign" sign-blob --yes --bundle dist/source-release-provenance.sigstore.json dist/source-release-provenance.json
+          "$cosign" verify-blob --bundle dist/source-release-provenance.sigstore.json --certificate-identity-regexp '^https://github.com/appolon1908-hue/Vicidialer-Codestra/.github/workflows/publish-server-b-source-release.yml@refs/heads/main$' --certificate-oidc-issuer https://token.actions.githubusercontent.com dist/source-release-provenance.json
+          python - "$archive" <<'PY'
+          import hashlib, json, os, pathlib, sys
+          archive=pathlib.Path(sys.argv[1]); statement=json.loads(pathlib.Path("dist/source-release-provenance.json").read_text())
+          assert statement.get("_type")=="https://in-toto.io/Statement/v1"
+          assert statement.get("predicateType")=="https://slsa.dev/provenance/v1"
+          assert statement.get("subject")==[{"name":archive.name,"digest":{"sha256":hashlib.sha256(archive.read_bytes()).hexdigest()}}]
+          predicate=statement["predicate"]; definition=predicate["buildDefinition"]; details=predicate["runDetails"]
+          assert definition["buildType"]=="https://github.com/appolon1908-hue/Vicidialer-Codestra/server-b-source-release/v1"
+          assert definition["externalParameters"]=={"source_sha":os.environ["SOURCE_SHA"],"builder_sha":os.environ["GITHUB_SHA"]}
+          assert definition["resolvedDependencies"]==[{"uri":"git+https://github.com/appolon1908-hue/Vicidialer-Codestra","digest":{"gitCommit":os.environ["SOURCE_SHA"]}}]
+          assert details["builder"]["id"]==os.environ["GITHUB_WORKFLOW_REF"]
+          assert details["metadata"]["invocationId"]==os.environ["GITHUB_RUN_ID"]+"/"+os.environ["GITHUB_RUN_ATTEMPT"]
+          PY
+      - name: Upload protected source release
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: server-b-source-release-${{ env.SOURCE_SHA }}
+          path: dist/
+          if-no-files-found: error
+          retention-days: 30
