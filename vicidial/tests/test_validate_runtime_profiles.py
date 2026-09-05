@@ -172,10 +172,6 @@ def test_production_candidate_requires_mysql_but_keeps_writes_off(tmp_path):
 def test_production_internal_test_requires_exact_policy_and_lifecycle(tmp_path):
     env = environment(tmp_path, "production-internal-test")
     result = run(env)
-    if os.getuid() != 0:
-        assert result.returncode != 0
-        assert b"root-owned and protected" in result.stderr
-        return
     assert result.returncode == 0
     env["ENABLE_INTERNAL_TEST_CALLING"] = "false"
     assert run(env).returncode != 0
