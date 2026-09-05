@@ -56,7 +56,7 @@ def test_dockerfile_is_pinned_multistage_nonroot_and_amd64_buildable():
     assert '"libssl3=${OPENSSL_PACKAGE_VERSION}"' in text
     assert '"libuuid=${LIBUUID_PACKAGE_VERSION}"' in text
     assert "OPENSSL_PACKAGE_VERSION=3.5.8-r0" in text
-    assert "LIBUUID_PACKAGE_VERSION=2.42.3-r0" in text
+    assert "LIBUUID_PACKAGE_VERSION=2.42.1-r0" in text
     assert "https://github.com/appolon1908-hue/Vicidialer-Codestra" in text
     assert "codestra_vicidial.production_app:app" in text
     for flag in LIVE_FLAGS:
