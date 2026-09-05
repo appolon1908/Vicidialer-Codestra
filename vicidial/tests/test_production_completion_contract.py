@@ -135,6 +135,6 @@ def test_deployment_authority_does_not_execute_reference_or_candidate_files():
 
 def test_deploy_readiness_uses_repository_root_container_contract():
     workflow = DEPLOY_READINESS.read_text()
-    assert "@7db424a47c5556dd473268fa484665c0bb5ee215" in workflow
+    assert "@230e002c8d6cd97cc908eebbb27f57d6343e7cc8" in workflow
     assert "dockerfile_path: vicidial/docker/Dockerfile" in workflow
     assert "docker_build_context: ." in workflow
