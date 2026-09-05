@@ -265,7 +265,7 @@ def test_version_ready_and_openapi_contract(
                     "x-codestra-required-scope"
                 ].startswith("telephony:")
 
-    assert len(protected) == 17
+    assert len(protected) == 20
     for public_path in ("/health", "/ready", "/version"):
         operation = schema["paths"][public_path]["get"]
         assert not operation.get("security")

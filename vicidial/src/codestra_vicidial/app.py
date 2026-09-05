@@ -11,6 +11,9 @@ from fastapi.responses import JSONResponse
 
 from . import __version__
 from .agent_provisioning import AgentProvisioningPolicy
+from .internal_calling import (
+    InternalCallExecutor, InternalCallPolicy, OriginateCommand, SocketAmiTransport,
+)
 from .credential_authority import UnixCredentialAuthority
 from .models import (
     AgentCommand,
@@ -48,6 +51,9 @@ _PROTECTED_SCOPE_BY_ROUTE = {
     ("post", "/v1/agents/disable"): "telephony:agent-sync",
     ("get", "/v1/agents/{user_id}/actual-state"): "telephony:read",
     ("get", "/v1/agents/availability/{user_id}/{extension}"): "telephony:read",
+    ("post", "/v1/calls/internal/originate"): "telephony:internal-call",
+    ("get", "/v1/calls/internal/{operation_id}"): "telephony:internal-call-read",
+    ("post", "/v1/calls/internal/{operation_id}/hangup"): "telephony:internal-call-hangup",
     ("post", "/v1/leads/publish"): "telephony:lead-publish",
     ("get", "/v1/leads/by-external-id/{external_id}"): "telephony:read",
     ("post", "/v1/callbacks/create"): "telephony:callback-write",
@@ -164,6 +170,7 @@ def create_app(
     authenticator: RequestAuthenticator,
     reconciliation_policy: ReconciliationPolicy | None = None,
     agent_provisioning_policy: AgentProvisioningPolicy | None = None,
+    internal_call_executor: InternalCallExecutor | None = None,
     release_info: Mapping[str, object] | None = None,
 ) -> FastAPI:
     release_document = dict(
@@ -347,6 +354,49 @@ def create_app(
         if user_id != "appolon" or extension != "6901":
             raise HTTPException(403, "availability query outside approved scope")
         return service.agent_availability(user_id, extension)
+
+    @app.post("/v1/calls/internal/originate")
+    async def internal_originate(request: Request, values=Depends(headers)):
+        if internal_call_executor is None:
+            raise HTTPException(403, "internal calling profile is disabled")
+        key, identity, scopes, timestamp, nonce, signature, signature_version = values
+        body = await authorize(request, "telephony:internal-call", identity, scopes,
+                               timestamp, nonce, signature, signature_version, key)
+        try:
+            command = OriginateCommand.model_validate_json(body)
+            if key != command.operation_id:
+                raise ValueError("idempotency key must equal operation_id")
+            return internal_call_executor.originate(command)
+        except PermissionError as exc:
+            raise HTTPException(403, str(exc)) from exc
+        except ValueError as exc:
+            raise HTTPException(422, str(exc)) from exc
+
+    @app.get("/v1/calls/internal/{operation_id}")
+    async def internal_readback(request: Request, operation_id: str,
+                                values=Depends(read_headers)):
+        if internal_call_executor is None:
+            raise HTTPException(403, "internal calling profile is disabled")
+        await authorize(request, "telephony:internal-call-read", *values)
+        try:
+            return internal_call_executor.readback(operation_id)
+        except KeyError as exc:
+            raise HTTPException(404, "internal call operation missing") from exc
+
+    @app.post("/v1/calls/internal/{operation_id}/hangup")
+    async def internal_hangup(request: Request, operation_id: str,
+                              values=Depends(headers)):
+        if internal_call_executor is None:
+            raise HTTPException(403, "internal calling profile is disabled")
+        key, identity, scopes, timestamp, nonce, signature, signature_version = values
+        await authorize(request, "telephony:internal-call-hangup", identity, scopes,
+                        timestamp, nonce, signature, signature_version, key)
+        if key != operation_id + ":hangup":
+            raise HTTPException(422, "hangup idempotency key is not operation-bound")
+        try:
+            return internal_call_executor.hangup(operation_id)
+        except KeyError as exc:
+            raise HTTPException(404, "internal call operation missing") from exc
 
     @app.post("/v1/leads/publish")
     async def lead_publish(request: Request, values=Depends(headers)):
@@ -556,11 +606,26 @@ def app_from_environment() -> FastAPI:
             Path(os.environ["CODESTRA_AGENT_PROVISIONING_POLICY_FILE"]),
             expected_release_sha=release_sha,
         )
+    internal_executor = None
+    if os.environ.get("ENABLE_INTERNAL_TEST_CALLING") == "true":
+        release_sha = release_info.get("git_sha")
+        if release_info.get("verified") is not True or not isinstance(release_sha, str):
+            raise RuntimeError("verified release metadata required for internal calling")
+        call_policy = InternalCallPolicy.from_file(
+            Path(os.environ["CODESTRA_INTERNAL_CALL_POLICY_FILE"]), release_sha
+        )
+        internal_executor = InternalCallExecutor(
+            call_policy,
+            Path(os.environ.get("CODESTRA_INTERNAL_CALL_STATE", "/var/lib/codestra-vicidial/internal-calls.sqlite3")),
+            Path(os.environ.get("CODESTRA_AMI_LIFECYCLE_STATE", "/var/lib/codestra-vicidial/ami-lifecycle.sqlite3")),
+            SocketAmiTransport(Path(os.environ["CODESTRA_AMI_CREDENTIAL_FILE"])),
+        )
     return create_app(
         service,
         auth,
         policy,
         agent_policy,
+        internal_executor,
         release_info=release_info,
     )
 
