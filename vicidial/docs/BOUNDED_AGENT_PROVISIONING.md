@@ -9,8 +9,10 @@ The route remains unavailable unless both `ENABLE_VICIDIAL_WRITES=true` and
 campaign provisioning, dialing, call control, lead publication, email, or SMS.
 
 The protected policy file is root-owned, not world-accessible, and binds one
-request to an immutable release SHA, authorization reference, expiry,
-validated-backup reference, level 9, and the exact disabled agent payload. A
+request to an immutable release SHA, authorization reference, expiry, level 9,
+and the exact disabled agent payload. Its backup object includes the reference,
+creation time, absolute artifact path, SHA-256, and successful validation; the
+adapter verifies its freshness and bytes both at startup and request time. A
 different identity, group, campaign set, role, backup, or payload is rejected.
 The policy belongs in the deployment secret/configuration system and must
 never be committed with production values.
@@ -22,3 +24,10 @@ desired state, correlation ID, and redacted audit evidence. Idempotent retries
 return the prior result; conflicting identifiers fail closed.
 
 Activation and credential delivery are explicitly outside this route.
+
+The database authority is separately applied with
+`ops/agent-provisioning-db-grants.sql.template` and removed with the matching
+revoke template. It permits only the required `vicidial_users` insert columns
+and inactive-state compensation. The bounded Compose overlay selects the
+`production-agent-provisioning` runtime profile; that profile is the only one
+allowed to enable the global write gate alongside the independent agent gate.

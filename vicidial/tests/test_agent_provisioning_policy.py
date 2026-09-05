@@ -1,3 +1,4 @@
+import hashlib
 from datetime import UTC, datetime
 
 import pytest
@@ -31,35 +32,48 @@ def command(**changes):
     return ProvisionAgentCommand.model_validate(payload)
 
 
-def policy(agent=AGENT):
+def policy(tmp_path, agent=AGENT):
+    backup = tmp_path / "backup.tar.enc"
+    backup.write_bytes(b"synthetic encrypted backup")
+    created_at = datetime.now(UTC).isoformat()
     return AgentProvisioningPolicy({
         "protected_sha": "a" * 40,
         "authorization_reference": "CHG-20260905-SYNTHETIC-USER",
         "expires_at": "2099-09-06T00:00:00Z",
-        "backup_reference": "codestra-vicidial-20260905T092327Z.tar.enc",
+        "backup": {"reference": "codestra-vicidial-20260905T092327Z.tar.enc",
+                   "created_at": created_at, "artifact": str(backup),
+                   "sha256": hashlib.sha256(backup.read_bytes()).hexdigest(),
+                   "validation": "PASS"},
         "user_level": 9,
         "agent": agent,
     }, expected_release_sha="a" * 40)
 
 
-def test_exact_grant_accepts_only_approved_agent():
-    policy().authorize(command())
+def test_exact_grant_accepts_only_approved_agent(tmp_path):
+    policy(tmp_path).authorize(command())
     other = AGENT | {"user_id": "COD1002"}
     with pytest.raises(ReconciliationDenied, match="absent from exact approved grant"):
-        policy().authorize(command(agent=other))
+        policy(tmp_path).authorize(command(agent=other))
     with pytest.raises(ReconciliationDenied, match="authorization"):
-        policy().authorize(command(authorization_reference="CHG-OTHER-USER-00001"))
+        policy(tmp_path).authorize(command(authorization_reference="CHG-OTHER-USER-00001"))
 
 
-def test_missing_expired_or_malformed_grant_is_rejected():
+def test_backup_replacement_after_policy_load_is_rejected(tmp_path):
+    approved = policy(tmp_path)
+    approved.backup_path.write_bytes(b"replacement")
+    with pytest.raises(ReconciliationDenied, match="replaced or resized"):
+        approved.authorize(command())
+
+
+def test_missing_expired_or_malformed_grant_is_rejected(tmp_path):
     with pytest.raises(ReconciliationDenied, match="schema"):
         AgentProvisioningPolicy({}, expected_release_sha="a" * 40)
-    expired = policy().__class__
+    expired = policy(tmp_path).__class__
     with pytest.raises(ReconciliationDenied, match="expired"):
         expired({"protected_sha": "a" * 40,
                  "authorization_reference": "CHG-20260905-SYNTHETIC-USER",
                  "expires_at": "2020-01-01T00:00:00Z",
-                 "backup_reference": "backup-reference-0001", "user_level": 9,
+                 "backup": {}, "user_level": 9,
                  "agent": AGENT},
                 expected_release_sha="a" * 40,
                 now=datetime(2026, 9, 5, tzinfo=UTC))
@@ -92,3 +106,20 @@ def test_global_and_independent_kill_switches_remain_closed(tmp_path):
     assert FeatureFlags().production_dialing is False
     assert FeatureFlags().lead_publication is False
     assert FeatureFlags().callback_writes is False
+
+
+def test_retry_recovers_commit_before_state_finalization(tmp_path, monkeypatch):
+    repo = MemoryRepository()
+    state = StateStore(tmp_path / "state.sqlite3")
+    service = AdapterService(repo, state,
+        FeatureFlags(writes=True, agent_provisioning=True))
+    finalize = state.finalize_agent_adoption
+    monkeypatch.setattr(state, "finalize_agent_adoption",
+                        lambda *args: (_ for _ in ()).throw(RuntimeError("crash")))
+    with pytest.raises(RuntimeError, match="crash"):
+        service.provision_agent("idempotency-crash-0001", command())
+    assert len(repo.agents) == 1
+    monkeypatch.setattr(state, "finalize_agent_adoption", finalize)
+    recovered = service.provision_agent("idempotency-crash-0001", command())
+    assert recovered["recovered_after_commit"] is True
+    assert len(repo.agents) == 1

@@ -406,9 +406,22 @@ class AdapterService:
         self._require(self.flags.agent_provisioning, "agent provisioning")
 
         def apply() -> dict:
-            actual = self.repository.provision_agent_disabled(command.agent)
             desired = command.agent.model_dump(mode="json")
             desired["adopt_existing_sha256"] = None
+            desired_hash = self.state.digest(desired)
+            intent = self.state.agent_adoption_intent(command.agent.user_id)
+            actual = self.repository.agent(command.agent.user_id)
+            if intent is None:
+                if actual is not None:
+                    raise CollisionError("agent identifier already exists")
+                self.state.put_agent_adoption_intent(
+                    command.agent.user_id, "missing", desired_hash
+                )
+                actual = self.repository.provision_agent_disabled(command.agent)
+            elif intent["original_hash"] != "missing" or intent["desired_hash"] != desired_hash:
+                raise CollisionError("agent provisioning intent mismatch")
+            elif actual is None:
+                actual = self.repository.provision_agent_disabled(command.agent)
             mismatches = [field for field in ("user_id", "full_name", "user_group")
                           if actual.get(field) != desired[field]]
             if actual.get("active") not in (False, "N"):
@@ -417,14 +430,17 @@ class AdapterService:
                 mismatches.append("user_level")
             if not set(desired["campaigns"]).issubset(set(actual.get("campaigns", []))):
                 mismatches.append("campaigns")
+            if set(actual.get("inbound_groups", [])) != set(desired["inbound_groups"]):
+                mismatches.append("inbound_groups")
             if mismatches:
                 self.repository.disable_agent(command.agent.user_id)
                 raise ReadbackMismatch([{"type": "agent", "id": command.agent.user_id,
                                          "mismatches": sorted(set(mismatches))}])
-            digest = self.state.digest(desired)
-            self.state.put_agent_mapping(command.agent.user_id, command.agent.user_id, digest)
-            self.state.put_agent_desired(command.agent.user_id, desired)
-            return {"status": "complete_disabled", "actual": actual}
+            self.state.finalize_agent_adoption(
+                command.agent.user_id, command.agent.user_id, desired_hash, desired
+            )
+            return {"status": "complete_disabled", "actual": actual,
+                    "recovered_after_commit": intent is not None}
 
         return self._execute("agent.provision-disabled", key, command,
                              command.agent.user_id, apply)
