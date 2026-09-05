@@ -90,10 +90,20 @@ step creates and hashes their evidence.
    `UPDATE(active)` on `asterisk.vicidial_users` to the local adapter identity.
    Keep `agent-provisioning-db-grants-revoke.sql.template` staged as the matching
    emergency and completion revoke.
-4. Create the protected exact-user policy outside source control. It must match
-   the schema in `BOUNDED_AGENT_PROVISIONING.md`, bind the exact release SHA and
-   approved request, reference the mounted encrypted backup by absolute path and
-   checksum, and have an explicit expiry. Never place its contents in evidence.
+4. Create the protected exact-user policy outside source control with the
+   canonical `vicidial/scripts/agent_provisioning_policy.py generate` command
+   and validate its structure against
+   `vicidial/config/agent-provisioning-policy.schema.json`. Supply
+   `--agent-json`, `--release-sha`, `--authorization-reference`, `--expires-at`,
+   `--backup-reference`, `--backup-created-at`, the readable host checksum
+   source in `--backup-artifact`, and its container-visible path under
+   `/run/provisioning-backup/` in `--runtime-backup-artifact`. Supply the
+   protected destination as `--output`; the generator creates a new `0600`
+   file and refuses to overwrite one. Run it through the existing authorized
+   root administrative session so runtime ownership is compatible. Revalidate
+   with `agent_provisioning_policy.py validate --policy <path> --release-sha
+   <sha> --backup-artifact-source <host backup path>`. Never place policy
+   contents in evidence.
 5. Mount only the protected policy file and validated backup directory read-only
    with `compose.agent-provisioning.yml`. This profile may enable only
    `ENABLE_VICIDIAL_WRITES` and `ENABLE_AGENT_PROVISIONING`; all other mutation

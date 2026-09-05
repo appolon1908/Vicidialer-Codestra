@@ -3,8 +3,10 @@
 from __future__ import annotations
 
 import argparse
+import copy
 import hashlib
 import json
+import os
 import sys
 from datetime import UTC, datetime
 from pathlib import Path
@@ -18,6 +20,9 @@ from codestra_vicidial.models import AgentSpec  # noqa: E402
 
 def build(args: argparse.Namespace) -> dict:
     artifact = args.backup_artifact.resolve()
+    runtime_artifact = Path(args.runtime_backup_artifact)
+    if not runtime_artifact.is_absolute():
+        raise ValueError("runtime backup artifact must be absolute")
     agent = AgentSpec.model_validate(json.loads(args.agent_json.read_text(encoding="utf-8")))
     return {
         "protected_sha": args.release_sha,
@@ -26,7 +31,7 @@ def build(args: argparse.Namespace) -> dict:
         "backup": {
             "reference": args.backup_reference,
             "created_at": args.backup_created_at,
-            "artifact": str(artifact),
+            "artifact": str(runtime_artifact),
             "sha256": hashlib.sha256(artifact.read_bytes()).hexdigest(),
             "validation": "PASS",
         },
@@ -35,8 +40,12 @@ def build(args: argparse.Namespace) -> dict:
     }
 
 
-def validate(document: dict, release_sha: str, now: datetime | None = None) -> None:
-    AgentProvisioningPolicy(document, expected_release_sha=release_sha, now=now)
+def validate(document: dict, release_sha: str, now: datetime | None = None,
+             backup_artifact_source: Path | None = None) -> None:
+    checked = copy.deepcopy(document)
+    if backup_artifact_source is not None:
+        checked["backup"]["artifact"] = str(backup_artifact_source.resolve())
+    AgentProvisioningPolicy(checked, expected_release_sha=release_sha, now=now)
     AgentSpec.model_validate(document.get("agent"))
 
 
@@ -46,6 +55,7 @@ def main() -> int:
     validator = subparsers.add_parser("validate")
     validator.add_argument("--policy", type=Path, required=True)
     validator.add_argument("--release-sha", required=True)
+    validator.add_argument("--backup-artifact-source", type=Path)
     generator = subparsers.add_parser("generate")
     generator.add_argument("--agent-json", type=Path, required=True)
     generator.add_argument("--release-sha", required=True)
@@ -54,16 +64,23 @@ def main() -> int:
     generator.add_argument("--backup-reference", required=True)
     generator.add_argument("--backup-created-at", required=True)
     generator.add_argument("--backup-artifact", type=Path, required=True)
+    generator.add_argument("--runtime-backup-artifact", required=True)
     generator.add_argument("--output", type=Path, required=True)
     args = parser.parse_args()
     if args.operation == "generate":
         document = build(args)
-        validate(document, args.release_sha)
-        args.output.write_text(json.dumps(document, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+        validate(document, args.release_sha, backup_artifact_source=args.backup_artifact)
+        content = (json.dumps(document, indent=2, sort_keys=True) + "\n").encode()
+        descriptor = os.open(args.output, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+        with os.fdopen(descriptor, "wb") as stream:
+            stream.write(content)
         print(f"POLICY_GENERATED={args.output}")
     else:
         document = json.loads(args.policy.read_text(encoding="utf-8"))
-        validate(document, args.release_sha, now=datetime.now(UTC))
+        validate(
+            document, args.release_sha, now=datetime.now(UTC),
+            backup_artifact_source=args.backup_artifact_source,
+        )
         print("POLICY_VALID=PASS")
     return 0
 

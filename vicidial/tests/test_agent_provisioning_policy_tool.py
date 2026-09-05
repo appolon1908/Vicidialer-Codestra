@@ -31,6 +31,7 @@ def generated(tmp_path):
     now = datetime.now(UTC)
     args = argparse.Namespace(
         backup_artifact=backup, agent_json=agent, release_sha="a" * 40,
+        runtime_backup_artifact="/run/provisioning-backup/synthetic-backup.enc",
         authorization_reference="CHG-SYNTHETIC-00001",
         expires_at=(now + timedelta(hours=1)).isoformat(),
         backup_reference="synthetic/backup-0001",
@@ -48,7 +49,7 @@ def test_schema_is_canonical_and_strict():
 
 def test_generator_constructs_runtime_valid_policy(tmp_path):
     document, backup = generated(tmp_path)
-    module.validate(document, "a" * 40)
+    module.validate(document, "a" * 40, backup_artifact_source=backup)
     assert document["backup"]["sha256"] == hashlib.sha256(backup.read_bytes()).hexdigest()
     assert document["agent"] == AGENT
 
@@ -65,4 +66,25 @@ def test_validator_rejects_invalid_policy(tmp_path, mutation):
     document, _ = generated(tmp_path)
     mutation(document)
     with pytest.raises((ReconciliationDenied, ValueError, TypeError)):
-        module.validate(document, "a" * 40)
+        module.validate(document, "a" * 40, backup_artifact_source=tmp_path / "synthetic-backup.enc")
+
+
+def test_cli_writes_runtime_path_with_private_mode(tmp_path):
+    document, backup = generated(tmp_path)
+    output = tmp_path / "policy.json"
+    agent = tmp_path / "agent.json"
+    agent.write_text(json.dumps(AGENT), encoding="utf-8")
+    import subprocess
+    command = [
+        "python", str(SCRIPT), "generate", "--agent-json", str(agent),
+        "--release-sha", document["protected_sha"], "--authorization-reference",
+        document["authorization_reference"], "--expires-at", document["expires_at"],
+        "--backup-reference", document["backup"]["reference"], "--backup-created-at",
+        document["backup"]["created_at"], "--backup-artifact", str(backup),
+        "--runtime-backup-artifact", "/run/provisioning-backup/synthetic-backup.enc",
+        "--output", str(output),
+    ]
+    completed = subprocess.run(command, capture_output=True, text=True)
+    assert completed.returncode == 0, completed.stderr
+    assert output.stat().st_mode & 0o777 == 0o600
+    assert json.loads(output.read_text())["backup"]["artifact"].startswith("/run/provisioning-backup/")
