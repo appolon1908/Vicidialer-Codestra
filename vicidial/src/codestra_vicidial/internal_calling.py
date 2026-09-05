@@ -13,6 +13,7 @@ from typing import Literal, Protocol
 from pydantic import BaseModel, ConfigDict, Field
 
 from .ami_gateway import AMIStreamParser, read_private_text, rfc3339
+from .state import StateStore
 
 
 class InternalCallError(RuntimeError):
@@ -117,11 +118,15 @@ class SocketAmiTransport:
 
 class InternalCallExecutor:
     def __init__(self, policy: InternalCallPolicy, state_path: Path, lifecycle_path: Path,
-                 transport: AmiTransport) -> None:
-        self.policy, self.state_path, self.lifecycle_path, self.transport = policy, state_path, lifecycle_path, transport
+                 transport: AmiTransport, audit: StateStore) -> None:
+        self.policy, self.state_path, self.lifecycle_path, self.transport, self.audit = policy, state_path, lifecycle_path, transport, audit
         state_path.parent.mkdir(parents=True, exist_ok=True)
         with sqlite3.connect(state_path) as db:
-            db.execute("CREATE TABLE IF NOT EXISTS internal_calls(operation_id TEXT PRIMARY KEY,request_hash TEXT NOT NULL,correlation_id TEXT NOT NULL,uniqueid TEXT NOT NULL UNIQUE,state TEXT NOT NULL,hangup_state TEXT,created_at TEXT NOT NULL)")
+            db.execute("CREATE TABLE IF NOT EXISTS internal_calls(operation_id TEXT PRIMARY KEY,request_hash TEXT NOT NULL,correlation_id TEXT NOT NULL,authorization_reference TEXT NOT NULL UNIQUE,uniqueid TEXT NOT NULL UNIQUE,state TEXT NOT NULL,hangup_state TEXT,created_at TEXT NOT NULL)")
+
+    def _audit(self, command: OriginateCommand, operation: str, outcome: str, detail: object) -> None:
+        self.audit.audit(command.correlation_id, command.subject, operation,
+                         command.operation_id, outcome, detail)
 
     def _authorize(self, command: OriginateCommand) -> None:
         p = self.policy
@@ -134,27 +139,45 @@ class InternalCallExecutor:
             raise PermissionError("internal call authorization expired")
 
     def originate(self, command: OriginateCommand) -> dict:
-        self._authorize(command)
+        try:
+            self._authorize(command)
+        except PermissionError:
+            self._audit(command, "internal-call.originate", "rejected", {"reason": "policy_mismatch"})
+            raise
         digest = __import__("hashlib").sha256(command.model_dump_json().encode()).hexdigest()
         with sqlite3.connect(self.state_path) as db:
             row = db.execute("SELECT request_hash,uniqueid,state,created_at FROM internal_calls WHERE operation_id=?", (command.operation_id,)).fetchone()
             if row:
                 if row[0] != digest:
                     raise InternalCallError("operation identity was reused with different content")
+                self._audit(command, "internal-call.originate", "duplicate", {"dispatch_state": row[2]})
                 return {"status": row[2], "operation_id": command.operation_id, "asterisk_uniqueid": row[1], "created_at": row[3], "duplicate": True}
+            consumed = db.execute("SELECT 1 FROM internal_calls WHERE authorization_reference=? LIMIT 1", (command.authorization_reference,)).fetchone()
+            if consumed:
+                self._audit(command, "internal-call.originate", "rejected", {"reason": "one_call_consumed"})
+                raise PermissionError("one-call authorization was already consumed")
             uniqueid = "codestra-" + __import__("hashlib").sha256(command.operation_id.encode()).hexdigest()[:32]
             created = rfc3339(datetime.now(UTC))
             # Commit the immutable intent before the external effect. A crash or
             # timeout remains unknown and is read back; it is never re-originated.
-            db.execute("INSERT INTO internal_calls VALUES(?,?,?,?,?,?,?)", (command.operation_id, digest, command.correlation_id, uniqueid, "dispatch_unknown", None, created))
+            try:
+                db.execute("INSERT INTO internal_calls VALUES(?,?,?,?,?,?,?,?)", (command.operation_id, digest, command.correlation_id, command.authorization_reference, uniqueid, "dispatch_unknown", None, created))
+            except sqlite3.IntegrityError as exc:
+                self._audit(command, "internal-call.originate", "rejected", {"reason": "one_call_consumed"})
+                raise PermissionError("one-call authorization was already consumed") from exc
             db.commit()
-        self.transport.action({"Action": "Originate", "ActionID": command.operation_id,
-            "Channel": f"PJSIP/{self.policy.extension}", "Context": self.policy.dialplan_context,
-            "Exten": self.policy.destination_extension, "Priority": "1", "Async": "true",
-            "ChannelId": uniqueid, "Variable": f"CODESTRA_OPERATION_ID={command.operation_id}"})
+        try:
+            self.transport.action({"Action": "Originate", "ActionID": command.operation_id,
+                "Channel": f"PJSIP/{self.policy.extension}", "Context": self.policy.dialplan_context,
+                "Exten": self.policy.destination_extension, "Priority": "1", "Async": "true",
+                "ChannelId": uniqueid, "Variable": f"CODESTRA_OPERATION_ID={command.operation_id}"})
+        except Exception:
+            self._audit(command, "internal-call.originate", "unknown", {"dispatch_state": "dispatch_unknown"})
+            raise
         with sqlite3.connect(self.state_path) as db:
             db.execute("UPDATE internal_calls SET state='accepted' WHERE operation_id=? AND state='dispatch_unknown'", (command.operation_id,))
             db.commit()
+        self._audit(command, "internal-call.originate", "accepted", {"asterisk_uniqueid": uniqueid})
         return {"status": "accepted", "operation_id": command.operation_id, "asterisk_uniqueid": uniqueid, "created_at": created, "duplicate": False}
 
     def readback(self, operation_id: str) -> dict:
@@ -174,20 +197,43 @@ class InternalCallExecutor:
     def hangup(self, operation_id: str) -> dict:
         current = self.readback(operation_id)
         if current["terminal"]:
+            self.audit.audit(current["correlation_id"], self.policy.subject,
+                             "internal-call.hangup", operation_id,
+                             "already_terminal", {"call_state": current["call_state"]})
             return {**current, "hangup": "already_terminal"}
         with sqlite3.connect(self.state_path) as db:
             prior = db.execute("SELECT hangup_state FROM internal_calls WHERE operation_id=?", (operation_id,)).fetchone()
             if prior and prior[0]:
+                self.audit.audit(current["correlation_id"], self.policy.subject,
+                                 "internal-call.hangup", operation_id,
+                                 "duplicate", {"hangup_state": prior[0]})
                 return {**current, "hangup": prior[0], "duplicate": True}
         with sqlite3.connect(f"file:{self.lifecycle_path}?mode=ro", uri=True) as db:
             row = db.execute("SELECT ch.channel FROM channels ch JOIN calls c ON c.call_key=ch.call_key WHERE c.asterisk_uniqueid=? AND ch.active=1 ORDER BY ch.updated_at DESC LIMIT 1", (current["asterisk_uniqueid"],)).fetchone()
         if not row or not row[0]:
+            self.audit.audit(current["correlation_id"], self.policy.subject,
+                             "internal-call.hangup", operation_id, "rejected",
+                             {"reason": "active_channel_unavailable"})
             raise InternalCallError("authoritative active channel is unavailable; reconcile before hangup")
         with sqlite3.connect(self.state_path) as db:
-            db.execute("UPDATE internal_calls SET hangup_state='dispatch_unknown' WHERE operation_id=? AND hangup_state IS NULL", (operation_id,))
+            claimed = db.execute("UPDATE internal_calls SET hangup_state='dispatch_unknown' WHERE operation_id=? AND hangup_state IS NULL", (operation_id,)).rowcount
             db.commit()
-        self.transport.action({"Action": "Hangup", "ActionID": operation_id + ":hangup", "Channel": row[0]})
+        if claimed != 1:
+            self.audit.audit(current["correlation_id"], self.policy.subject,
+                             "internal-call.hangup", operation_id, "duplicate",
+                             {"hangup_state": "dispatch_unknown"})
+            return {**self.readback(operation_id), "hangup": "dispatch_unknown", "duplicate": True}
+        try:
+            self.transport.action({"Action": "Hangup", "ActionID": operation_id + ":hangup", "Channel": row[0]})
+        except Exception:
+            self.audit.audit(current["correlation_id"], self.policy.subject,
+                             "internal-call.hangup", operation_id, "unknown",
+                             {"hangup_state": "dispatch_unknown"})
+            raise
         with sqlite3.connect(self.state_path) as db:
             db.execute("UPDATE internal_calls SET hangup_state='requested' WHERE operation_id=? AND hangup_state='dispatch_unknown'", (operation_id,))
             db.commit()
+        self.audit.audit(current["correlation_id"], self.policy.subject,
+                         "internal-call.hangup", operation_id, "requested",
+                         {"asterisk_uniqueid": current["asterisk_uniqueid"]})
         return {**current, "hangup": "requested", "duplicate": False}

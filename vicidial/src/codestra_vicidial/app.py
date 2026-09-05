@@ -183,6 +183,7 @@ def create_app(
         version=__version__,
     )
     app.state.adapter_service = service
+    app.state.internal_call_executor = internal_call_executor
 
     @app.exception_handler(CollisionError)
     async def collision_handler(_request: Request, exc: CollisionError):
@@ -619,6 +620,7 @@ def app_from_environment() -> FastAPI:
             Path(os.environ.get("CODESTRA_INTERNAL_CALL_STATE", "/var/lib/codestra-vicidial/internal-calls.sqlite3")),
             Path(os.environ.get("CODESTRA_AMI_LIFECYCLE_STATE", "/var/lib/codestra-vicidial/ami-lifecycle.sqlite3")),
             SocketAmiTransport(Path(os.environ["CODESTRA_AMI_CREDENTIAL_FILE"])),
+            state,
         )
     return create_app(
         service,

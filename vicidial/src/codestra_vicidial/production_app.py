@@ -32,6 +32,8 @@ LEGACY_FLAGS = (
     "ENABLE_PSTN_DIALING",
 )
 
+INTERNAL_TEST_PROFILE = "production-internal-test"
+
 
 def _enabled(name: str) -> bool:
     return os.environ.get(name, "false").strip().lower() in {"1", "true", "yes", "on"}
@@ -111,6 +113,7 @@ def _repository_ready(profile: str) -> tuple[bool, str]:
             "development-loopback",
             "staging-read-only",
             "production-candidate",
+            INTERNAL_TEST_PROFILE,
         }, backend
     if backend == "mysql":
         ok, _database = _mysql_ready()
@@ -121,7 +124,10 @@ def _repository_ready(profile: str) -> tuple[bool, str]:
 def _release_ready(profile: str) -> tuple[bool, str | None, dict]:
     required = (
         os.environ.get("CODESTRA_RELEASE_METADATA_REQUIRED", "false").lower() == "true"
-        or profile in {"production-candidate", "production-reconciliation"}
+        or profile in {
+            "production-candidate", "production-reconciliation",
+            INTERNAL_TEST_PROFILE,
+        }
     )
     try:
         release = load_release_info(required=required)
@@ -159,6 +165,14 @@ def _kill_switch_ready(profile: str, reconciliation_policy_verified: bool) -> bo
 
     writes = _enabled("ENABLE_VICIDIAL_WRITES")
     provisioning = _enabled("ENABLE_PROVISIONING")
+    internal_calling = _enabled("ENABLE_INTERNAL_TEST_CALLING")
+    if internal_calling:
+        return (
+            profile == INTERNAL_TEST_PROFILE
+            and getattr(app.state, "internal_call_executor", None) is not None
+            and not writes
+            and not provisioning
+        )
     if profile == "production-reconciliation":
         # Reconciliation is the one bounded exception: both switches must be on,
         # the immutable request-bound policy must be verified, and every live
@@ -185,6 +199,11 @@ def build_readiness() -> tuple[int, dict]:
     }
     if profile == "production-reconciliation":
         checks["reconciliation_policy"] = reconciliation_policy_verified
+    if profile == INTERNAL_TEST_PROFILE:
+        checks["internal_call_policy"] = (
+            _enabled("ENABLE_INTERNAL_TEST_CALLING")
+            and getattr(app.state, "internal_call_executor", None) is not None
+        )
 
     status = "ready" if all(checks.values()) else "not_ready"
     writes_enabled = (
@@ -204,6 +223,10 @@ def build_readiness() -> tuple[int, dict]:
         "writes_enabled": writes_enabled,
         "production_dialing": False,
         "customer_traffic_authorized": False,
+        "internal_test_calling": (
+            profile == INTERNAL_TEST_PROFILE
+            and _enabled("ENABLE_INTERNAL_TEST_CALLING")
+        ),
     }
     return (200 if status == "ready" else 503), body
 

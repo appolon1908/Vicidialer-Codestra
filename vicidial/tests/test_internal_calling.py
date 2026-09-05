@@ -8,6 +8,7 @@ import pytest
 from codestra_vicidial.internal_calling import (
     InternalCallError, InternalCallExecutor, InternalCallPolicy, OriginateCommand,
 )
+from codestra_vicidial.state import StateStore
 
 
 class FakeAmi:
@@ -51,7 +52,8 @@ def executor(tmp_path):
         CREATE TABLE channels(call_key TEXT,channel TEXT,active INTEGER,updated_at TEXT);
         """)
     transport = FakeAmi()
-    return InternalCallExecutor(policy(), tmp_path / "calls.sqlite3", lifecycle, transport), transport, lifecycle
+    audit = StateStore(tmp_path / "audit.sqlite3")
+    return InternalCallExecutor(policy(), tmp_path / "calls.sqlite3", lifecycle, transport, audit), transport, lifecycle
 
 
 def test_originate_uses_only_policy_owned_channel_context_and_target(tmp_path):
@@ -126,3 +128,31 @@ def test_ambiguous_dispatch_is_persisted_and_never_retried(tmp_path):
     replay = service.originate(command())
     assert replay["status"] == "dispatch_unknown"
     assert replay["duplicate"] is True
+
+
+def test_one_call_grant_cannot_use_a_second_operation_id(tmp_path):
+    service, transport, _ = executor(tmp_path)
+    service.originate(command())
+    with pytest.raises(PermissionError, match="already consumed"):
+        service.originate(command(operation_id="operation-internal-0002"))
+    assert len(transport.actions) == 1
+
+
+def test_originate_and_hangup_write_append_only_audit_outcomes(tmp_path):
+    service, _, lifecycle = executor(tmp_path)
+    accepted = service.originate(command())
+    with sqlite3.connect(lifecycle) as db:
+        db.execute("INSERT INTO calls VALUES(?,?,?,?,?,?,?,?)", (
+            "call-key", "linked-1", "call-1", "connected", None, None, 0,
+            accepted["asterisk_uniqueid"],
+        ))
+        db.execute("INSERT INTO channels VALUES(?,?,?,?)", (
+            "call-key", "PJSIP/6901-00000001", 1, "2026-09-05T18:00:03Z",
+        ))
+    service.hangup(command().operation_id)
+    with sqlite3.connect(tmp_path / "audit.sqlite3") as db:
+        rows = db.execute("SELECT operation,outcome FROM audit ORDER BY sequence").fetchall()
+    assert rows == [
+        ("internal-call.originate", "accepted"),
+        ("internal-call.hangup", "requested"),
+    ]
