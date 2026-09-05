@@ -26,3 +26,21 @@ PSTN, callbacks, transfers, SMS and email remain disabled. The current symlink
 is not alone rollback evidence: any mismatch between it and the running
 executable blocks activation until the operator records the effective process
 release as the rollback target.
+
+## Canonical source archive permissions
+
+Every archive directory is root-owned mode 0755. Ordinary source files and generated
+`SOURCE_SHA`, `SHA256SUMS`, and `SOURCE_RELEASE_MANIFEST.json` are mode 0644.
+Executable source files are mode 0755 only when the checked-out source commit's
+Git tree records mode 100755; filesystem chmod, umask, setuid/setgid and extra write
+bits do not confer executable authority. Builds require that source Git checkout;
+untracked payload files fail closed. Generated Python egg-info is excluded along
+with caches. The outer archive and its generated non-secret metadata sidecar are
+mode 0644. No runtime credential or policy file permissions are changed.
+
+The subprocess regression builds identical source/builder revisions under umasks
+0022, 0027 and 0077, verifies identical archive bytes and member modes, verifies
+checksums, and opens extracted files as a non-root process. It also deliberately
+changes working-tree modes after committing executable intent to prove Git metadata
+is authoritative. These tests establish source-archive readability; live service
+UID/GID, environment, loaded package and rollback identity still require preflight.

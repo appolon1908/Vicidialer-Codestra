@@ -68,3 +68,75 @@ def test_uploaded_artifact_root_checksum_layout(tmp_path):
     sidecar.write_text(f"{hashlib.sha256(archive.read_bytes()).hexdigest()}  {archive.name}\n")
     result = subprocess.run(["sha256sum", "--check", sidecar.name], cwd=tmp_path, capture_output=True, text=True)
     assert result.returncode == 0, result.stderr
+
+
+def test_archive_modes_and_bytes_are_independent_of_umask(tmp_path):
+    archives = []
+    mode_sets = []
+    for mask in (0o022, 0o027, 0o077):
+        directory = tmp_path / f'{mask:04o}'
+        directory.mkdir()
+        archive = directory / 'release.tar.gz'
+        metadata = directory / 'metadata.json'
+        subprocess.run([
+            sys.executable, str(SCRIPT), '--source-root', str(SOURCE_ROOT),
+            '--source-sha', SHA, '--builder-sha', 'b' * 40,
+            '--output', str(archive), '--metadata', str(metadata),
+        ], check=True, umask=mask)
+        archives.append(archive.read_bytes())
+        with tarfile.open(archive, 'r:gz') as bundle:
+            members = bundle.getmembers()
+            modes = {m.name: m.mode for m in members}
+            mode_sets.append(modes)
+            for member in members:
+                assert member.uid == member.gid == 0
+                assert member.mode == 0o755 if member.isdir() else member.mode in {0o644, 0o755}
+                assert member.mode & 0o004, member.name
+                if member.isdir():
+                    assert member.mode & 0o001, member.name
+            for name in ('SOURCE_SHA', 'SHA256SUMS', 'SOURCE_RELEASE_MANIFEST.json'):
+                assert modes['./' + name] == 0o644
+        assert metadata.stat().st_mode & 0o777 == 0o644
+        subprocess.run([sys.executable, str(VERIFY), '--archive', str(archive),
+                        '--source-sha', SHA, '--builder-sha', 'b' * 40], check=True)
+    assert archives[0] == archives[1] == archives[2]
+    assert mode_sets[0] == mode_sets[1] == mode_sets[2]
+
+
+def test_modes_come_from_source_commit_and_are_nonroot_readable(tmp_path):
+    import tempfile
+    source = tmp_path / 'mode-source'
+    source.mkdir()
+    for name in ('pyproject.toml', 'src/codestra_vicidial/app.py',
+                 'src/codestra_vicidial/internal_calling.py', 'scripts/validate_runtime.py'):
+        path = source / name
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text('# synthetic permission fixture\n')
+    executable = source / 'scripts/validate_runtime.py'
+    executable.chmod(0o755)
+    subprocess.run(['git', 'init', '-q', str(source)], check=True)
+    subprocess.run(['git', '-C', str(source), 'add', '.'], check=True)
+    subprocess.run(['git', '-C', str(source), '-c', 'user.name=Fixture',
+                    '-c', 'user.email=fixture@example.invalid', 'commit', '-qm', 'fixture'], check=True)
+    # Ambient filesystem modes deliberately disagree with the committed intent.
+    executable.chmod(0o600)
+    (source / 'pyproject.toml').chmod(0o777)
+    archive = tmp_path / 'modes.tar.gz'
+    subprocess.run([sys.executable, str(SCRIPT), '--source-root', str(source),
+                    '--source-sha', SHA, '--builder-sha', 'b' * 40,
+                    '--output', str(archive), '--metadata', str(tmp_path / 'modes.json')],
+                   check=True, umask=0o077)
+    with tempfile.TemporaryDirectory(prefix='source-release-readability-', dir='/tmp') as name:
+        extracted = Path(name)
+        extracted.chmod(0o755)
+        with tarfile.open(archive, 'r:gz') as bundle:
+            assert bundle.getmember('./scripts/validate_runtime.py').mode == 0o755
+            assert bundle.getmember('./pyproject.toml').mode == 0o644
+            bundle.extractall(extracted, filter='data')
+        options = {'user': 65534, 'group': 65534, 'extra_groups': []} if os.geteuid() == 0 else {}
+        subprocess.run(['/usr/bin/python3', '-c',
+                        'import os,pathlib,sys; assert os.geteuid()!=0; '
+                        'root=pathlib.Path(sys.argv[1]); '
+                        '[p.read_bytes() for p in root.rglob("*") if p.is_file()]; '
+                        'assert (root/"SOURCE_SHA").read_text().strip()==sys.argv[2]',
+                        str(extracted), SHA], check=True, cwd='/tmp', **options)
