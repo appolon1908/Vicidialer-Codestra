@@ -227,6 +227,11 @@ def test_local_image_health_release_tuple_and_restart(tmp_path):
     if shutil.which(engine) is None or platform.machine() not in {"x86_64", "amd64"}:
         pytest.skip("a configured linux/amd64 container engine is required")
     image = os.environ["VICIDIAL_CONTAINER_TEST_IMAGE"]
+    subprocess.run(
+        [engine, "run", "--rm", "--user", "10001:10001", "--entrypoint", "sh",
+         image, "-c", 'test -r "$CODESTRA_RELEASE_ROOT/scripts/validate_runtime.py"'],
+        check=True, capture_output=True, text=True,
+    )
     name = "vicidial-r3-test-" + uuid.uuid4().hex[:10]
     secret = tmp_path / "adapter-hmac"
     secret.write_bytes(b"x" * 32)

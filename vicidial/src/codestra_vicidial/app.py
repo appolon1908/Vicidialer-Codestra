@@ -11,6 +11,10 @@ from fastapi.responses import JSONResponse
 
 from . import __version__
 from .agent_provisioning import AgentProvisioningPolicy
+from .internal_calling import (
+    InternalCallError, InternalCallExecutor, InternalCallPolicy, OriginateCommand,
+)
+from .internal_call_transport import SocketAmiTransport
 from .credential_authority import UnixCredentialAuthority
 from .models import (
     AgentCommand,
@@ -48,6 +52,9 @@ _PROTECTED_SCOPE_BY_ROUTE = {
     ("post", "/v1/agents/disable"): "telephony:agent-sync",
     ("get", "/v1/agents/{user_id}/actual-state"): "telephony:read",
     ("get", "/v1/agents/availability/{user_id}/{extension}"): "telephony:read",
+    ("post", "/v1/calls/internal/originate"): "telephony:internal-call",
+    ("get", "/v1/calls/internal/{operation_id}"): "telephony:internal-call-read",
+    ("post", "/v1/calls/internal/{operation_id}/hangup"): "telephony:internal-call-hangup",
     ("post", "/v1/leads/publish"): "telephony:lead-publish",
     ("get", "/v1/leads/by-external-id/{external_id}"): "telephony:read",
     ("post", "/v1/callbacks/create"): "telephony:callback-write",
@@ -164,6 +171,7 @@ def create_app(
     authenticator: RequestAuthenticator,
     reconciliation_policy: ReconciliationPolicy | None = None,
     agent_provisioning_policy: AgentProvisioningPolicy | None = None,
+    internal_call_executor: InternalCallExecutor | None = None,
     release_info: Mapping[str, object] | None = None,
 ) -> FastAPI:
     release_document = dict(
@@ -176,6 +184,7 @@ def create_app(
         version=__version__,
     )
     app.state.adapter_service = service
+    app.state.internal_call_executor = internal_call_executor
 
     @app.exception_handler(CollisionError)
     async def collision_handler(_request: Request, exc: CollisionError):
@@ -347,6 +356,61 @@ def create_app(
         if user_id != "appolon" or extension != "6901":
             raise HTTPException(403, "availability query outside approved scope")
         return service.agent_availability(user_id, extension)
+
+    @app.exception_handler(InternalCallError)
+    async def internal_call_error(_request: Request, _exc: InternalCallError):
+        return JSONResponse(status_code=503, content={"detail": "internal call requires reconciliation"})
+
+    @app.post("/v1/calls/internal/originate")
+    async def internal_originate(request: Request, values=Depends(headers)):
+        if internal_call_executor is None:
+            raise HTTPException(403, "internal calling profile is disabled")
+        key, identity, scopes, timestamp, nonce, signature, signature_version = values
+        body = await authorize(request, "telephony:internal-call", identity, scopes,
+                               timestamp, nonce, signature, signature_version, key)
+        try:
+            command = OriginateCommand.model_validate_json(body)
+            if key != command.operation_id:
+                raise ValueError("idempotency key must equal operation_id")
+            return internal_call_executor.originate(command, actor=identity)
+        except PermissionError as exc:
+            raise HTTPException(403, str(exc)) from exc
+        except ValueError as exc:
+            internal_call_executor._audit("originate", key, key, identity, "invalid_request")
+            raise HTTPException(422, "invalid internal call command") from exc
+
+    @app.get("/v1/calls/internal/{operation_id}")
+    async def internal_readback(request: Request, operation_id: str,
+                                values=Depends(read_headers)):
+        if internal_call_executor is None:
+            raise HTTPException(403, "internal calling profile is disabled")
+        await authorize(request, "telephony:internal-call-read", *values)
+        try:
+            return internal_call_executor.readback(operation_id)
+        except PermissionError as exc:
+            raise HTTPException(403, "internal call policy denied") from exc
+        except KeyError as exc:
+            raise HTTPException(404, "internal call operation missing") from exc
+
+    @app.post("/v1/calls/internal/{operation_id}/hangup")
+    async def internal_hangup(request: Request, operation_id: str,
+                              values=Depends(headers)):
+        if internal_call_executor is None:
+            raise HTTPException(403, "internal calling profile is disabled")
+        key, identity, scopes, timestamp, nonce, signature, signature_version = values
+        await authorize(request, "telephony:internal-call-hangup", identity, scopes,
+                        timestamp, nonce, signature, signature_version, key)
+        if key != operation_id + ":hangup":
+            internal_call_executor._audit(
+                "hangup", operation_id, operation_id, identity, "invalid_request"
+            )
+            raise HTTPException(422, "hangup idempotency key is not operation-bound")
+        try:
+            return internal_call_executor.hangup(operation_id, actor=identity)
+        except PermissionError as exc:
+            raise HTTPException(403, "internal call policy denied") from exc
+        except KeyError as exc:
+            raise HTTPException(404, "internal call operation missing") from exc
 
     @app.post("/v1/leads/publish")
     async def lead_publish(request: Request, values=Depends(headers)):
@@ -556,11 +620,51 @@ def app_from_environment() -> FastAPI:
             Path(os.environ["CODESTRA_AGENT_PROVISIONING_POLICY_FILE"]),
             expected_release_sha=release_sha,
         )
+    internal_executor = None
+    internal_gate = os.environ.get("ENABLE_INTERNAL_TEST_CALLING", "false")
+    if internal_gate not in {"true", "false"}:
+        raise RuntimeError("invalid internal call gate")
+    if deployment != "production-internal-test" and internal_gate != "false":
+        raise RuntimeError("internal calls require their dedicated production-internal-test profile")
+    if deployment == "production-internal-test":
+        if backend_name != "mysql":
+            raise RuntimeError("internal calls require the live mysql repository")
+        if any(os.environ.get(name, "false") != "false" for name in (
+            "ENABLE_VICIDIAL_WRITES", "ENABLE_PROVISIONING", "ENABLE_AGENT_PROVISIONING",
+            "ENABLE_AGENT_SYNC", "ENABLE_LEAD_PUBLICATION", "ENABLE_LIVE_CALL_CONTROL",
+            "ENABLE_WARM_TRANSFER", "ENABLE_IVR_ROUTING", "ENABLE_IVR_CALLBACKS",
+            "ENABLE_PRODUCTION_DIALING", "ENABLE_SMS_DELIVERY", "ENABLE_EMAIL_DELIVERY",
+            "ENABLE_EXTERNAL_DELIVERY", "ENABLE_AI_ACTIONS")):
+            raise RuntimeError("internal calling requires unrelated writes disabled")
+        release_sha = release_info.get("git_sha")
+        if release_info.get("verified") is not True or not isinstance(release_sha, str):
+            raise RuntimeError("verified release metadata required for internal calling")
+        call_policy = InternalCallPolicy.from_file(
+            Path(os.environ["CODESTRA_INTERNAL_CALL_POLICY_FILE"]), release_sha
+        )
+        internal_executor = InternalCallExecutor(
+            call_policy,
+            Path(os.environ.get("CODESTRA_INTERNAL_CALL_STATE", "/var/lib/codestra-vicidial/internal-calls.sqlite3")),
+            Path(os.environ.get(
+                "CODESTRA_AMI_LIFECYCLE_STATE",
+                os.environ.get(
+                    "AMI_EVENT_STATE_DB",
+                    "/var/lib/codestra-vicidial/ami-events.sqlite3",
+                ),
+            )),
+            SocketAmiTransport(Path(os.environ["CODESTRA_AMI_CREDENTIAL_FILE"])),
+            policy_provider=lambda: InternalCallPolicy.from_file(
+                Path(os.environ["CODESTRA_INTERNAL_CALL_POLICY_FILE"]), release_sha),
+            identity_ready=repository.internal_call_identity_ready,
+            enabled=lambda: os.environ.get("ENABLE_INTERNAL_TEST_CALLING", "false") == "true",
+            audit_path=Path(os.environ.get("CODESTRA_ADAPTER_STATE", "/var/lib/codestra-vicidial/state.sqlite3")),
+        )
     return create_app(
         service,
         auth,
         policy,
         agent_policy,
+        internal_executor,
         release_info=release_info,
     )
 
