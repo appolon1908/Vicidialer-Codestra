@@ -12,8 +12,9 @@ from fastapi.responses import JSONResponse
 from . import __version__
 from .agent_provisioning import AgentProvisioningPolicy
 from .internal_calling import (
-    InternalCallExecutor, InternalCallPolicy, OriginateCommand, SocketAmiTransport,
+    InternalCallError, InternalCallExecutor, InternalCallPolicy, OriginateCommand,
 )
+from .internal_call_transport import SocketAmiTransport
 from .credential_authority import UnixCredentialAuthority
 from .models import (
     AgentCommand,
@@ -355,6 +356,10 @@ def create_app(
             raise HTTPException(403, "availability query outside approved scope")
         return service.agent_availability(user_id, extension)
 
+    @app.exception_handler(InternalCallError)
+    async def internal_call_error(_request: Request, _exc: InternalCallError):
+        return JSONResponse(status_code=503, content={"detail": "internal call requires reconciliation"})
+
     @app.post("/v1/calls/internal/originate")
     async def internal_originate(request: Request, values=Depends(headers)):
         if internal_call_executor is None:
@@ -366,11 +371,12 @@ def create_app(
             command = OriginateCommand.model_validate_json(body)
             if key != command.operation_id:
                 raise ValueError("idempotency key must equal operation_id")
-            return internal_call_executor.originate(command)
+            return internal_call_executor.originate(command, actor=identity)
         except PermissionError as exc:
             raise HTTPException(403, str(exc)) from exc
         except ValueError as exc:
-            raise HTTPException(422, str(exc)) from exc
+            service.state.audit(key, identity, "internal-call:originate", key, "invalid_request", {})
+            raise HTTPException(422, "invalid internal call command") from exc
 
     @app.get("/v1/calls/internal/{operation_id}")
     async def internal_readback(request: Request, operation_id: str,
@@ -380,6 +386,8 @@ def create_app(
         await authorize(request, "telephony:internal-call-read", *values)
         try:
             return internal_call_executor.readback(operation_id)
+        except PermissionError as exc:
+            raise HTTPException(403, "internal call policy denied") from exc
         except KeyError as exc:
             raise HTTPException(404, "internal call operation missing") from exc
 
@@ -394,7 +402,9 @@ def create_app(
         if key != operation_id + ":hangup":
             raise HTTPException(422, "hangup idempotency key is not operation-bound")
         try:
-            return internal_call_executor.hangup(operation_id)
+            return internal_call_executor.hangup(operation_id, actor=identity)
+        except PermissionError as exc:
+            raise HTTPException(403, "internal call policy denied") from exc
         except KeyError as exc:
             raise HTTPException(404, "internal call operation missing") from exc
 
@@ -607,7 +617,21 @@ def app_from_environment() -> FastAPI:
             expected_release_sha=release_sha,
         )
     internal_executor = None
-    if os.environ.get("ENABLE_INTERNAL_TEST_CALLING") == "true":
+    internal_gate = os.environ.get("ENABLE_INTERNAL_TEST_CALLING", "false")
+    if internal_gate not in {"true", "false"}:
+        raise RuntimeError("invalid internal call gate")
+    if deployment != "production-internal-test" and internal_gate != "false":
+        raise RuntimeError("internal calls require their dedicated production-internal-test profile")
+    if deployment == "production-internal-test":
+        if backend_name != "mysql":
+            raise RuntimeError("internal calls require the live mysql repository")
+        if any(os.environ.get(name, "false") != "false" for name in (
+            "ENABLE_VICIDIAL_WRITES", "ENABLE_PROVISIONING", "ENABLE_AGENT_PROVISIONING",
+            "ENABLE_AGENT_SYNC", "ENABLE_LEAD_PUBLICATION", "ENABLE_LIVE_CALL_CONTROL",
+            "ENABLE_WARM_TRANSFER", "ENABLE_IVR_ROUTING", "ENABLE_IVR_CALLBACKS",
+            "ENABLE_PRODUCTION_DIALING", "ENABLE_SMS_DELIVERY", "ENABLE_EMAIL_DELIVERY",
+            "ENABLE_EXTERNAL_DELIVERY", "ENABLE_AI_ACTIONS")):
+            raise RuntimeError("internal calling requires unrelated writes disabled")
         release_sha = release_info.get("git_sha")
         if release_info.get("verified") is not True or not isinstance(release_sha, str):
             raise RuntimeError("verified release metadata required for internal calling")
@@ -619,6 +643,11 @@ def app_from_environment() -> FastAPI:
             Path(os.environ.get("CODESTRA_INTERNAL_CALL_STATE", "/var/lib/codestra-vicidial/internal-calls.sqlite3")),
             Path(os.environ.get("CODESTRA_AMI_LIFECYCLE_STATE", "/var/lib/codestra-vicidial/ami-lifecycle.sqlite3")),
             SocketAmiTransport(Path(os.environ["CODESTRA_AMI_CREDENTIAL_FILE"])),
+            policy_provider=lambda: InternalCallPolicy.from_file(
+                Path(os.environ["CODESTRA_INTERNAL_CALL_POLICY_FILE"]), release_sha),
+            identity_ready=repository.internal_call_identity_ready,
+            enabled=lambda: os.environ.get("ENABLE_INTERNAL_TEST_CALLING", "false") == "true",
+            audit_path=Path(os.environ.get("CODESTRA_ADAPTER_STATE", "/var/lib/codestra-vicidial/state.sqlite3")),
         )
     return create_app(
         service,

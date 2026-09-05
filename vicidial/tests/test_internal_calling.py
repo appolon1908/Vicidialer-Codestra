@@ -1,18 +1,22 @@
 from __future__ import annotations
 
-import sqlite3
 from datetime import UTC, datetime, timedelta
 
 import pytest
-
 from codestra_vicidial.internal_calling import (
-    InternalCallError, InternalCallExecutor, InternalCallPolicy, OriginateCommand,
+    InternalCallError,
+    InternalCallExecutor,
+    InternalCallPolicy,
+    OriginateCommand,
 )
 
 
 class FakeAmi:
     def __init__(self):
         self.actions = []
+
+    def verify_route(self, policy):
+        return None
 
     def action(self, fields):
         self.actions.append(fields)
@@ -21,7 +25,7 @@ class FakeAmi:
 
 def policy():
     return InternalCallPolicy(
-        schema_version="1.0", release_sha="a" * 40,
+        schema_version="1.0", release_sha="a" * 40, route_sha256="a" * 64,
         authorization_reference="CHG-APPOLON-INTERNAL-0001",
         expires_at=datetime.now(UTC) + timedelta(minutes=15),
         tenant_id="tenant-test", subject="subject-appolon",
@@ -45,13 +49,10 @@ def command(**changes):
 
 def executor(tmp_path):
     lifecycle = tmp_path / "lifecycle.sqlite3"
-    with sqlite3.connect(lifecycle) as db:
-        db.executescript("""
-        CREATE TABLE calls(call_key TEXT,linkedid TEXT,call_id TEXT,state TEXT,answered_at TEXT,ended_at TEXT,terminal INTEGER,asterisk_uniqueid TEXT);
-        CREATE TABLE channels(call_key TEXT,channel TEXT,active INTEGER,updated_at TEXT);
-        """)
+    from codestra_vicidial.ami_gateway import LifecycleStore
+    LifecycleStore(lifecycle)
     transport = FakeAmi()
-    return InternalCallExecutor(policy(), tmp_path / "calls.sqlite3", lifecycle, transport), transport, lifecycle
+    return InternalCallExecutor(policy(), tmp_path / "calls.sqlite3", lifecycle, transport, identity_ready=lambda: True, enabled=lambda: True), transport, lifecycle
 
 
 def test_originate_uses_only_policy_owned_channel_context_and_target(tmp_path):
@@ -89,21 +90,14 @@ def test_identity_mismatch_is_rejected_before_ami(tmp_path, change):
 def test_readback_and_hangup_use_authoritative_lifecycle_channel(tmp_path):
     service, transport, lifecycle = executor(tmp_path)
     accepted = service.originate(command())
-    with sqlite3.connect(lifecycle) as db:
-        db.execute("INSERT INTO calls VALUES(?,?,?,?,?,?,?,?)", (
-            "call-key", "linked-1", "call-1", "connected", "2026-09-05T18:00:02Z",
-            None, 0, accepted["asterisk_uniqueid"],
-        ))
-        db.execute("INSERT INTO channels VALUES(?,?,?,?)", (
-            "call-key", "PJSIP/6901-00000001", 1, "2026-09-05T18:00:03Z",
-        ))
+    seed_connected(lifecycle, accepted["asterisk_uniqueid"])
     evidence = service.readback(command().operation_id)
-    assert evidence["linkedid"] == "linked-1" and evidence["call_state"] == "connected"
+    assert evidence["linkedid"] == accepted["asterisk_uniqueid"] and evidence["call_state"] == "connected"
     result = service.hangup(command().operation_id)
     assert result["hangup"] == "requested"
     assert transport.actions[-1] == {
         "Action": "Hangup", "ActionID": "operation-internal-0001:hangup",
-        "Channel": "PJSIP/6901-00000001",
+        "Channel": accepted["asterisk_uniqueid"],
     }
     assert service.hangup(command().operation_id)["duplicate"] is True
     assert len(transport.actions) == 2
@@ -126,3 +120,18 @@ def test_ambiguous_dispatch_is_persisted_and_never_retried(tmp_path):
     replay = service.originate(command())
     assert replay["status"] == "dispatch_unknown"
     assert replay["duplicate"] is True
+
+
+def seed_connected(path, uniqueid):
+    from codestra_vicidial.ami_gateway import (
+        AgentBinding,
+        AgentDirectory,
+        LifecycleStore,
+        parse_ami_block,
+    )
+    directory = AgentDirectory([AgentBinding(extension="6901", tenant_id="tenant-test",
+        business_unit_id="synthetic-unit", campaign_id="TEST_SYN", agent_id="appolon",
+        keycloak_subject="subject-appolon")])
+    message = parse_ami_block((f"Event: Newstate\r\nUniqueid: {uniqueid}\r\nLinkedid: {uniqueid}\r\n"
+                               "Channel: PJSIP/6901-00000001\r\nChannelStateDesc: Up").encode())
+    LifecycleStore(path).process(message, directory)

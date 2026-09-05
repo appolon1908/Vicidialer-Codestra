@@ -121,7 +121,7 @@ def _repository_ready(profile: str) -> tuple[bool, str]:
 def _release_ready(profile: str) -> tuple[bool, str | None, dict]:
     required = (
         os.environ.get("CODESTRA_RELEASE_METADATA_REQUIRED", "false").lower() == "true"
-        or profile in {"production-candidate", "production-reconciliation"}
+        or profile in {"production-candidate", "production-reconciliation", "production-internal-test"}
     )
     try:
         release = load_release_info(required=required)
@@ -157,6 +157,11 @@ def _kill_switch_ready(profile: str, reconciliation_policy_verified: bool) -> bo
     if any(name in os.environ for name in LEGACY_FLAGS):
         return False
 
+    internal_gate = os.environ.get("ENABLE_INTERNAL_TEST_CALLING", "false")
+    if internal_gate not in {"true", "false"} or (internal_gate == "true" and profile != "production-internal-test"):
+        return False
+    if profile == "production-internal-test" and _enabled("ENABLE_AGENT_PROVISIONING"):
+        return False
     writes = _enabled("ENABLE_VICIDIAL_WRITES")
     provisioning = _enabled("ENABLE_PROVISIONING")
     if profile == "production-reconciliation":
@@ -186,6 +191,14 @@ def build_readiness() -> tuple[int, dict]:
     if profile == "production-reconciliation":
         checks["reconciliation_policy"] = reconciliation_policy_verified
 
+    if profile == "production-internal-test":
+        from .internal_calling import InternalCallPolicy
+        try:
+            policy = InternalCallPolicy.from_file(Path(os.environ["CODESTRA_INTERNAL_CALL_POLICY_FILE"]), release_sha)
+            checks["internal_call_policy"] = policy.release_sha == release_sha
+        except Exception:
+            checks["internal_call_policy"] = False
+
     status = "ready" if all(checks.values()) else "not_ready"
     writes_enabled = (
         profile == "production-reconciliation"
@@ -202,6 +215,7 @@ def build_readiness() -> tuple[int, dict]:
         "reconciliation_policy_verified": reconciliation_policy_verified,
         "checks": checks,
         "writes_enabled": writes_enabled,
+        "internal_test_calls_enabled": profile == "production-internal-test" and _enabled("ENABLE_INTERNAL_TEST_CALLING"),
         "production_dialing": False,
         "customer_traffic_authorized": False,
     }
