@@ -3,6 +3,7 @@ import hashlib
 import importlib.util
 import json
 import os
+import sys
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
@@ -91,14 +92,15 @@ def test_validator_rejects_invalid_policy(tmp_path, mutation):
         module.validate(document, "a" * 40, backup_artifact_source=tmp_path / "synthetic-backup.enc")
 
 
-def test_cli_writes_runtime_path_with_private_mode(tmp_path):
+@pytest.mark.parametrize("creation_umask", [0o022, 0o077])
+def test_cli_writes_runtime_path_with_private_mode(tmp_path, creation_umask):
     document, backup = generated(tmp_path)
     output = tmp_path / "policy.json"
     agent = tmp_path / "agent.json"
     agent.write_text(json.dumps(AGENT), encoding="utf-8")
     import subprocess
     command = [
-        "python", str(SCRIPT), "generate", "--agent-json", str(agent),
+        sys.executable, str(SCRIPT), "generate", "--agent-json", str(agent),
         "--release-sha", document["protected_sha"], "--authorization-reference",
         document["authorization_reference"], "--expires-at", document["expires_at"],
         "--backup-reference", document["backup"]["reference"], "--backup-created-at",
@@ -107,16 +109,10 @@ def test_cli_writes_runtime_path_with_private_mode(tmp_path):
         "--runtime-gid", str(os.getgid()),
         "--output", str(output),
     ]
-    completed = subprocess.run(command, capture_output=True, text=True)
+    completed = subprocess.run(
+        command, capture_output=True, text=True, umask=creation_umask
+    )
     assert completed.returncode == 0, completed.stderr
     assert output.stat().st_mode & 0o777 == 0o640
     assert output.stat().st_gid == os.getgid()
     assert json.loads(output.read_text())["backup"]["artifact"].startswith("/run/provisioning-backup/")
-
-
-def test_cli_forces_group_read_permission_under_hardened_umask(tmp_path):
-    previous = os.umask(0o077)
-    try:
-        test_cli_writes_runtime_path_with_private_mode(tmp_path)
-    finally:
-        os.umask(previous)
