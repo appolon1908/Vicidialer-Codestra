@@ -46,6 +46,8 @@ def test_schema_is_canonical_and_strict():
     schema = json.loads(SCHEMA.read_text(encoding="utf-8"))
     assert schema["additionalProperties"] is False
     assert schema["properties"]["backup"]["additionalProperties"] is False
+    assert schema["properties"]["backup"]["properties"]["reference"]["pattern"] == \
+        "^[A-Za-z0-9._:/-]{8,255}$"
     assert schema["properties"]["agent"]["additionalProperties"] is False
 
 
@@ -90,6 +92,17 @@ def test_validator_rejects_invalid_policy(tmp_path, mutation):
     mutation(document)
     with pytest.raises((ReconciliationDenied, ValueError, TypeError)):
         module.validate(document, "a" * 40, backup_artifact_source=tmp_path / "synthetic-backup.enc")
+
+
+def test_offline_validation_checks_runtime_policy_metadata(tmp_path):
+    document, backup = generated(tmp_path)
+    policy = tmp_path / "policy.json"
+    policy.write_text(json.dumps(document), encoding="utf-8")
+    policy.chmod(0o666)
+    with pytest.raises(ReconciliationDenied, match="ownership or mode unsafe"):
+        module.validate(
+            document, "a" * 40, backup_artifact_source=backup, policy_path=policy
+        )
 
 
 @pytest.mark.parametrize("creation_umask", [0o022, 0o077])
