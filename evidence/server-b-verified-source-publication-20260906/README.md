@@ -71,3 +71,39 @@ contract, registration/route-isolation evidence and human browser acceptance
 remain separate prerequisites. No runtime inspection or mutation was needed for
 this publication continuation. cod00016/6101 and all production gates were left
 unchanged. No calls were made and no one-call grant was issued or replenished.
+
+## Auditable rerun (review 3942479222)
+
+The earlier aggregate observation is preserved. A fresh rerun, recorded in
+[audit/audit.json](audit/audit.json), provides exact argv/cwd/umask, start and end
+UTC times, exit codes, environment, verifier SHA-256, and retained output paths
+and SHA-256 for each check. Its timestamps are new observations, not reconstructed
+timestamps for the original verification. The executable is
+[audit_verification.py](audit_verification.py); its complete invocation is in the
+record. It performs no deployment or telephony action. Required inputs are the
+downloaded artifact directory, detached source and builder checkouts, and the
+checksum-verified Cosign binary. Python assertions must be enabled (no `-O`).
+
+Rerun interval: `2026-09-06T00:32:55.598963+00:00` through `2026-09-06T00:32:57.317261+00:00`.
+
+| Original claim | Retained rerun checks |
+|---|---|
+| ZIP and outer checksum; manifest/sidecar binding | [zip-archive-manifest.txt](audit/zip-archive-manifest.txt) |
+| Member checksums, safe members/modes, embedded source/builder | [archive-members.txt](audit/archive-members.txt), [source-identity.txt](audit/source-identity.txt), [builder-identity.txt](audit/builder-identity.txt) |
+| Archive signature | [archive-signature.txt](audit/archive-signature.txt) |
+| Provenance signature | [provenance-signature.txt](audit/provenance-signature.txt) |
+| Signed source/builder/digest/workflow/run/attempt | [provenance-bindings.txt](audit/provenance-bindings.txt) |
+| Deterministic published bytes | `rebuild-0022/0027/0077` and `rebuild-digest-0022/0027/0077` entries and outputs in the audit record |
+| Tool identity | [tool-git.txt](audit/tool-git.txt), [tool-cosign-version.txt](audit/tool-cosign-version.txt), [tool-cosign-checksum.txt](audit/tool-cosign-checksum.txt), Python/platform/UID in audit record |
+
+The [public-signatures directory](public-signatures/SHA256SUMS) retains the exact
+public Sigstore bundles, signed provenance and matching metadata, with checksums.
+It contains no private key, enrollment token, application credential or archive
+payload. To repeat archive cryptographic verification after artifact expiry,
+rebuild the source archive from the pinned source and builder using the recorded
+commands and require the published SHA-256, then use the retained public bundles
+with the recorded `cosign verify-blob` commands. The original GitHub transport ZIP
+checksum remains a historical download observation; reconstructing the tar does
+not claim to reconstruct GitHub's ZIP. The full audit's ZIP check still requires
+the locally retained original ZIP. Tool trust data/network availability and the
+pinned Git objects are prerequisites for a future cryptographic rerun.

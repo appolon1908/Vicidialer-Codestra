@@ -33,5 +33,7 @@
   "publication_completed_at": "2026-09-06T00:10:27Z",
   "artifact_expires_at": "2026-10-06T00:10:25Z",
   "workflow_url": "https://github.com/appolon1908-hue/Vicidialer-Codestra/actions/runs/34000565825",
-  "publication_result": "success"
+  "publication_result": "success",
+  "audited_rerun": "audit/audit.json",
+  "public_signature_evidence": "public-signatures/SHA256SUMS"
 }
