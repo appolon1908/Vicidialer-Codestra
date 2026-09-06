@@ -1,0 +1,37 @@
+{
+  "observed_at_utc": "2026-09-06T00:13:03.339881+00:00",
+  "source_sha": "9ac8ef4840f78ba4ad9b816e4e409298505103ce",
+  "protected_builder_sha": "def0f1822fe54ab2a0800e8d6e083533df88d064",
+  "publication_run": 34000565825,
+  "run_attempt": 1,
+  "artifact_id": 9979357196,
+  "artifact_zip_sha256": "15fe0e95c664ddea96c86b181136b12a30e01d7d96ddc2d7d25cddb57c783f49",
+  "archive_name": "codestra-vicidial-adapter-9ac8ef4840f78ba4ad9b816e4e409298505103ce.tar.gz",
+  "archive_sha256": "5e3d4083dd94297c1085a28953547d5532e07c9685560184047208ca2cf0a252",
+  "manifest_sha256": "84275a426d21edecb121334a58af4f69219a4320d071b2352a996a8f8f739bdb",
+  "payload_file_count": 109,
+  "verification": {
+    "artifact_zip_checksum": "PASS",
+    "outer_archive_checksum": "PASS",
+    "member_checksums": "PASS",
+    "safe_members_and_modes": "PASS",
+    "embedded_source_identity": "PASS",
+    "manifest_builder_identity": "PASS",
+    "manifest_sidecar_binding": "PASS",
+    "archive_signature": "PASS",
+    "provenance_signature": "PASS",
+    "signed_provenance_source_builder_digest_workflow_run_attempt": "PASS",
+    "published_bytes_reproduced_under_umasks": "PASS"
+  },
+  "production_changed": false,
+  "reproduced_umasks": [
+    "0022",
+    "0027",
+    "0077"
+  ],
+  "publication_created_at": "2026-09-06T00:09:55Z",
+  "publication_completed_at": "2026-09-06T00:10:27Z",
+  "artifact_expires_at": "2026-10-06T00:10:25Z",
+  "workflow_url": "https://github.com/appolon1908-hue/Vicidialer-Codestra/actions/runs/34000565825",
+  "publication_result": "success"
+}
