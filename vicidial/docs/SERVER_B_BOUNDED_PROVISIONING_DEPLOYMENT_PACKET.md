@@ -35,8 +35,9 @@ VICIDIAL_ADAPTER_IMAGE=<the validator's complete ghcr.io/...@sha256 output> \
 
 ## Preserved rollback evidence
 
-The existing operator evidence is authoritative and must not be regenerated
-unless its freshness policy expires or the production state materially changes:
+The existing operator artifacts are preserved for audit, but they are not
+authoritative PASS evidence because the exact running source/image identity was
+not captured. Revalidate them against the protected release before certification:
 
 ```text
 BACKUP_REFERENCE=20260905T103726Z
@@ -64,18 +65,20 @@ omitted and every evidence object is recorded with its full SHA-256.
 
 | Check name | Command or CI run | Environment/host | Source revision | Artifact reference | UTC timestamp | Result | Evidence location | Evidence SHA-256 |
 |---|---|---|---|---|---|---|---|---|
-| Encrypted backup | restricted operator backup (log records exact command) | production / `static` (`65.21.67.207`) | `a6bc9de3b010e3b2978425d3f787ce7f61826c67` (on-disk marker; running source unverified) | `/root/codestra-platform-backups/20260905T103726Z` | `2026-09-05T10:37:26Z` | REPORTED_PASS | `/var/log/codestra-vicidial-operator/20260905T103726Z-backup-19740.log` | `3b6dc251c49adb57d0b43e3ae330f797a8c677bd17d943fb9faf0cdaf86dc886` |
-| Backup validation and off-host copy | restricted operator validation (log records exact command) | production / `static` (`65.21.67.207`) | `a6bc9de3b010e3b2978425d3f787ce7f61826c67` (on-disk marker; running source unverified) | `/root/codestra-platform-backups/20260905T103726Z` | `2026-09-05T10:38:50Z` | OBSERVED_PASS | `/var/log/codestra-vicidial-operator/20260905T103850Z-validate-backup-20087.log` | `75162a2c48db2766cd9af7fa82a1995b1d9a09415a5abd0c68f652354196cb45` |
+| Encrypted backup | restricted operator backup (log records exact command) | production / `static` (`65.21.67.207`) | `a6bc9de3b010e3b2978425d3f787ce7f61826c67` (on-disk marker; running source unverified) | `/root/codestra-platform-backups/20260905T103726Z` | `2026-09-05T10:37:26Z` | UNRESOLVED_RUNNING_IDENTITY | `/var/log/codestra-vicidial-operator/20260905T103726Z-backup-19740.log` | `3b6dc251c49adb57d0b43e3ae330f797a8c677bd17d943fb9faf0cdaf86dc886` |
+| Backup validation and off-host copy | restricted operator validation (log records exact command) | production / `static` (`65.21.67.207`) | `a6bc9de3b010e3b2978425d3f787ce7f61826c67` (on-disk marker; running source unverified) | `/root/codestra-platform-backups/20260905T103726Z` | `2026-09-05T10:38:50Z` | UNRESOLVED_RUNNING_IDENTITY | `/var/log/codestra-vicidial-operator/20260905T103850Z-validate-backup-20087.log` | `75162a2c48db2766cd9af7fa82a1995b1d9a09415a5abd0c68f652354196cb45` |
 | Isolated restore rehearsal | restricted operator restore test (log records exact command) | isolated restore / `static` (`65.21.67.207`) | `a6bc9de3b010e3b2978425d3f787ce7f61826c67` (on-disk marker; running source unverified) | `/root/codestra-platform-backups/20260905T103726Z` | `2026-09-05T10:39:12Z` | REPORTED_PASS (protected log contents not independently read) | `/var/log/codestra-vicidial-operator/20260905T103912Z-restore-test-20249.log` | `7ca2d5af0970d62382b83d4397d2cd7d7e3ae0d1114f15ec6c1fc30e67b9bcfa` |
-| Rollback applicability | restricted operator rollback plan (log records exact command) | production / `static` (`65.21.67.207`) | `a6bc9de3b010e3b2978425d3f787ce7f61826c67` (on-disk marker; running source unverified) | `/root/codestra-platform-backups/20260905T103726Z` | `2026-09-05T10:40:09Z` | OBSERVED_PASS | `/var/log/codestra-vicidial-operator/20260905T104009Z-rollback-plan-21151.log` | `d73c4cf86190fcb1f90bd16e8bc95c344276c9a2e04e2f4945fc252a996c0ca3` |
+| Rollback applicability | restricted operator rollback plan (log records exact command) | production / `static` (`65.21.67.207`) | `a6bc9de3b010e3b2978425d3f787ce7f61826c67` (on-disk marker; running source unverified) | `/root/codestra-platform-backups/20260905T103726Z` | `2026-09-05T10:40:09Z` | UNRESOLVED_RUNNING_IDENTITY | `/var/log/codestra-vicidial-operator/20260905T104009Z-rollback-plan-21151.log` | `d73c4cf86190fcb1f90bd16e8bc95c344276c9a2e04e2f4945fc252a996c0ca3` |
 | Protected release identity | `<protected workflow run URL/ID>` | GitHub Actions protected branch | `<40-char source SHA>` | `ghcr.io/appolon1908-hue/vicidialer-codestra@sha256:<64 hex>` | `<UTC>` | `<PASS/FAIL>` | `<immutable evidence URL/path>` | `<64 hex>` |
 | Production Compose render | `docker compose ... config --quiet` | administrative staging / `static` | `<40-char source SHA>` | `<complete immutable artifact reference>` | `<UTC>` | `<PASS/FAIL>` | `<sanitized evidence path>` | `<64 hex>` |
 | Runtime policy offline validation | `agent_provisioning_policy.py validate ...` | administrative staging / `static` | `<40-char source SHA>` | `<complete immutable artifact reference>` | `<UTC>` | `<PASS/FAIL>` | `<sanitized evidence path>` | `<64 hex>` |
 | Default disabled readback | `/health`, `/ready`, `/version` plus sanitized configuration readback | production / `static` | `<40-char source SHA>` | `<complete immutable artifact reference>` | `<UTC>` | `<PASS/FAIL>` | `<sanitized evidence path>` | `<64 hex>` |
 
-The four preserved rows record completed evidence. Template rows are
-deliberately unfilled and are not PASS until the authorized administrative
-step creates and hashes their evidence.
+The four preserved rows record historical artifacts only. They remain unresolved
+and do not certify backup, restore, or rollback until an authorized administrator
+captures the exact running commit/image identity and independently revalidates
+each artifact. Template rows are deliberately unfilled and are not PASS until the
+authorized administrative step creates and hashes their evidence.
 
 ## Administrative sequence
 
