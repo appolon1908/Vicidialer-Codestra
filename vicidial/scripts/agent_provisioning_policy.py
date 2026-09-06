@@ -56,7 +56,10 @@ def build(args: argparse.Namespace) -> dict:
 
 
 def validate(document: dict, release_sha: str, now: datetime | None = None,
-             backup_artifact_source: Path | None = None) -> None:
+             backup_artifact_source: Path | None = None,
+             policy_path: Path | None = None) -> None:
+    if policy_path is not None:
+        AgentProvisioningPolicy.validate_file_metadata(policy_path)
     checked = copy.deepcopy(document)
     if backup_artifact_source is not None:
         checked["backup"]["artifact"] = str(backup_artifact_source.resolve())
@@ -105,6 +108,7 @@ def main() -> int:
         validate(
             document, args.release_sha, now=datetime.now(UTC),
             backup_artifact_source=args.backup_artifact_source,
+            policy_path=args.policy,
         )
         print("POLICY_VALID=PASS")
     return 0
