@@ -103,9 +103,46 @@ def test_verifier_rejects_tampering_and_wrong_bindings(tmp_path):
     assert subprocess.run([sys.executable,str(VERIFY),"--archive",str(broken),"--source-sha",SHA,"--builder-sha","b"*40]).returncode != 0
 
 def test_sensitive_files_fail_closed(tmp_path):
-    source=tmp_path/"source"; subprocess.run(["cp","-a",str(SOURCE_ROOT),str(source)],check=True); (source/"credentials.json").write_text("synthetic")
+    source=tmp_path/"source"; subprocess.run(["cp","-a",str(SOURCE_ROOT),str(source)],check=True)
+    subprocess.run(["git", "init", "-q", str(source)], check=True)
+    subprocess.run(["git", "-C", str(source), "add", "."], check=True)
+    subprocess.run(["git", "-C", str(source), "-c", "user.name=Fixture", "-c", "user.email=fixture@example.invalid", "commit", "-qm", "fixture"], check=True)
+    (source/"credentials.json").write_text("synthetic")
     result=subprocess.run([sys.executable,str(SCRIPT),"--source-root",str(source),"--source-sha",SHA,"--builder-sha","b"*40,"--output",str(tmp_path/"x.tar.gz"),"--metadata",str(tmp_path/"x.json")],capture_output=True,text=True)
     assert result.returncode != 0 and "prohibited" in result.stderr
+
+
+def test_build_and_install_byproducts_are_excluded(tmp_path):
+    source = tmp_path / "source"
+    subprocess.run(["cp", "-a", str(SOURCE_ROOT), str(source)], check=True)
+    subprocess.run(["git", "init", "-q", str(source)], check=True)
+    subprocess.run(["git", "-C", str(source), "add", "."], check=True)
+    subprocess.run([
+        "git", "-C", str(source), "-c", "user.name=Fixture",
+        "-c", "user.email=fixture@example.invalid", "commit", "-qm", "fixture",
+    ], check=True)
+    generated = {
+        "build/lib/codestra_vicidial/__init__.py": "# generated build copy\n",
+        "dist/generated.whl": "generated distribution\n",
+        "src/codestra_vicidial_adapter.egg-info/PKG-INFO": "generated metadata\n",
+    }
+    for name, content in generated.items():
+        path = source / name
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(content)
+
+    archive = tmp_path / "release.tar.gz"
+    subprocess.run([
+        sys.executable, str(SCRIPT), "--source-root", str(source),
+        "--source-sha", SHA, "--builder-sha", "b" * 40,
+        "--output", str(archive), "--metadata", str(tmp_path / "metadata.json"),
+    ], check=True)
+
+    with tarfile.open(archive, "r:gz") as bundle:
+        names = bundle.getnames()
+    assert not any(name.startswith(("./build/", "./dist/")) for name in names)
+    assert not any(".egg-info/" in name for name in names)
+    assert "./src/codestra_vicidial/__init__.py" in names
 
 def test_uploaded_artifact_root_checksum_layout(tmp_path):
     archive, _ = build(tmp_path, "codestra-vicidial-adapter.tar.gz")

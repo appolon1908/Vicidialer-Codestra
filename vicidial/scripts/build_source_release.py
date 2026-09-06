@@ -4,7 +4,10 @@ from __future__ import annotations
 import argparse, gzip, hashlib, json, os, subprocess, tarfile, tempfile
 from pathlib import Path
 
-EXCLUDED = {".git", ".pytest_cache", ".mypy_cache", ".ruff_cache", "__pycache__", "evidence", "reports", ".venv"}
+EXCLUDED = {
+    ".git", ".pytest_cache", ".mypy_cache", ".ruff_cache", "__pycache__",
+    ".venv", "build", "dist", "evidence", "reports",
+}
 SUFFIXES = {".pyc", ".pyo", ".pem", ".key", ".crt", ".cer", ".der", ".p12", ".pfx", ".jks", ".keystore", ".sqlite", ".sqlite3", ".db", ".sql", ".dump"}
 SENSITIVE_NAMES = {"credentials.json", "secrets.json", "id_rsa", "id_dsa", "id_ecdsa", "id_ed25519", ".netrc", ".npmrc", ".pypirc"}
 REQUIRED = {"pyproject.toml", "src/codestra_vicidial/app.py", "src/codestra_vicidial/internal_calling.py", "scripts/validate_runtime.py"}
@@ -13,14 +16,24 @@ def sha256(path: Path) -> str:
     return hashlib.sha256(path.read_bytes()).hexdigest()
 
 def source_files(root: Path) -> list[Path]:
-    result = []
+    # Scan the whole workspace for sensitive material even though only committed
+    # source is eligible for release.  This keeps a dirty checkout from silently
+    # hiding a credential while excluding harmless build/install byproducts.
     for path in root.rglob("*"):
         relative = path.relative_to(root)
-        if any(part in EXCLUDED or part.endswith(".egg-info") for part in relative.parts) or path.is_symlink() or not path.is_file():
+        if (any(part in EXCLUDED or part.endswith(".egg-info") for part in relative.parts)
+                or path.is_symlink() or not path.is_file()):
             continue
         if path.suffix.lower() in SUFFIXES or path.name.startswith(".env") or path.name.lower() in SENSITIVE_NAMES:
             raise ValueError("sensitive or runtime-generated file is prohibited: " + relative.as_posix())
-        result.append(relative)
+    modes = source_modes(root)
+    result = [
+        Path(name) for name in modes
+        if not any(part in EXCLUDED or part.endswith(".egg-info") for part in Path(name).parts)
+    ]
+    missing_files = [item.as_posix() for item in result if not (root / item).is_file()]
+    if missing_files:
+        raise ValueError("tracked runtime files missing: " + ",".join(sorted(missing_files)))
     missing = REQUIRED - {item.as_posix() for item in result}
     if missing:
         raise ValueError("required runtime files missing: " + ",".join(sorted(missing)))
@@ -45,8 +58,8 @@ def build(root: Path, source_sha: str, builder_sha: str, output: Path) -> dict:
         raise ValueError("source SHA must be 40 lowercase hexadecimal characters")
     with tempfile.TemporaryDirectory() as temporary:
         stage = Path(temporary)
-        files = source_files(root)
         modes = source_modes(root)
+        files = source_files(root)
         for relative in files:
             destination = stage / relative
             destination.parent.mkdir(parents=True, exist_ok=True)
