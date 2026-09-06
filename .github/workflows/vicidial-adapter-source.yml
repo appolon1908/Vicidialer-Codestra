@@ -56,6 +56,11 @@ jobs:
           path: exact-source
           persist-credentials: false
 
+      - name: Prepare selected source with the publication dependency install
+        run: |
+          python -m pip install -e "exact-source/vicidial[test]" pytest==8.4.2
+          git -C exact-source diff --exit-code HEAD
+
       - name: Verify and install the exact selected source archive
         run: |
           test "$(git -C exact-source rev-parse HEAD)" = 9ac8ef4840f78ba4ad9b816e4e409298505103ce
