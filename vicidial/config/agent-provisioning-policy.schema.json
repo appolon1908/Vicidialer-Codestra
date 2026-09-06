@@ -15,7 +15,7 @@
       "additionalProperties": false,
       "required": ["reference", "created_at", "artifact", "sha256", "validation"],
       "properties": {
-        "reference": {"type": "string", "minLength": 8, "maxLength": 255},
+        "reference": {"type": "string", "pattern": "^[A-Za-z0-9._:/-]{8,255}$"},
         "created_at": {"type": "string", "format": "date-time"},
         "artifact": {"type": "string", "pattern": "^/"},
         "sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
