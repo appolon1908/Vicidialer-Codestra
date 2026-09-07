@@ -93,6 +93,20 @@ class EnvironmentPreparationTests(unittest.TestCase):
         self.assertEqual(service["pull_policy"], "never")
         self.assertEqual(service["environment"]["CODESTRA_ADAPTER_BACKEND"], "memory")
 
+    def test_staging_profile_matches_memory_backend_contract(self):
+        docs = prepare.preparation_documents(self.manifest)
+        service = json.loads(docs["staging.compose.json"])["services"]["restricted-adapter-staging"]
+        self.assertEqual(service["environment"]["CODESTRA_ADAPTER_DEPLOYMENT"], "staging-read-only")
+        self.assertEqual(service["environment"]["CODESTRA_ADAPTER_BACKEND"], "memory")
+
+    def test_production_reference_retains_its_mysql_candidate_profile(self):
+        docs = prepare.preparation_documents(self.manifest)
+        values = dict(line.split("=", 1) for line in docs["production.env.example"].splitlines()
+                      if line and not line.startswith("#"))
+        self.assertEqual(values["CODESTRA_ADAPTER_DEPLOYMENT"], "production-candidate")
+        self.assertEqual(values["CODESTRA_ADAPTER_BACKEND"], "mysql")
+        self.assertNotIn("staging-read-only", docs["production.env.example"])
+
     def test_staging_is_nonroot_readonly_and_bounded(self):
         service = json.loads(prepare.preparation_documents(self.manifest)["staging.compose.json"])["services"]["restricted-adapter-staging"]
         self.assertEqual(service["user"], "10001:10001")

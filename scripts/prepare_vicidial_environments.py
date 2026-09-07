@@ -90,7 +90,7 @@ def preparation_documents(manifest: dict) -> dict[str, str]:
         "secrets": [{"source": "staging-hmac", "target": "adapter-hmac"}],
         "environment": {
             **flags, "SOURCE_SHA": sha, "CODESTRA_ADAPTER_BACKEND": "memory",
-            "CODESTRA_ADAPTER_DEPLOYMENT": "production-candidate",
+            "CODESTRA_ADAPTER_DEPLOYMENT": "staging-read-only",
             "CODESTRA_ADAPTER_HMAC_FILE": "/run/secrets/adapter-hmac",
             "AUTHORIZED_PRIVATE_SOURCE_IP": "10.40.0.1",
         },
