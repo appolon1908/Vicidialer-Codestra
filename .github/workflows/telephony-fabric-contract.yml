@@ -1,0 +1,116 @@
+name: Codestra telephony fabric contract
+
+on:
+  pull_request:
+    paths:
+      - "docs/integrations/codestra-fabric/**"
+      - "vicidial/scripts/validate_codestra_telephony_fabric.py"
+      - "vicidial/tests/test_codestra_telephony_fabric.py"
+      - ".github/workflows/telephony-fabric-contract.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: telephony-fabric-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  exact-source-head:
+    name: Validate telephony fabric source head
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - name: Check out exact source head
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          fetch-depth: 1
+          persist-credentials: false
+
+      - name: Verify exact source identity
+        env:
+          EXPECTED_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          test "$(git rev-parse HEAD)" = "${EXPECTED_SHA}"
+          test -z "$(git status --porcelain --untracked-files=all)"
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+          cache-dependency-path: vicidial/pyproject.toml
+
+      - name: Install bounded test dependencies
+        run: python -m pip install -e 'vicidial[test]'
+
+      - name: Validate private telephony contract
+        run: |
+          python vicidial/scripts/validate_codestra_telephony_fabric.py
+          python -m pytest -q vicidial/tests/test_codestra_telephony_fabric.py
+          git diff --check
+
+  exact-merge-result:
+    name: Validate telephony fabric merge result
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - name: Check out exact synthetic merge result
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 1
+          persist-credentials: false
+
+      - name: Verify exact merge-result identity
+        run: |
+          test "$(git rev-parse HEAD)" = "${{ github.sha }}"
+          test -z "$(git status --porcelain --untracked-files=all)"
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+          cache-dependency-path: vicidial/pyproject.toml
+
+      - name: Install bounded test dependencies
+        run: python -m pip install -e 'vicidial[test]'
+
+      - name: Validate fail-closed merge result
+        run: |
+          python vicidial/scripts/validate_codestra_telephony_fabric.py
+          python -m pytest -q vicidial/tests/test_codestra_telephony_fabric.py
+          git diff --check
+
+  no-live-effect:
+    name: Verify telephony effects remain disabled
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - name: Check out reviewed source
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          fetch-depth: 1
+          persist-credentials: false
+
+      - name: Enforce source-only state
+        run: |
+          python - <<'PY'
+          import json
+          from pathlib import Path
+
+          manifest = json.loads(
+              Path("docs/integrations/codestra-fabric/manifest.v1.json").read_text()
+          )
+          assert manifest["calls_placed"] == 0
+          assert manifest["deployment_authorized"] is False
+          assert manifest["production_authorized"] is False
+          assert not any(manifest["capabilities"].values())
+          print("VICIDIAL_TELEPHONY_LIVE_EFFECTS_DISABLED=PASS")
+          PY
