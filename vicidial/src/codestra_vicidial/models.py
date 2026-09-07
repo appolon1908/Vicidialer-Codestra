@@ -135,6 +135,26 @@ class AgentCommand(StrictModel):
     agent: AgentSpec
 
 
+class ProvisionAgentSpec(AgentSpec):
+    user_id: Literal["appolon"]
+    user_group: Literal["WEBTEST_SYN"]
+    campaigns: list[Literal["TEST_SYN"]] = Field(min_length=1, max_length=1)
+    inbound_groups: list[ResourceCode] = Field(default_factory=list, max_length=0)
+    extension: Annotated[str, Field(pattern=r"^[0-9]{4,8}$")]
+    role: Literal["supervisor"]
+    campaign: Literal["TEST_SYN"]
+    internal_only: Literal[True]
+    external_dialing: Literal[False]
+
+
+class ProvisionAgentCommand(AgentCommand):
+    agent: ProvisionAgentSpec
+    user_level: Literal[8]
+    authorization_reference: Annotated[str, Field(pattern=r"^CHG-[A-Z0-9-]{10,80}$")]
+    plan_sha256: Annotated[str, Field(pattern=r"^[a-f0-9]{64}$")]
+    backup_reference: Annotated[str, Field(pattern=r"^[A-Za-z0-9._:/-]{8,255}$")]
+
+
 class DisableAgentCommand(StrictModel):
     context: RequestContext
     user_id: Annotated[str, Field(pattern=r"^[A-Z]{3}[0-9]{4,12}$")]

@@ -16,10 +16,11 @@ ARG SOURCE_SHA
 ARG BUILD_DATE
 ARG RELEASE_ENVIRONMENT=production-candidate
 ARG OPENSSL_PACKAGE_VERSION=3.5.8-r0
+ARG LIBUUID_PACKAGE_VERSION=2.42.3-r1
 LABEL org.opencontainers.image.title="Codestra VICIdial Restricted Adapter" \
       org.opencontainers.image.revision="${SOURCE_SHA}" \
       org.opencontainers.image.created="${BUILD_DATE}" \
-      org.opencontainers.image.source="https://github.com/appolon1908-hue/codestra-production-platform"
+      org.opencontainers.image.source="https://github.com/appolon1908-hue/Vicidialer-Codestra"
 ENV PATH=/opt/venv/bin:$PATH \
     PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
@@ -29,13 +30,17 @@ ENV PATH=/opt/venv/bin:$PATH \
     ENABLE_VICIDIAL_WRITES=false \
     ENABLE_PROVISIONING=false \
     ENABLE_AGENT_SYNC=false \
+    ENABLE_AGENT_PROVISIONING=false \
     ENABLE_LEAD_PUBLICATION=false \
-    ENABLE_CALLBACK_WRITES=false \
-    ENABLE_TRANSFER_POLICY_SYNC=false \
-    ENABLE_PSTN_DIALING=false \
+    ENABLE_LIVE_CALL_CONTROL=false \
+    ENABLE_WARM_TRANSFER=false \
+    ENABLE_IVR_ROUTING=false \
+    ENABLE_IVR_CALLBACKS=false \
+    ENABLE_PRODUCTION_DIALING=false \
     ENABLE_SMS_DELIVERY=false \
     ENABLE_EMAIL_DELIVERY=false \
-    ENABLE_EXTERNAL_DELIVERY=false
+    ENABLE_EXTERNAL_DELIVERY=false \
+    ENABLE_AI_ACTIONS=false
 COPY --from=builder /opt/venv /opt/venv
 COPY vicidial /tmp/release-src/vicidial
 COPY deploy/vicidial-restricted-adapter /tmp/release-src/deploy/vicidial-restricted-adapter
@@ -43,11 +48,15 @@ COPY .github/workflows/vicidial-adapter-container.yml /tmp/release-src/.github/w
 COPY vicidial/docker/entrypoint.sh /usr/local/bin/codestra-vicidial-entrypoint
 COPY vicidial/docker/security_regression.py /usr/local/libexec/codestra-security-regression
 RUN apk add --no-cache \
+      --repository=https://dl-cdn.alpinelinux.org/alpine/v3.24/main \
       "libcrypto3=${OPENSSL_PACKAGE_VERSION}" \
       "libssl3=${OPENSSL_PACKAGE_VERSION}" \
+      "libuuid=${LIBUUID_PACKAGE_VERSION}" \
  && test -n "$SOURCE_SHA" \
  && test -n "$BUILD_DATE" \
- && mkdir -p "/opt/codestra/releases/$SOURCE_SHA" /var/lib/codestra-vicidial \
+ && mkdir -p "/opt/codestra/releases/$SOURCE_SHA/scripts" /var/lib/codestra-vicidial \
+ && cp /tmp/release-src/vicidial/scripts/validate_runtime.py "/opt/codestra/releases/$SOURCE_SHA/scripts/validate_runtime.py" \
+ && chmod 0555 "/opt/codestra/releases/$SOURCE_SHA/scripts/validate_runtime.py" \
  && printf '%s\n' "$SOURCE_SHA" > "/opt/codestra/releases/$SOURCE_SHA/SOURCE.COMMIT" \
  && SOURCE_SHA="$SOURCE_SHA" BUILD_DATE="$BUILD_DATE" RELEASE_ENVIRONMENT="$RELEASE_ENVIRONMENT" python -c 'import json,os; from codestra_vicidial.release import build_release_document; p="/opt/codestra/releases/"+os.environ["SOURCE_SHA"]+"/BUILD_INFO.json"; open(p,"w").write(json.dumps(build_release_document(git_sha=os.environ["SOURCE_SHA"],built_at=os.environ["BUILD_DATE"],environment=os.environ["RELEASE_ENVIRONMENT"]),sort_keys=True)+"\n")' \
  && python /tmp/release-src/vicidial/scripts/generate_release_manifest.py --root /tmp/release-src --source-sha "$SOURCE_SHA" --generated-at "$BUILD_DATE" --output "/opt/codestra/releases/$SOURCE_SHA/RELEASE_MANIFEST.json" \
@@ -71,4 +80,4 @@ EXPOSE 8097
 VOLUME ["/var/lib/codestra-vicidial"]
 ENTRYPOINT ["/usr/local/bin/codestra-vicidial-entrypoint"]
 HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 CMD ["python", "-c", "import json,os,urllib.request; b='http://127.0.0.1:8097'; assert json.load(urllib.request.urlopen(b+'/health',timeout=3))['status']=='live'; assert json.load(urllib.request.urlopen(b+'/ready',timeout=3))['status']=='ready'; assert json.load(urllib.request.urlopen(b+'/version',timeout=3))['git_sha']==os.environ['SOURCE_SHA']"]
-CMD ["python", "-m", "uvicorn", "codestra_vicidial.app:app", "--host", "0.0.0.0", "--port", "8097", "--no-server-header"]
+CMD ["python", "-m", "uvicorn", "codestra_vicidial.production_app:app", "--host", "0.0.0.0", "--port", "8097", "--no-server-header"]

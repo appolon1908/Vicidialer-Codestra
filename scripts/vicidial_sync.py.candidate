@@ -626,10 +626,41 @@ def send_test_syn_batch():
         sync_conn.close()
 
 
+
+
+def production_backlog_count(sync_conn):
+    """Count the complete eligible production queue before selecting a batch."""
+    with sync_conn.cursor() as cur:
+        cur.execute(
+            """
+            SELECT COUNT(*) AS backlog_count
+            FROM event_queue
+            WHERE status IN ('pending','retrying')
+              AND retry_count < max_retries
+              AND event_type=%s
+              AND source_table IN (%s,%s)
+            """,
+            (PRODUCTION_EVENT_TYPE,) + PRODUCTION_SOURCE_TABLES,
+        )
+        row = cur.fetchone()
+    if not row or "backlog_count" not in row:
+        raise RuntimeError("production backlog count is unavailable")
+    try:
+        count = int(row["backlog_count"])
+    except (TypeError, ValueError):
+        raise RuntimeError("production backlog count is invalid")
+    if count < 0:
+        raise RuntimeError("production backlog count is invalid")
+    return count
+
+
 def process_pending_events(sync_conn, config):
     if not external_delivery_enabled(config):
         logging.debug("external delivery disabled; queued events will not be posted yet")
         return
+    backlog_count = production_backlog_count(sync_conn)
+    if backlog_count > PRODUCTION_BACKLOG_LIMIT:
+        raise RuntimeError("production backlog exceeds hard limit")
     with sync_conn.cursor() as cur:
         cur.execute(
             """
@@ -646,9 +677,6 @@ def process_pending_events(sync_conn, config):
             + (config["batch_size"],),
         )
         events = cur.fetchall()
-    if len(events) > PRODUCTION_BACKLOG_LIMIT:
-        raise RuntimeError("production backlog exceeds hard limit")
-
     for event in events:
         try:
             send_event_to_middleware(sync_conn, config, event)

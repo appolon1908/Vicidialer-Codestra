@@ -1,0 +1,19 @@
+STDOUT
+  ______   ______        _______. __    _______ .__   __.
+ /      | /  __  \      /       ||  |  /  _____||  \ |  |
+|  ,----'|  |  |  |    |   (----`|  | |  |  __  |   \|  |
+|  |     |  |  |  |     \   \    |  | |  | |_ | |  . `  |
+|  `----.|  `--'  | .----)   |   |  | |  |__| | |  |\   |
+ \______| \______/  |_______/    |__|  \______| |__| \__|
+cosign: A tool for Container Signing, Verification and Storage in an OCI registry
+
+GitVersion:    v3.1.2
+GitCommit:     193d2153431f8bb0d945a4c1ee721872f73add67
+GitTreeState:  clean
+BuildDate:     2026-07-17T14:32:20Z
+GoVersion:     go1.26.4
+Compiler:      gc
+Platform:      linux/amd64
+
+
+STDERR

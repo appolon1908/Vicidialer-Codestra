@@ -1,0 +1,4 @@
+STDOUT
+{"_type": "https://in-toto.io/Statement/v1", "predicate": {"buildDefinition": {"buildType": "https://github.com/appolon1908-hue/Vicidialer-Codestra/server-b-source-release/v1", "externalParameters": {"builder_sha": "def0f1822fe54ab2a0800e8d6e083533df88d064", "source_sha": "9ac8ef4840f78ba4ad9b816e4e409298505103ce"}, "resolvedDependencies": [{"digest": {"gitCommit": "9ac8ef4840f78ba4ad9b816e4e409298505103ce"}, "uri": "git+https://github.com/appolon1908-hue/Vicidialer-Codestra"}]}, "runDetails": {"builder": {"id": "appolon1908-hue/Vicidialer-Codestra/.github/workflows/publish-server-b-source-release.yml@refs/heads/main"}, "metadata": {"invocationId": "34000565825/1"}}}, "predicateType": "https://slsa.dev/provenance/v1", "subject": [{"digest": {"sha256": "5e3d4083dd94297c1085a28953547d5532e07c9685560184047208ca2cf0a252"}, "name": "codestra-vicidial-adapter-9ac8ef4840f78ba4ad9b816e4e409298505103ce.tar.gz"}]}
+
+STDERR
