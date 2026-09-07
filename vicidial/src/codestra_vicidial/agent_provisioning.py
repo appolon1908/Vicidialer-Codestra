@@ -39,13 +39,17 @@ class AgentProvisioningPolicy:
         self.backup_created_at = created
         self.document = document
 
-    @classmethod
-    def from_file(cls, path: Path, *, expected_release_sha: str):
+    @staticmethod
+    def validate_file_metadata(path: Path) -> None:
         if path.is_symlink() or not path.is_file():
             raise ReconciliationDenied("agent provisioning policy unavailable")
         metadata = path.stat()
         if metadata.st_uid != 0 or metadata.st_mode & 0o022 or metadata.st_mode & 0o007:
             raise ReconciliationDenied("agent provisioning policy ownership or mode unsafe")
+
+    @classmethod
+    def from_file(cls, path: Path, *, expected_release_sha: str):
+        cls.validate_file_metadata(path)
         return cls(json.loads(path.read_text(encoding="utf-8")),
                    expected_release_sha=expected_release_sha)
 

@@ -1,0 +1,40 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://codestra.co/schemas/vicidial/agent-provisioning-policy.v1.json",
+  "title": "Bounded VICIdial disabled-agent provisioning policy",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["protected_sha", "authorization_reference", "expires_at", "backup", "user_level", "agent"],
+  "properties": {
+    "protected_sha": {"type": "string", "pattern": "^[0-9a-f]{40}$"},
+    "authorization_reference": {"type": "string", "pattern": "^CHG-[A-Z0-9-]{10,80}$"},
+    "expires_at": {"type": "string", "format": "date-time"},
+    "user_level": {"const": 9},
+    "backup": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["reference", "created_at", "artifact", "sha256", "validation"],
+      "properties": {
+        "reference": {"type": "string", "pattern": "^[A-Za-z0-9._:/-]{8,255}$"},
+        "created_at": {"type": "string", "format": "date-time"},
+        "artifact": {"type": "string", "pattern": "^/"},
+        "sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+        "validation": {"const": "PASS"}
+      }
+    },
+    "agent": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["user_id", "full_name", "user_group", "campaigns", "inbound_groups", "active", "adopt_existing_sha256"],
+      "properties": {
+        "user_id": {"type": "string", "pattern": "^[A-Z]{3}[0-9]{4,12}$"},
+        "full_name": {"type": "string", "minLength": 2, "maxLength": 50},
+        "user_group": {"type": "string"},
+        "campaigns": {"type": "array", "minItems": 1, "maxItems": 30, "items": {"type": "string"}},
+        "inbound_groups": {"type": "array", "maxItems": 30, "items": {"type": "string"}},
+        "active": {"const": false},
+        "adopt_existing_sha256": {"type": ["string", "null"], "pattern": "^[0-9a-f]{64}$"}
+      }
+    }
+  }
+}

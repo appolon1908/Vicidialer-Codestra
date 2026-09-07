@@ -1,6 +1,6 @@
 services:
   restricted-adapter:
-    image: codestra/vicidial-restricted-adapter@${VICIDIAL_ADAPTER_IMAGE_DIGEST:?immutable image digest required}
+    image: ${VICIDIAL_ADAPTER_IMAGE:?complete verified GHCR artifact reference required}
     ports:
       - "127.0.0.1:8097:8097"
     networks:
