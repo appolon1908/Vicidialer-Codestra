@@ -32,16 +32,23 @@ services:
       # Host Apache reaches the loopback-published port through this isolated,
       # fixed Compose gateway; no forwarded client address is trusted.
       AUTHORIZED_CONTAINER_PROXY_IP: 172.30.97.1
+      # Canonical application feature-flag names. Keep every external/live
+      # capability fail-closed until a separately approved activation change.
       ENABLE_VICIDIAL_WRITES: "false"
       ENABLE_PROVISIONING: "false"
       ENABLE_AGENT_SYNC: "false"
+      # Independently enabled only with a protected exact-user policy file.
+      ENABLE_AGENT_PROVISIONING: "false"
       ENABLE_LEAD_PUBLICATION: "false"
-      ENABLE_CALLBACK_WRITES: "false"
-      ENABLE_TRANSFER_POLICY_SYNC: "false"
-      ENABLE_PSTN_DIALING: "false"
+      ENABLE_LIVE_CALL_CONTROL: "false"
+      ENABLE_WARM_TRANSFER: "false"
+      ENABLE_IVR_ROUTING: "false"
+      ENABLE_IVR_CALLBACKS: "false"
+      ENABLE_PRODUCTION_DIALING: "false"
       ENABLE_SMS_DELIVERY: "false"
       ENABLE_EMAIL_DELIVERY: "false"
       ENABLE_EXTERNAL_DELIVERY: "false"
+      ENABLE_AI_ACTIONS: "false"
     restart: unless-stopped
     stop_grace_period: 20s
     pids_limit: 128

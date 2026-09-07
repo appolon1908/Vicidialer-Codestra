@@ -59,12 +59,19 @@ def validate_documents(
     if ready.get("deployment_profile", deployment_profile) != deployment_profile:
         raise ValueError("/ready deployment profile mismatch")
     expected_writes = deployment_profile == "production-reconciliation"
-    if deployment_profile not in {"staging-read-only", "production-reconciliation"}:
+    if deployment_profile not in {
+        "staging-read-only", "production-reconciliation", "production-internal-test",
+    }:
         raise ValueError("unsupported deployment profile")
     if ready.get("writes_enabled") is not expected_writes:
         raise ValueError("/ready writes contract failed")
     if expected_writes and ready.get("reconciliation_policy_verified") is not True:
         raise ValueError("/ready reconciliation policy is not verified")
+    if deployment_profile == "production-internal-test":
+        if ready.get("internal_test_calling") is not True:
+            raise ValueError("/ready internal calling contract failed")
+        if ready.get("checks", {}).get("internal_call_policy") is not True:
+            raise ValueError("/ready internal call policy is not verified")
     if ready.get("release_verified") is not True:
         raise ValueError(
             "/ready reports unverified release metadata"

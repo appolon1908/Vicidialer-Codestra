@@ -14,7 +14,12 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-test = ["httpx2>=2.12,<3", "pytest>=8,<10", "PyYAML>=6,<7"]
+test = [
+  "httpx2>=2.12,<3",
+  "pytest>=8,<10",
+  "PyYAML>=6,<7",
+  "requests>=2.32,<3",
+]
 
 [tool.setuptools.packages.find]
 where = ["src"]

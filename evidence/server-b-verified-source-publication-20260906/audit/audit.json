@@ -1,0 +1,340 @@
+{
+  "started_at_utc": "2026-09-06T00:32:55.598963+00:00",
+  "invocation": [
+    "/home/codestra-admin/artifacts/internal-calls-20260905/venv/bin/python",
+    "/home/codestra-admin/worktrees/server-b-verified-source-publication-20260906/evidence/server-b-verified-source-publication-20260906/audit_verification.py",
+    "--artifact",
+    "/home/codestra-admin/artifacts/internal-calls-20260905/protected-source-34000565825",
+    "--source",
+    "/home/codestra-admin/artifacts/internal-calls-20260905/publication-repro/fixed/exact-source",
+    "--builder",
+    "/home/codestra-admin/artifacts/internal-calls-20260905/audit-builder-def0f182",
+    "--cosign",
+    "/home/codestra-admin/artifacts/internal-calls-20260905/protected-source-33999730332/cosign",
+    "--output",
+    "evidence/server-b-verified-source-publication-20260906/audit"
+  ],
+  "verifier_sha256": "0ef5574d42ae84886581a1953131bc26da8d7b7e539f6d0d765e0d5b80219946",
+  "source_sha": "9ac8ef4840f78ba4ad9b816e4e409298505103ce",
+  "builder_sha": "def0f1822fe54ab2a0800e8d6e083533df88d064",
+  "publication_run_attempt": "34000565825/1",
+  "artifact_id": 9979357196,
+  "environment": {
+    "python": "3.12.14 (main, Sep  1 2026, 14:16:52) [Clang 22.1.3 ]",
+    "platform": "Linux-6.4.0-150600.23.103-default-x86_64-with-glibc2.38",
+    "uid": 1001,
+    "cwd": "/home/codestra-admin/worktrees/server-b-verified-source-publication-20260906"
+  },
+  "checks": [
+    {
+      "name": "tool-git",
+      "argv": [
+        "git",
+        "--version"
+      ],
+      "cwd": "/home/codestra-admin/artifacts/internal-calls-20260905/protected-source-34000565825",
+      "umask": "inherited",
+      "started_at_utc": "2026-09-06T00:32:55.599672+00:00",
+      "finished_at_utc": "2026-09-06T00:32:55.600551+00:00",
+      "exit_code": 0,
+      "result": "PASS",
+      "output": "tool-git.txt",
+      "output_sha256": "d002157dd0f37d20db0d22e1bffef527cc92330c5e50bc72dc25dca5bc05bad2"
+    },
+    {
+      "name": "tool-cosign-checksum",
+      "argv": [
+        "/home/codestra-admin/artifacts/internal-calls-20260905/venv/bin/python",
+        "-c",
+        "import hashlib,sys; d=hashlib.sha256(open(sys.argv[1],'rb').read()).hexdigest(); print(d); assert d=='f7622ed3cf22e55e1ae6377c080979ff77a22da9981c11df222a2e444991e7cf'",
+        "/home/codestra-admin/artifacts/internal-calls-20260905/protected-source-33999730332/cosign"
+      ],
+      "cwd": "/home/codestra-admin/artifacts/internal-calls-20260905/protected-source-34000565825",
+      "umask": "inherited",
+      "started_at_utc": "2026-09-06T00:32:55.600657+00:00",
+      "finished_at_utc": "2026-09-06T00:32:55.711286+00:00",
+      "exit_code": 0,
+      "result": "PASS",
+      "output": "tool-cosign-checksum.txt",
+      "output_sha256": "691211fdd6239716d11efb86feadbbcccd3a1d45485b936677ba305109b11a3b"
+    },
+    {
+      "name": "tool-cosign-version",
+      "argv": [
+        "/home/codestra-admin/artifacts/internal-calls-20260905/protected-source-33999730332/cosign",
+        "version"
+      ],
+      "cwd": "/home/codestra-admin/artifacts/internal-calls-20260905/protected-source-34000565825",
+      "umask": "inherited",
+      "started_at_utc": "2026-09-06T00:32:55.711415+00:00",
+      "finished_at_utc": "2026-09-06T00:32:55.725123+00:00",
+      "exit_code": 0,
+      "result": "PASS",
+      "output": "tool-cosign-version.txt",
+      "output_sha256": "4392c811767e31f6beabff3d07de117bffe13580fea1cf2f3b50a6de700e5a19"
+    },
+    {
+      "name": "source-identity",
+      "argv": [
+        "/home/codestra-admin/artifacts/internal-calls-20260905/venv/bin/python",
+        "-c",
+        "import subprocess,sys; value=subprocess.check_output(['git','-C',sys.argv[1],'rev-parse','HEAD'],text=True).strip(); print(value); assert value==sys.argv[2]; subprocess.run(['git','-C',sys.argv[1],'diff','--exit-code','HEAD'],check=True)",
+        "/home/codestra-admin/artifacts/internal-calls-20260905/publication-repro/fixed/exact-source",
+        "9ac8ef4840f78ba4ad9b816e4e409298505103ce"
+      ],
+      "cwd": "/home/codestra-admin/artifacts/internal-calls-20260905/protected-source-34000565825",
+      "umask": "inherited",
+      "started_at_utc": "2026-09-06T00:32:55.725355+00:00",
+      "finished_at_utc": "2026-09-06T00:32:55.747342+00:00",
+      "exit_code": 0,
+      "result": "PASS",
+      "output": "source-identity.txt",
+      "output_sha256": "31f4273d1177084f29a7c7dc30e04be0a500ea6c6f16646cd99058dc6432d51a"
+    },
+    {
+      "name": "builder-identity",
+      "argv": [
+        "/home/codestra-admin/artifacts/internal-calls-20260905/venv/bin/python",
+        "-c",
+        "import subprocess,sys; value=subprocess.check_output(['git','-C',sys.argv[1],'rev-parse','HEAD'],text=True).strip(); print(value); assert value==sys.argv[2]; subprocess.run(['git','-C',sys.argv[1],'diff','--exit-code','HEAD'],check=True)",
+        "/home/codestra-admin/artifacts/internal-calls-20260905/audit-builder-def0f182",
+        "def0f1822fe54ab2a0800e8d6e083533df88d064"
+      ],
+      "cwd": "/home/codestra-admin/artifacts/internal-calls-20260905/protected-source-34000565825",
+      "umask": "inherited",
+      "started_at_utc": "2026-09-06T00:32:55.747572+00:00",
+      "finished_at_utc": "2026-09-06T00:32:55.770736+00:00",
+      "exit_code": 0,
+      "result": "PASS",
+      "output": "builder-identity.txt",
+      "output_sha256": "96467a1173d9dbd9fc3493e5061056572409ab447cdc62b0f9a5cba8e9599fb3"
+    },
+    {
+      "name": "zip-archive-manifest",
+      "argv": [
+        "/home/codestra-admin/artifacts/internal-calls-20260905/venv/bin/python",
+        "-c",
+        "import hashlib,json,tarfile\nfrom pathlib import Path\nzip_digest=hashlib.sha256(Path('artifact.zip').read_bytes()).hexdigest()\nassert zip_digest=='15fe0e95c664ddea96c86b181136b12a30e01d7d96ddc2d7d25cddb57c783f49'\nname='codestra-vicidial-adapter-9ac8ef4840f78ba4ad9b816e4e409298505103ce.tar.gz'\ndigest=hashlib.sha256(Path(name).read_bytes()).hexdigest()\nassert digest=='5e3d4083dd94297c1085a28953547d5532e07c9685560184047208ca2cf0a252'\nassert Path(name+'.sha256').read_text()==digest+'  '+name+'\\n'\nwith tarfile.open(name,'r:gz') as tar: content=tar.extractfile('./SOURCE_RELEASE_MANIFEST.json').read()\nmanifest=json.loads(content); metadata=json.loads(Path('source-release-metadata.json').read_text())\nassert all(metadata[k]==v for k,v in manifest.items())\nassert metadata['archive_sha256']==digest\nassert metadata['manifest_sha256']==hashlib.sha256(content).hexdigest()=='84275a426d21edecb121334a58af4f69219a4320d071b2352a996a8f8f739bdb'\nprint(json.dumps({'zip_sha256':zip_digest,'archive_sha256':digest,'manifest':manifest},sort_keys=True))"
+      ],
+      "cwd": "/home/codestra-admin/artifacts/internal-calls-20260905/protected-source-34000565825",
+      "umask": "inherited",
+      "started_at_utc": "2026-09-06T00:32:55.770939+00:00",
+      "finished_at_utc": "2026-09-06T00:32:55.794559+00:00",
+      "exit_code": 0,
+      "result": "PASS",
+      "output": "zip-archive-manifest.txt",
+      "output_sha256": "fc8e4aeaefd15fd5ead28102a5571be0050be5dd21b05c6570b6529d99dae2dc"
+    },
+    {
+      "name": "archive-members",
+      "argv": [
+        "/home/codestra-admin/artifacts/internal-calls-20260905/venv/bin/python",
+        "/home/codestra-admin/artifacts/internal-calls-20260905/audit-builder-def0f182/vicidial/scripts/verify_source_release.py",
+        "--archive",
+        "/home/codestra-admin/artifacts/internal-calls-20260905/protected-source-34000565825/codestra-vicidial-adapter-9ac8ef4840f78ba4ad9b816e4e409298505103ce.tar.gz",
+        "--source-sha",
+        "9ac8ef4840f78ba4ad9b816e4e409298505103ce",
+        "--builder-sha",
+        "def0f1822fe54ab2a0800e8d6e083533df88d064"
+      ],
+      "cwd": "/home/codestra-admin/artifacts/internal-calls-20260905/protected-source-34000565825",
+      "umask": "inherited",
+      "started_at_utc": "2026-09-06T00:32:55.794777+00:00",
+      "finished_at_utc": "2026-09-06T00:32:55.828911+00:00",
+      "exit_code": 0,
+      "result": "PASS",
+      "output": "archive-members.txt",
+      "output_sha256": "3c06aea47dad50f53febba3cd949b283660fd352976433b3e2d628c508272a59"
+    },
+    {
+      "name": "archive-signature",
+      "argv": [
+        "/home/codestra-admin/artifacts/internal-calls-20260905/protected-source-33999730332/cosign",
+        "verify-blob",
+        "--bundle",
+        "source-release.sigstore.json",
+        "--certificate-identity",
+        "https://github.com/appolon1908-hue/Vicidialer-Codestra/.github/workflows/publish-server-b-source-release.yml@refs/heads/main",
+        "--certificate-oidc-issuer",
+        "https://token.actions.githubusercontent.com",
+        "codestra-vicidial-adapter-9ac8ef4840f78ba4ad9b816e4e409298505103ce.tar.gz"
+      ],
+      "cwd": "/home/codestra-admin/artifacts/internal-calls-20260905/protected-source-34000565825",
+      "umask": "inherited",
+      "started_at_utc": "2026-09-06T00:32:55.829139+00:00",
+      "finished_at_utc": "2026-09-06T00:32:56.200716+00:00",
+      "exit_code": 0,
+      "result": "PASS",
+      "output": "archive-signature.txt",
+      "output_sha256": "c25a79c5db5d4597361be6afe1c953fd675d0d3503a016f25f9f78abf5e8443e"
+    },
+    {
+      "name": "provenance-signature",
+      "argv": [
+        "/home/codestra-admin/artifacts/internal-calls-20260905/protected-source-33999730332/cosign",
+        "verify-blob",
+        "--bundle",
+        "source-release-provenance.sigstore.json",
+        "--certificate-identity",
+        "https://github.com/appolon1908-hue/Vicidialer-Codestra/.github/workflows/publish-server-b-source-release.yml@refs/heads/main",
+        "--certificate-oidc-issuer",
+        "https://token.actions.githubusercontent.com",
+        "source-release-provenance.json"
+      ],
+      "cwd": "/home/codestra-admin/artifacts/internal-calls-20260905/protected-source-34000565825",
+      "umask": "inherited",
+      "started_at_utc": "2026-09-06T00:32:56.201504+00:00",
+      "finished_at_utc": "2026-09-06T00:32:56.960308+00:00",
+      "exit_code": 0,
+      "result": "PASS",
+      "output": "provenance-signature.txt",
+      "output_sha256": "c25a79c5db5d4597361be6afe1c953fd675d0d3503a016f25f9f78abf5e8443e"
+    },
+    {
+      "name": "provenance-bindings",
+      "argv": [
+        "/home/codestra-admin/artifacts/internal-calls-20260905/venv/bin/python",
+        "-c",
+        "import json,hashlib\nfrom pathlib import Path\ns=json.loads(Path('source-release-provenance.json').read_text())\nname='codestra-vicidial-adapter-9ac8ef4840f78ba4ad9b816e4e409298505103ce.tar.gz'\nassert s['_type']=='https://in-toto.io/Statement/v1'\nassert s['predicateType']=='https://slsa.dev/provenance/v1'\nassert s['subject']==[{'name':name,'digest':{'sha256':hashlib.sha256(Path(name).read_bytes()).hexdigest()}}]\nd=s['predicate']['buildDefinition']; r=s['predicate']['runDetails']\nassert d['buildType']=='https://github.com/appolon1908-hue/Vicidialer-Codestra/server-b-source-release/v1'\nassert d['externalParameters']=={'source_sha':'9ac8ef4840f78ba4ad9b816e4e409298505103ce','builder_sha':'def0f1822fe54ab2a0800e8d6e083533df88d064'}\nassert d['resolvedDependencies']==[{'uri':'git+https://github.com/appolon1908-hue/Vicidialer-Codestra','digest':{'gitCommit':'9ac8ef4840f78ba4ad9b816e4e409298505103ce'}}]\nassert r['builder']['id']=='appolon1908-hue/Vicidialer-Codestra/.github/workflows/publish-server-b-source-release.yml@refs/heads/main'\nassert r['metadata']['invocationId']=='34000565825/1'\nprint(json.dumps(s,sort_keys=True))"
+      ],
+      "cwd": "/home/codestra-admin/artifacts/internal-calls-20260905/protected-source-34000565825",
+      "umask": "inherited",
+      "started_at_utc": "2026-09-06T00:32:56.961492+00:00",
+      "finished_at_utc": "2026-09-06T00:32:56.984501+00:00",
+      "exit_code": 0,
+      "result": "PASS",
+      "output": "provenance-bindings.txt",
+      "output_sha256": "52a79cd97d653592012c8233c7b819724d22e69c61a764d2d9f7eb5efa9710eb"
+    },
+    {
+      "name": "rebuild-0022",
+      "argv": [
+        "/home/codestra-admin/artifacts/internal-calls-20260905/venv/bin/python",
+        "/home/codestra-admin/artifacts/internal-calls-20260905/audit-builder-def0f182/vicidial/scripts/build_source_release.py",
+        "--source-root",
+        "/home/codestra-admin/artifacts/internal-calls-20260905/publication-repro/fixed/exact-source/vicidial",
+        "--source-sha",
+        "9ac8ef4840f78ba4ad9b816e4e409298505103ce",
+        "--builder-sha",
+        "def0f1822fe54ab2a0800e8d6e083533df88d064",
+        "--output",
+        "/home/codestra-admin/artifacts/internal-calls-20260905/protected-source-34000565825/audited-rebuild/0022/codestra-vicidial-adapter-9ac8ef4840f78ba4ad9b816e4e409298505103ce.tar.gz",
+        "--metadata",
+        "/home/codestra-admin/artifacts/internal-calls-20260905/protected-source-34000565825/audited-rebuild/0022/metadata.json"
+      ],
+      "cwd": "/home/codestra-admin/artifacts/internal-calls-20260905/protected-source-34000565825",
+      "umask": "0o22",
+      "started_at_utc": "2026-09-06T00:32:56.984877+00:00",
+      "finished_at_utc": "2026-09-06T00:32:57.084809+00:00",
+      "exit_code": 0,
+      "result": "PASS",
+      "output": "rebuild-0022.txt",
+      "output_sha256": "f4fa630badad412ca32ff5d6452efce1b8fd850fffe64201230257a6a04a05e6"
+    },
+    {
+      "name": "rebuild-digest-0022",
+      "argv": [
+        "/home/codestra-admin/artifacts/internal-calls-20260905/venv/bin/python",
+        "-c",
+        "import hashlib,sys; d=hashlib.sha256(open(sys.argv[1],'rb').read()).hexdigest(); print(d); assert d==sys.argv[2]",
+        "/home/codestra-admin/artifacts/internal-calls-20260905/protected-source-34000565825/audited-rebuild/0022/codestra-vicidial-adapter-9ac8ef4840f78ba4ad9b816e4e409298505103ce.tar.gz",
+        "5e3d4083dd94297c1085a28953547d5532e07c9685560184047208ca2cf0a252"
+      ],
+      "cwd": "/home/codestra-admin/artifacts/internal-calls-20260905/protected-source-34000565825",
+      "umask": "inherited",
+      "started_at_utc": "2026-09-06T00:32:57.085157+00:00",
+      "finished_at_utc": "2026-09-06T00:32:57.095612+00:00",
+      "exit_code": 0,
+      "result": "PASS",
+      "output": "rebuild-digest-0022.txt",
+      "output_sha256": "83ab098f0a049dcc93cf57400070544da6560099144e8cfc446453eb0c9f58c2"
+    },
+    {
+      "name": "rebuild-0027",
+      "argv": [
+        "/home/codestra-admin/artifacts/internal-calls-20260905/venv/bin/python",
+        "/home/codestra-admin/artifacts/internal-calls-20260905/audit-builder-def0f182/vicidial/scripts/build_source_release.py",
+        "--source-root",
+        "/home/codestra-admin/artifacts/internal-calls-20260905/publication-repro/fixed/exact-source/vicidial",
+        "--source-sha",
+        "9ac8ef4840f78ba4ad9b816e4e409298505103ce",
+        "--builder-sha",
+        "def0f1822fe54ab2a0800e8d6e083533df88d064",
+        "--output",
+        "/home/codestra-admin/artifacts/internal-calls-20260905/protected-source-34000565825/audited-rebuild/0027/codestra-vicidial-adapter-9ac8ef4840f78ba4ad9b816e4e409298505103ce.tar.gz",
+        "--metadata",
+        "/home/codestra-admin/artifacts/internal-calls-20260905/protected-source-34000565825/audited-rebuild/0027/metadata.json"
+      ],
+      "cwd": "/home/codestra-admin/artifacts/internal-calls-20260905/protected-source-34000565825",
+      "umask": "0o27",
+      "started_at_utc": "2026-09-06T00:32:57.095953+00:00",
+      "finished_at_utc": "2026-09-06T00:32:57.195775+00:00",
+      "exit_code": 0,
+      "result": "PASS",
+      "output": "rebuild-0027.txt",
+      "output_sha256": "f4fa630badad412ca32ff5d6452efce1b8fd850fffe64201230257a6a04a05e6"
+    },
+    {
+      "name": "rebuild-digest-0027",
+      "argv": [
+        "/home/codestra-admin/artifacts/internal-calls-20260905/venv/bin/python",
+        "-c",
+        "import hashlib,sys; d=hashlib.sha256(open(sys.argv[1],'rb').read()).hexdigest(); print(d); assert d==sys.argv[2]",
+        "/home/codestra-admin/artifacts/internal-calls-20260905/protected-source-34000565825/audited-rebuild/0027/codestra-vicidial-adapter-9ac8ef4840f78ba4ad9b816e4e409298505103ce.tar.gz",
+        "5e3d4083dd94297c1085a28953547d5532e07c9685560184047208ca2cf0a252"
+      ],
+      "cwd": "/home/codestra-admin/artifacts/internal-calls-20260905/protected-source-34000565825",
+      "umask": "inherited",
+      "started_at_utc": "2026-09-06T00:32:57.196099+00:00",
+      "finished_at_utc": "2026-09-06T00:32:57.206734+00:00",
+      "exit_code": 0,
+      "result": "PASS",
+      "output": "rebuild-digest-0027.txt",
+      "output_sha256": "83ab098f0a049dcc93cf57400070544da6560099144e8cfc446453eb0c9f58c2"
+    },
+    {
+      "name": "rebuild-0077",
+      "argv": [
+        "/home/codestra-admin/artifacts/internal-calls-20260905/venv/bin/python",
+        "/home/codestra-admin/artifacts/internal-calls-20260905/audit-builder-def0f182/vicidial/scripts/build_source_release.py",
+        "--source-root",
+        "/home/codestra-admin/artifacts/internal-calls-20260905/publication-repro/fixed/exact-source/vicidial",
+        "--source-sha",
+        "9ac8ef4840f78ba4ad9b816e4e409298505103ce",
+        "--builder-sha",
+        "def0f1822fe54ab2a0800e8d6e083533df88d064",
+        "--output",
+        "/home/codestra-admin/artifacts/internal-calls-20260905/protected-source-34000565825/audited-rebuild/0077/codestra-vicidial-adapter-9ac8ef4840f78ba4ad9b816e4e409298505103ce.tar.gz",
+        "--metadata",
+        "/home/codestra-admin/artifacts/internal-calls-20260905/protected-source-34000565825/audited-rebuild/0077/metadata.json"
+      ],
+      "cwd": "/home/codestra-admin/artifacts/internal-calls-20260905/protected-source-34000565825",
+      "umask": "0o77",
+      "started_at_utc": "2026-09-06T00:32:57.207129+00:00",
+      "finished_at_utc": "2026-09-06T00:32:57.306027+00:00",
+      "exit_code": 0,
+      "result": "PASS",
+      "output": "rebuild-0077.txt",
+      "output_sha256": "f4fa630badad412ca32ff5d6452efce1b8fd850fffe64201230257a6a04a05e6"
+    },
+    {
+      "name": "rebuild-digest-0077",
+      "argv": [
+        "/home/codestra-admin/artifacts/internal-calls-20260905/venv/bin/python",
+        "-c",
+        "import hashlib,sys; d=hashlib.sha256(open(sys.argv[1],'rb').read()).hexdigest(); print(d); assert d==sys.argv[2]",
+        "/home/codestra-admin/artifacts/internal-calls-20260905/protected-source-34000565825/audited-rebuild/0077/codestra-vicidial-adapter-9ac8ef4840f78ba4ad9b816e4e409298505103ce.tar.gz",
+        "5e3d4083dd94297c1085a28953547d5532e07c9685560184047208ca2cf0a252"
+      ],
+      "cwd": "/home/codestra-admin/artifacts/internal-calls-20260905/protected-source-34000565825",
+      "umask": "inherited",
+      "started_at_utc": "2026-09-06T00:32:57.306257+00:00",
+      "finished_at_utc": "2026-09-06T00:32:57.317076+00:00",
+      "exit_code": 0,
+      "result": "PASS",
+      "output": "rebuild-digest-0077.txt",
+      "output_sha256": "83ab098f0a049dcc93cf57400070544da6560099144e8cfc446453eb0c9f58c2"
+    }
+  ],
+  "completed_at_utc": "2026-09-06T00:32:57.317261+00:00"
+}
