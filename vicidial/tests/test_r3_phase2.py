@@ -265,7 +265,7 @@ def test_version_ready_and_openapi_contract(
                     "x-codestra-required-scope"
                 ].startswith("telephony:")
 
-    assert len(protected) == 15
+    assert len(protected) == 20
     for public_path in ("/health", "/ready", "/version"):
         operation = schema["paths"][public_path]["get"]
         assert not operation.get("security")
@@ -345,6 +345,16 @@ def test_operational_document_validation() -> None:
                "reconciliation_policy_verified": True},
         version=version, expected_sha=SHA,
         deployment_profile="production-reconciliation",
+    )
+    module.validate_documents(
+        health={"status": "live"},
+        ready={"status": "ready", "writes_enabled": False,
+               "release_verified": True,
+               "deployment_profile": "production-internal-test",
+               "internal_test_calling": True,
+               "checks": {"internal_call_policy": True}},
+        version=version, expected_sha=SHA,
+        deployment_profile="production-internal-test",
     )
 
 

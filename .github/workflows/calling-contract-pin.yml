@@ -1,0 +1,148 @@
+name: calling-contract-pin
+
+on:
+  pull_request:
+    paths:
+      - ".codestra/calling-contract.lock.json"
+      - ".github/workflows/calling-contract-pin.yml"
+  push:
+    branches: ["main"]
+    paths:
+      - ".codestra/calling-contract.lock.json"
+      - ".github/workflows/calling-contract-pin.yml"
+
+permissions:
+  contents: read
+
+defaults:
+  run:
+    shell: bash
+
+env:
+  CONTRACT_DIGEST: b39cdffe56a8185c91174228f0423df68b1137f34875f6ee52f9914f904bf724
+  CONTRACT_AUTHORITY: appolon1908-hue/codestra-production-platform#257
+  CONTRACT_ROLE: vicidial_adapter
+
+jobs:
+  verify-head:
+    runs-on: ubuntu-24.04
+    env:
+      EXPECTED_SHA: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.sha || github.sha }}
+    steps:
+      - name: Check out exact reviewed source
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          ref: ${{ env.EXPECTED_SHA }}
+          fetch-depth: 1
+          persist-credentials: false
+      - name: Validate exact fail-closed lock
+        run: |
+          set -Eeuo pipefail
+          test "$(git rev-parse HEAD)" = "${EXPECTED_SHA}"
+          test -z "$(git status --porcelain --untracked-files=all)"
+          python3 - <<'PY'
+          import json
+          import os
+          from pathlib import Path
+
+          def reject_duplicates(pairs):
+              result = {}
+              for key, value in pairs:
+                  if key in result:
+                      raise ValueError(f"duplicate JSON field: {key}")
+                  result[key] = value
+              return result
+
+          expected = {
+              "schema_version": "codestra.calling-contract-lock.v1",
+              "version": "1.0.0",
+              "sha256": os.environ["CONTRACT_DIGEST"],
+              "authority": os.environ["CONTRACT_AUTHORITY"],
+              "role": os.environ["CONTRACT_ROLE"],
+              "external_effects_enabled": False,
+          }
+          raw = Path(".codestra/calling-contract.lock.json").read_text(encoding="utf-8")
+          actual = json.loads(raw, object_pairs_hook=reject_duplicates)
+          if actual != expected:
+              raise SystemExit(f"calling contract lock mismatch: {actual!r}")
+          for sample in (
+              '{"sha256":"wrong","sha256":"b39cdffe56a8185c91174228f0423df68b1137f34875f6ee52f9914f904bf724"}',
+              '{"external_effects_enabled":true,"external_effects_enabled":false}',
+              '{"authority":"wrong","authority":"appolon1908-hue/codestra-production-platform#257"}',
+          ):
+              try:
+                  json.loads(sample, object_pairs_hook=reject_duplicates)
+              except ValueError:
+                  continue
+              raise SystemExit("duplicate-key fixture was accepted")
+          print("CALLING_CONTRACT_HEAD=PASS")
+          print("PRODUCTION_DIALING=DISABLED")
+          print("EXTERNAL_EFFECTS_ENABLED=false")
+          PY
+          git diff --check
+
+  verify-merge-result:
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-24.04
+    env:
+      EXPECTED_SHA: ${{ github.sha }}
+    steps:
+      - name: Check out synthetic merge result
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          ref: ${{ env.EXPECTED_SHA }}
+          fetch-depth: 1
+          persist-credentials: false
+      - name: Validate merge-result lock
+        run: |
+          set -Eeuo pipefail
+          test "$(git rev-parse HEAD)" = "${EXPECTED_SHA}"
+          python3 - <<'PY'
+          import json
+          import os
+          from pathlib import Path
+
+          def reject_duplicates(pairs):
+              result = {}
+              for key, value in pairs:
+                  if key in result:
+                      raise ValueError(f"duplicate JSON field: {key}")
+                  result[key] = value
+              return result
+
+          expected = {
+              "schema_version": "codestra.calling-contract-lock.v1",
+              "version": "1.0.0",
+              "sha256": os.environ["CONTRACT_DIGEST"],
+              "authority": os.environ["CONTRACT_AUTHORITY"],
+              "role": os.environ["CONTRACT_ROLE"],
+              "external_effects_enabled": False,
+          }
+          actual = json.loads(
+              Path(".codestra/calling-contract.lock.json").read_text(encoding="utf-8"),
+              object_pairs_hook=reject_duplicates,
+          )
+          if actual != expected:
+              raise SystemExit("calling contract merge-result mismatch")
+          print("CALLING_CONTRACT_MERGE_RESULT=PASS")
+          PY
+          git diff --check
+
+  verify:
+    if: always()
+    needs: [verify-head, verify-merge-result]
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Require all applicable validation jobs
+        env:
+          HEAD_RESULT: ${{ needs.verify-head.result }}
+          MERGE_RESULT: ${{ needs.verify-merge-result.result }}
+          EVENT_NAME: ${{ github.event_name }}
+        run: |
+          set -Eeuo pipefail
+          test "${HEAD_RESULT}" = success
+          if [[ "${EVENT_NAME}" == pull_request ]]; then
+            test "${MERGE_RESULT}" = success
+          else
+            test "${MERGE_RESULT}" = skipped
+          fi

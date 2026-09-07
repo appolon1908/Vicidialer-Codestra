@@ -104,10 +104,18 @@ def test_installed_layout_manifest_is_flattened_and_tamper_evident(tmp_path: Pat
     assert "INSTALLED_MANIFEST.json" in unit
 
 
-def test_host_release_builder_is_ci_enforced() -> None:
+def test_installed_layout_builder_is_ci_enforced_but_not_uploaded() -> None:
     workflow = (ROOT / ".github/workflows/vicidial-adapter-container.yml").read_text()
+    builder = (VICIDIAL / "scripts/build_host_release.py").read_text()
+    verifier = (VICIDIAL / "scripts/verify_installed_manifest.py").read_text()
     assert "build_host_release.py" in workflow
-    assert "vicidial-host-release.tar.gz" in workflow
+    assert "Verify deterministic installed-layout contract" in workflow
+    assert "sole production deployable" in workflow
+    assert "vicidial-host-release.tar.gz" not in workflow
+    assert "PYTHONDONTWRITEBYTECODE" in builder
+    assert '"--copies"' in builder
+    assert "generate_build_info.py" in builder
+    assert "sys.dont_write_bytecode = True" in verifier
 
 
 def test_oci_export_is_from_tested_build_and_verified() -> None:

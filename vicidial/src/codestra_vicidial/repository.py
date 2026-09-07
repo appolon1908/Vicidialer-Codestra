@@ -79,7 +79,9 @@ class Repository(Protocol):
     def disable_campaign_resources(self, spec: CampaignSpec) -> None: ...
     def disable_campaign(self, actual_id: str) -> None: ...
     def agent(self, user_id: str) -> dict | None: ...
+    def agent_availability(self, user_id: str, extension: str) -> dict: ...
     def sync_agent_disabled(self, spec: AgentSpec) -> dict: ...
+    def provision_agent_disabled(self, spec: AgentSpec, credential: str) -> dict: ...
     def disable_agent(self, user_id: str) -> dict: ...
     def lead_by_external_id(self, external_id: str) -> dict | None: ...
     def publish_lead(self, spec: LeadSpec) -> dict: ...
@@ -109,6 +111,7 @@ class MemoryRepository:
         self.scripts: dict[str, dict] = {}
         self.dispositions: dict[tuple[str, str], dict] = {}
         self.agents: dict[str, dict] = {}
+        self.phones: dict[str, dict] = {}
         self.leads: dict[int, dict] = {}
         self.callbacks: dict[int, dict] = {}
 
@@ -307,11 +310,39 @@ class MemoryRepository:
     def agent(self, user_id: str) -> dict | None:
         return deepcopy(self.agents.get(user_id))
 
+    def agent_availability(self, user_id: str, extension: str) -> dict:
+        return {
+            "username": user_id, "extension": extension,
+            "username_available": user_id not in self.agents,
+            "extension_available": extension not in self.phones,
+            "user_identifier": user_id if user_id in self.agents else None,
+            "phone_identifier": extension if extension in self.phones else None,
+        }
+
     def sync_agent_disabled(self, spec: AgentSpec) -> dict:
         desired = spec.model_dump(mode="json") | {"active": False}
         desired.pop("adopt_existing_sha256", None)
         self.agents[spec.user_id] = desired
         return deepcopy(desired)
+
+    def provision_agent_disabled(self, spec: AgentSpec, credential: str) -> dict:
+        if spec.user_id in self.agents:
+            raise CollisionError("agent identifier already exists")
+        extension = getattr(spec, "extension", None)
+        if extension in self.phones:
+            raise CollisionError("extension identifier already exists")
+        agents_before, phones_before = deepcopy(self.agents), deepcopy(self.phones)
+        try:
+            self.sync_agent_disabled(spec)
+            self.agents[spec.user_id]["user_level"] = 8
+            self.agents[spec.user_id]["extension"] = extension
+            self.phones[extension] = {
+                "extension": extension, "user_id": spec.user_id, "active": False,
+            }
+            return deepcopy(self.agents[spec.user_id])
+        except Exception:
+            self.agents, self.phones = agents_before, phones_before
+            raise
 
     def disable_agent(self, user_id: str) -> dict:
         if user_id not in self.agents:
@@ -369,6 +400,38 @@ class MySQLRepository:
     def __init__(self, connection):
         self.db = connection
 
+    def readiness(self) -> tuple[bool, str | None]:
+        """Probe and reconnect the exact connection used for requests."""
+        try:
+            ping = getattr(self.db, "ping", None)
+            if not callable(ping):
+                return False, None
+            try:
+                ping(reconnect=True)
+            except TypeError:
+                ping()
+            with self.db.cursor() as cursor:
+                cursor.execute("SELECT DATABASE() AS db_name, 1 AS ok")
+                row = cursor.fetchone()
+                if (
+                    not row
+                    or row.get("db_name") != "asterisk"
+                    or int(row.get("ok", 0)) != 1
+                ):
+                    return False, str(row.get("db_name")) if row else None
+                cursor.execute(
+                    "SELECT COUNT(*) AS table_count FROM information_schema.tables "
+                    "WHERE table_schema=%s AND table_name IN "
+                    "('vicidial_campaigns','vicidial_users','vicidial_list','vicidial_callbacks')",
+                    ("asterisk",),
+                )
+                row = cursor.fetchone()
+                if not row or int(row.get("table_count", 0)) != 4:
+                    return False, "asterisk"
+            return True, "asterisk"
+        except Exception:
+            return False, None
+
     def _one(self, sql: str, args: tuple = ()) -> dict | None:
         with self.db.cursor() as cursor:
             cursor.execute(sql, args)
@@ -387,7 +450,8 @@ class MySQLRepository:
     def campaign(self, actual_id: str) -> dict | None:
         row = self._one(
             "SELECT campaign_id,campaign_name,active,dial_method,local_call_time,"
-            "campaign_recording,scheduled_callbacks,campaign_description "
+            "campaign_recording,scheduled_callbacks,campaign_description,"
+            "hopper_level,auto_dial_level "
             "FROM vicidial_campaigns WHERE campaign_id=%s", (actual_id,))
         if not row:
             return None
@@ -455,10 +519,12 @@ class MySQLRepository:
             "campaign_recording": spec.recording_policy,
             "scheduled_callbacks": "Y" if spec.callback_enabled else "N",
             "campaign_description": description,
+            "hopper_level": 0, "auto_dial_level": "0",
         }
         current = self._one(
             "SELECT campaign_id,campaign_name,active,dial_method,local_call_time,"
-            "campaign_recording,scheduled_callbacks,campaign_description "
+            "campaign_recording,scheduled_callbacks,campaign_description,"
+            "hopper_level,auto_dial_level "
             "FROM vicidial_campaigns WHERE campaign_id=%s", (spec.actual_id,))
         if current:
             fields = tuple(desired_campaign)
@@ -535,14 +601,17 @@ class MySQLRepository:
             "campaign_recording": spec.recording_policy,
             "scheduled_callbacks": "Y" if spec.callback_enabled else "N",
             "campaign_description": description,
+            "hopper_level": 0, "auto_dial_level": "0",
         }
         current = self._one(
             "SELECT campaign_id,campaign_name,active,dial_method,local_call_time,"
-            "campaign_recording,scheduled_callbacks,campaign_description "
+            "campaign_recording,scheduled_callbacks,campaign_description,"
+            "hopper_level,auto_dial_level "
             "FROM vicidial_campaigns WHERE campaign_id=%s", (spec.actual_id,))
         campaign_fields = (
             "campaign_name", "active", "dial_method", "local_call_time",
             "campaign_recording", "scheduled_callbacks", "campaign_description",
+            "hopper_level", "auto_dial_level",
         )
         adopted = False
         legacy_update = False
@@ -617,13 +686,27 @@ class MySQLRepository:
                 ("status_name", "selectable", "human_answered", "category"), item.code,
             )
         if legacy_update:
-            self._execute(
+            affected = self._execute(
                 "UPDATE vicidial_campaigns SET campaign_name=%s,active='N',dial_method=%s,"
                 "local_call_time=%s,campaign_recording=%s,scheduled_callbacks=%s,"
-                "campaign_description=%s,hopper_level=0,auto_dial_level='0' WHERE campaign_id=%s",
+                "campaign_description=%s,hopper_level=0,auto_dial_level='0' "
+                "WHERE campaign_id=%s AND campaign_name<=>%s AND active='N' "
+                "AND dial_method<=>%s AND local_call_time<=>%s "
+                "AND campaign_recording<=>%s AND scheduled_callbacks<=>%s "
+                "AND campaign_description<=>%s "
+                "AND hopper_level<=>%s AND auto_dial_level<=>%s",
                 (spec.name, spec.dial_method, spec.call_time, spec.recording_policy,
-                 desired_campaign["scheduled_callbacks"], description, spec.actual_id),
+                 desired_campaign["scheduled_callbacks"], description, spec.actual_id,
+                 current.get("campaign_name"), current.get("dial_method"),
+                 current.get("local_call_time"), current.get("campaign_recording"),
+                 current.get("scheduled_callbacks"),
+                 current.get("campaign_description"), current.get("hopper_level"),
+                 current.get("auto_dial_level")),
             )
+            if affected != 1:
+                raise CollisionError(
+                    f"campaign adoption proof became stale: {spec.actual_id}"
+                )
         elif not adopted:
             self._execute(
                 "INSERT INTO vicidial_campaigns"
@@ -751,7 +834,7 @@ class MySQLRepository:
 
     def _agent(self, user_id: str) -> dict | None:
         row = self._one(
-            "SELECT u.user AS user_id,u.full_name,u.user_group,u.active,"
+            "SELECT u.user AS user_id,u.full_name,u.user_level,u.user_group,u.active,"
             "u.closer_campaigns,g.allowed_campaigns FROM vicidial_users u "
             "JOIN vicidial_user_groups g ON g.user_group=u.user_group "
             "WHERE u.user=%s",
@@ -762,8 +845,36 @@ class MySQLRepository:
         row["inbound_groups"] = normalize_allowed_campaigns(row.pop("closer_campaigns"))
         return row
 
+    def internal_call_identity_ready(self) -> bool:
+        """Read-only exact activation/binding check for the internal echo lane."""
+        # End the prior read transaction so repeated calls see current kill/identity state.
+        self.db.rollback()
+        user = self._agent("appolon")
+        phone = self._one(
+            "SELECT p.extension,p.active,p.dialplan_number FROM phones p "
+            "JOIN vicidial_users u ON u.phone_login=p.login "
+            "WHERE u.user=%s AND p.login=%s AND p.extension=%s",
+            ("appolon", "6901", "6901"),
+        )
+        campaign = self._one("SELECT active FROM vicidial_campaigns WHERE campaign_id=%s", ("TEST_SYN",))
+        return bool(user and user["active"] == "Y" and str(user["user_level"]) == "8"
+                    and user["user_group"] == "WEBTEST_SYN" and user["campaigns"] == ["TEST_SYN"]
+                    and phone and phone["active"] == "Y" and phone["dialplan_number"] == "6901"
+                    and campaign and campaign["active"] == "Y")
+
     def agent(self, user_id: str) -> dict | None:
         return self._agent(user_id)
+
+    def agent_availability(self, user_id: str, extension: str) -> dict:
+        user = self._one("SELECT user FROM vicidial_users WHERE user=%s", (user_id,))
+        phone = self._one("SELECT extension FROM phones WHERE extension=%s OR login=%s", (extension, extension))
+        return {
+            "username": user_id, "extension": extension,
+            "username_available": user is None,
+            "extension_available": phone is None,
+            "user_identifier": user and user["user"],
+            "phone_identifier": phone and phone["extension"],
+        }
 
     def _agent_disable_view(self, user_id: str) -> dict | None:
         """Read only fields needed to prove disablement, without parsing legacy ACLs."""
@@ -811,6 +922,74 @@ class MySQLRepository:
                 self.release_agent_adoption_lock()
             raise
         return self.agent(spec.user_id) or {}
+
+    def _require_transactional_agent_tables(self) -> None:
+        """Reject multi-table creation unless both tables support rollback."""
+        rows = self._all(
+            "SELECT table_name,engine FROM information_schema.tables "
+            "WHERE table_schema=DATABASE() AND table_name IN (%s,%s)",
+            ("vicidial_users", "phones"),
+        )
+        engines = {
+            str(row.get("table_name")): str(row.get("engine", "")).upper()
+            for row in rows
+        }
+        if engines != {"vicidial_users": "INNODB", "phones": "INNODB"}:
+            raise RuntimeError(
+                "agent provisioning requires transactional InnoDB "
+                "vicidial_users and phones tables"
+            )
+
+    def provision_agent_disabled(self, spec: AgentSpec, credential: str) -> dict:
+        """Create one disabled user through a fixed, parameterized DB operation.
+
+        The generated bootstrap password is intentionally neither returned nor logged.
+        A separately governed activation/credential rotation workflow must replace it.
+        """
+        self._require_transactional_agent_tables()
+        availability = self.agent_availability(spec.user_id, spec.extension)
+        if not availability["username_available"]:
+            raise CollisionError("agent identifier already exists")
+        if not availability["extension_available"]:
+            raise CollisionError("extension identifier already exists")
+        group = self._one(
+            "SELECT user_group,allowed_campaigns FROM vicidial_user_groups "
+            "WHERE user_group=%s", (spec.user_group,)
+        )
+        if group is None:
+            raise CollisionError("approved user group is missing")
+        allowed = set(normalize_allowed_campaigns(group["allowed_campaigns"]))
+        if not set(spec.campaigns).issubset(allowed):
+            raise CollisionError("approved campaigns are absent from user group")
+        try:
+            self._execute(
+                "INSERT INTO vicidial_users "
+                "(user,pass,full_name,user_level,user_group,active,closer_campaigns) "
+                "VALUES (%s,%s,%s,%s,%s,'N',%s)",
+                (spec.user_id, credential, spec.full_name, 8, spec.user_group,
+                 format_allowed_campaigns(spec.inbound_groups)),
+            )
+            self._execute(
+                "INSERT INTO phones "
+                "(extension,dialplan_number,voicemail_id,server_ip,login,pass,status,active,"
+                "phone_type,fullname,company,protocol,local_gmt) "
+                "VALUES (%s,%s,%s,'127.0.0.1',%s,%s,'ACTIVE','N','SIP',%s,'Appolon','SIP','-4.00')",
+                (spec.extension, spec.extension, spec.extension, spec.extension,
+                 credential, spec.full_name),
+            )
+            actual = self.agent(spec.user_id)
+            phone = self._one(
+                "SELECT extension,active FROM phones WHERE extension=%s AND login=%s",
+                (spec.extension, spec.extension),
+            )
+            if actual is None or actual.get("active") != "N" or phone is None or phone.get("active") != "N":
+                raise RuntimeError("disabled agent creation read-back failed")
+            actual["extension"] = phone["extension"]
+            self.db.commit()
+        except Exception:
+            self.db.rollback()
+            raise
+        return actual
 
     def release_agent_adoption_lock(self) -> None:
         self._execute("UNLOCK TABLES")

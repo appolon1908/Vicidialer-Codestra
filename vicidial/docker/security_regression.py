@@ -59,7 +59,7 @@ def main() -> None:
     _expect_cookie_error(restored.js_output)
 
     packages = {}
-    for package in ("libcrypto3", "libssl3"):
+    for package in ("libcrypto3", "libssl3", "libuuid"):
         output = subprocess.check_output(["apk", "list", "--installed", package],
                                          text=True, stderr=subprocess.DEVNULL)
         packages[package] = output.split()[0].removeprefix(package + "-")

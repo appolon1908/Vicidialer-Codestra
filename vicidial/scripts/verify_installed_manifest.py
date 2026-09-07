@@ -1,8 +1,14 @@
 #!/usr/bin/env python3.11
-"""Verify the complete deterministic flattened host release manifest."""
+"""Verify the complete deterministic flattened installed-layout manifest."""
 from __future__ import annotations
-import argparse, json
+
+import argparse
+import json
+import sys
 from pathlib import Path
+
+sys.dont_write_bytecode = True
+
 from generate_installed_manifest import build
 
 
@@ -17,7 +23,7 @@ def main() -> int:
                      document.get("generated_at", ""))
     canonical = (json.dumps(expected, sort_keys=True,
                             separators=(",", ":")) + "\n").encode()
-    if raw != canonical:
+    if raw != canonical or document != expected:
         raise ValueError("installed release manifest mismatch")
     print(f"INSTALLED_RELEASE_MANIFEST=VERIFIED files={len(expected['files'])}")
     return 0

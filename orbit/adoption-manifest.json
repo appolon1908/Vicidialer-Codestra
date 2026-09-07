@@ -1,0 +1,28 @@
+{
+  "schemaVersion": "2.0.0",
+  "repository": "appolon1908-hue/Vicidialer-Codestra",
+  "classification": "vendor-operator-ui",
+  "targetBranch": "codex/codestra-orbit-v2-vicidialer-codestra",
+  "adoptionMode": "operator-theme-sso",
+  "domain": null,
+  "domainStatus": "pending-registration",
+  "requirements": {
+    "identitySSO": true,
+    "session": true,
+    "logout": true,
+    "logoutAll": true,
+    "browserTokenStorageProhibited": true,
+    "supportedTheme": true,
+    "sharedHeaderFooter": false,
+    "domainRegistry": true,
+    "operatorAccess": true,
+    "audit": true,
+    "rollback": true
+  },
+  "status": "branch-created",
+  "blockers": [
+    "Use the approved Codestra identity, token, color, and operator-theme contracts after SDK-repository pull request 75 is protected-merged.",
+    "Apply branding and identity through supported VICIdial templates, skins, and gateway controls without modifying telephony behavior or maintaining an unsafe vendor fork.",
+    "Register the operator hostname and verify redirect allowlists, campaign-scoped access, login and logout, upgrades, monitoring, recording privacy, and rollback evidence before promotion."
+  ]
+}

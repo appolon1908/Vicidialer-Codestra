@@ -38,27 +38,88 @@ def environment(tmp_path, deployment):
         "campaigns": campaigns,
     }))
     policy.chmod(0o600)
-    return {
+    db_secret = tmp_path / "vicidial-db.json"
+    db_secret.write_text(json.dumps({
+        "host": "127.0.0.1",
+        "user": "codestra_adapter",
+        "password": "synthetic-test-only",
+        "database": "asterisk",
+    }))
+    db_secret.chmod(0o600)
+    call_policy = tmp_path / "internal-call-policy.json"
+    if call_policy.exists():
+        call_policy.chmod(0o600)
+    call_policy.write_text(json.dumps({
+        "schema_version": "1.0", "release_sha": source_sha,
+        "authorization_reference": "CHG-APPOLON-INTERNAL-0001",
+        "expires_at": "2099-09-05T20:00:00Z", "tenant_id": "tenant-test",
+        "subject": "subject-appolon", "employee_id": "employee-appolon",
+        "username": "appolon", "extension": "6901", "campaign": "TEST_SYN",
+        "destination_alias": "internal:TEST_ECHO", "destination_extension": "6000",
+        "dialplan_context": "codestra-internal-test", "internal_only": True,
+        "external_dialing": False, "recording": False, "max_calls": 1,
+        "route_sha256": "a" * 64,
+    }))
+    call_policy.chmod(0o400)
+    lifecycle = tmp_path / "ami-events.sqlite3"
+    from codestra_vicidial.ami_gateway import LifecycleStore
+    LifecycleStore(lifecycle)
+    ami_credential = tmp_path / "ami.json"
+    if ami_credential.exists():
+        ami_credential.chmod(0o600)
+    ami_credential.write_text(json.dumps({
+        "host": "127.0.0.1", "port": 5038, "username": "synthetic",
+        "secret": "synthetic-private-value",
+    }))
+    ami_credential.chmod(0o400)
+    mysql_profile = deployment in {
+        "production-candidate", "production-reconciliation", "production-internal-test",
+    }
+    env = {
         **os.environ,
         "CODESTRA_ADAPTER_DEPLOYMENT": deployment,
-        "CODESTRA_ADAPTER_BACKEND": "mysql" if deployment == "production-reconciliation" else "memory",
+        "CODESTRA_ADAPTER_BACKEND": "mysql" if mysql_profile else "memory",
         "ENABLE_VICIDIAL_WRITES": "true" if deployment == "production-reconciliation" else "false",
         "ENABLE_PROVISIONING": "true" if deployment == "production-reconciliation" else "false",
         "OWNER_FULL_AUTONOMY": "YES" if deployment == "production-reconciliation" else "NO",
-        "ENABLE_AGENT_SYNC": "false", "ENABLE_LEAD_PUBLICATION": "false",
-        "ENABLE_IVR_CALLBACKS": "false", "ENABLE_WARM_TRANSFER": "false",
+        "ENABLE_AGENT_SYNC": "false",
+        "ENABLE_LEAD_PUBLICATION": "false",
+        "ENABLE_LIVE_CALL_CONTROL": "false",
+        "ENABLE_WARM_TRANSFER": "false",
+        "ENABLE_IVR_ROUTING": "false",
+        "ENABLE_IVR_CALLBACKS": "false",
         "ENABLE_PRODUCTION_DIALING": "false",
+        "ENABLE_SMS_DELIVERY": "false",
+        "ENABLE_EMAIL_DELIVERY": "false",
+        "ENABLE_EXTERNAL_DELIVERY": "false",
+        "ENABLE_AI_ACTIONS": "false",
         "AUTHORIZED_APPLICATION_SERVER_IP": "65.109.65.169",
         "AUTHORIZED_PRIVATE_SOURCE_IP": "10.40.0.1",
         "MIDDLEWARE_BASE_URL": "https://api.codestra.co",
         "KEYCLOAK_ISSUER_URL": "https://auth.codestra.co/realms/codestra",
         "CODESTRA_ADAPTER_HMAC_FILE": str(secret),
+        "CODESTRA_VICIDIAL_DB_FILE": str(db_secret),
         "CODESTRA_RECONCILIATION_POLICY_FILE": str(policy),
+        "CODESTRA_INTERNAL_CALL_POLICY_FILE": str(call_policy),
+        "CODESTRA_AMI_LIFECYCLE_STATE": str(lifecycle),
+        "CODESTRA_AMI_CREDENTIAL_FILE": str(ami_credential),
+        "ENABLE_INTERNAL_TEST_CALLING": (
+            "true" if deployment == "production-internal-test" else "false"
+        ),
         "CODESTRA_RELEASE_METADATA_REQUIRED": (
-            "true" if deployment == "production-reconciliation" else "false"
+            "true" if deployment in {
+                "production-reconciliation", "production-internal-test",
+            } else "false"
         ),
         "CODESTRA_BUILD_INFO_FILE": str(build_info),
     }
+    for legacy in (
+        "ENABLE_CALLBACK_WRITES",
+        "ENABLE_TRANSFER_POLICY_SYNC",
+        "ENABLE_PSTN_DIALING",
+    ):
+        env.pop(legacy, None)
+    return env
 
 
 def run(env):
@@ -72,10 +133,6 @@ def run(env):
 
 def test_production_reconciliation_profile_is_bounded(tmp_path):
     env = environment(tmp_path, "production-reconciliation")
-    # The production validator intentionally requires a root-owned policy.
-    # CI runs unprivileged; construction/semantic success is covered by the
-    # reconciliation-policy unit suite, while this subprocess must fail closed
-    # on ownership when it cannot create the production ownership boundary.
     result = run(env)
     if os.getuid() == 0:
         assert result.returncode == 0
@@ -107,6 +164,115 @@ def test_staging_profile_stays_read_only(tmp_path):
     assert run(env).returncode == 0
     env["ENABLE_VICIDIAL_WRITES"] = "true"
     assert run(env).returncode != 0
+
+
+def test_production_candidate_requires_mysql_but_keeps_writes_off(tmp_path):
+    env = environment(tmp_path, "production-candidate")
+    assert run(env).returncode == 0
+    env["CODESTRA_ADAPTER_BACKEND"] = "memory"
+    assert run(env).returncode != 0
+
+
+def test_production_internal_test_requires_exact_policy_and_lifecycle(tmp_path):
+    env = environment(tmp_path, "production-internal-test")
+    result = run(env)
+    assert result.returncode == 0
+    env["ENABLE_INTERNAL_TEST_CALLING"] = "false"
+    assert run(env).returncode != 0
+
+
+def test_internal_profile_rejects_each_consumed_lifecycle_column_gap(tmp_path):
+    for column in (
+        "extension", "binding_json", "call_id", "answered", "updated_at",
+    ):
+        case = tmp_path / column
+        case.mkdir()
+        env = environment(case, "production-internal-test")
+        lifecycle = Path(env["CODESTRA_AMI_LIFECYCLE_STATE"])
+        with __import__("sqlite3").connect(lifecycle) as db:
+            definitions = {
+                "call_key": "TEXT PRIMARY KEY", "linkedid": "TEXT",
+                "extension": "TEXT", "call_id": "TEXT", "binding_json": "TEXT",
+                "asterisk_uniqueid": "TEXT", "state": "TEXT", "answered": "INTEGER",
+                "terminal": "INTEGER", "created_at": "TEXT", "answered_at": "TEXT",
+                "ended_at": "TEXT", "updated_at": "TEXT",
+            }
+            db.execute("DROP TABLE calls")
+            schema = ",".join(
+                f"{name} {kind}" for name, kind in definitions.items()
+                if name != column
+            )
+            db.execute(f"CREATE TABLE calls ({schema})")
+        from codestra_vicidial.internal_calling import (
+            InternalCallError, validate_lifecycle_schema,
+        )
+        try:
+            validate_lifecycle_schema(lifecycle)
+        except InternalCallError:
+            pass
+        else:
+            raise AssertionError(f"missing consumed column {column} was accepted")
+        result = run(env)
+        assert result.returncode != 0
+        if os.getuid() == 0:
+            assert b"lifecycle database schema invalid" in result.stderr
+
+
+def test_internal_profile_rejects_unencodable_ami_identity(tmp_path):
+    for index, value in enumerate(("bad\nidentity", "x" * 257, "bad\ud800identity")):
+        case = tmp_path / str(index)
+        case.mkdir()
+        env = environment(case, "production-internal-test")
+        credential = Path(env["CODESTRA_AMI_CREDENTIAL_FILE"])
+        credential.chmod(0o600)
+        document = json.loads(credential.read_text())
+        document["username"] = value
+        credential.write_text(json.dumps(document))
+        credential.chmod(0o400)
+        result = run(env)
+        assert result.returncode != 0
+        assert b"AMI credential is unavailable or invalid" in result.stderr
+    env = environment(tmp_path, "production-internal-test")
+    Path(env["CODESTRA_AMI_LIFECYCLE_STATE"]).unlink()
+    assert run(env).returncode != 0
+    env = environment(tmp_path, "production-internal-test")
+    lifecycle = Path(env["CODESTRA_AMI_LIFECYCLE_STATE"])
+    lifecycle.unlink()
+    lifecycle.touch(mode=0o600)
+    assert run(env).returncode != 0
+    env = environment(tmp_path, "production-internal-test")
+    credential = Path(env["CODESTRA_AMI_CREDENTIAL_FILE"])
+    credential.chmod(0o600)
+    credential.write_text(json.dumps({"host": "127.0.0.1", "port": 5038}))
+    credential.chmod(0o400)
+    assert run(env).returncode != 0
+    env = environment(tmp_path, "production-candidate")
+    env["ENABLE_PROVISIONING"] = "true"
+    assert run(env).returncode != 0
+
+
+def test_mysql_profiles_reject_remote_database_host(tmp_path):
+    env = environment(tmp_path, "production-candidate")
+    path = Path(env["CODESTRA_VICIDIAL_DB_FILE"])
+    document = json.loads(path.read_text())
+    document["host"] = "10.40.0.2"
+    path.write_text(json.dumps(document))
+    result = run(env)
+    assert result.returncode != 0
+    assert b"loopback-only" in result.stderr
+
+
+def test_deprecated_feature_flag_aliases_are_denied(tmp_path):
+    for legacy in (
+        "ENABLE_CALLBACK_WRITES",
+        "ENABLE_TRANSFER_POLICY_SYNC",
+        "ENABLE_PSTN_DIALING",
+    ):
+        env = environment(tmp_path, "staging-read-only")
+        env[legacy] = "false"
+        result = run(env)
+        assert result.returncode != 0
+        assert b"deprecated feature flag" in result.stderr
 
 
 def test_deprecated_or_incomplete_keycloak_issuer_is_denied(tmp_path):

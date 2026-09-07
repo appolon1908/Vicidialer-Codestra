@@ -1,9 +1,13 @@
 name: VICIdial restricted adapter container
 
+# The deterministic installed layout is the sole production deployable.
+
 on:
   pull_request:
     paths:
       - "campaign_provisioning/**"
+      - "scripts/**"
+      - "tests/**"
       - "vicidial/**"
       - "deploy/vicidial-restricted-adapter/**"
       - ".github/workflows/vicidial-adapter-container.yml"
@@ -49,20 +53,63 @@ jobs:
           export CODESTRA_ADAPTER_HMAC_SECRET_FILE="${RUNNER_TEMP}/adapter-hmac"
           export CODESTRA_VICIDIAL_DB_SECRET_FILE="${RUNNER_TEMP}/vicidial-db.json"
           export VICIDIAL_DB_SOCKET_DIR="${RUNNER_TEMP}/mysqld"
+          export CODESTRA_AGENT_PROVISIONING_POLICY_SECRET_FILE="${RUNNER_TEMP}/agent-policy.json"
+          export CODESTRA_AGENT_PROVISIONING_BACKUP_DIR="${RUNNER_TEMP}/backup"
+          export CODESTRA_SECRET_AUTHORITY_SOCKET="${RUNNER_TEMP}/authority.sock"
+          touch "${CODESTRA_AGENT_PROVISIONING_POLICY_SECRET_FILE}"
+          mkdir -p "${CODESTRA_AGENT_PROVISIONING_BACKUP_DIR}"
           docker compose -f vicidial/docker/compose.shadow.yml config --quiet
           docker compose -f vicidial/docker/compose.production.yml config --quiet
+          docker compose -f vicidial/docker/compose.production.yml -f vicidial/docker/compose.agent-provisioning.yml config --quiet
       - uses: actions/setup-python@v5
         with:
           python-version: "3.11"
       - name: Install locked runtime and bounded test dependencies
         run: |
           python -m pip install --requirement vicidial/docker/requirements.lock
-          python -m pip install "httpx2==2.12.0" "pytest>=8,<10" "PyYAML>=6,<7"
+          python -m pip install \
+            "httpx2==2.12.0" \
+            "pytest>=8,<10" \
+            "PyYAML>=6,<7" \
+            "requests>=2.32,<3"
       - name: Prove TestClient uses httpx2 without classic httpx
         run: |
           test -z "$(python -m pip show httpx 2>/dev/null)"
           PYTHONPATH=vicidial/src python -m pytest -q \
             vicidial/tests/test_httpx2_testclient.py
+      - name: Prove user and phone rollback on isolated MariaDB
+        env:
+          VICIDIAL_TEST_MYSQL_PASSWORD: synthetic-ci-only-password
+          VICIDIAL_TEST_MYSQL_PORT: "33067"
+        run: |
+          docker run --detach --rm --name vicidial-agent-rollback-db \
+            --publish 127.0.0.1:33067:3306 \
+            --env MARIADB_ROOT_PASSWORD="${VICIDIAL_TEST_MYSQL_PASSWORD}" \
+            --env MARIADB_DATABASE=asterisk \
+            mariadb:11.4@sha256:611a2fcc5fa7c6ceb8644c6f74b25ede004ff6c3a6b38c8f8c23d3bbf6c26430
+          trap 'docker stop vicidial-agent-rollback-db >/dev/null 2>&1 || true' EXIT
+          for attempt in $(seq 1 60); do
+            python - <<'PY' && break
+          import os
+          import pymysql
+          connection = pymysql.connect(
+              host="127.0.0.1",
+              port=int(os.environ["VICIDIAL_TEST_MYSQL_PORT"]),
+              user="root",
+              password=os.environ["VICIDIAL_TEST_MYSQL_PASSWORD"],
+              database="asterisk",
+              connect_timeout=2,
+          )
+          with connection.cursor() as cursor:
+              cursor.execute("SELECT 1")
+              assert cursor.fetchone()[0] == 1
+          connection.close()
+          PY
+            test "$attempt" -lt 60
+            sleep 2
+          done
+          PYTHONPATH=vicidial/src python -m pytest -q \
+            vicidial/tests/test_agent_provisioning_mysql.py
       - name: Run Phase 3 and complete VICIdial suites
         env:
           CODESTRA_ADAPTER_STATE: "${{ runner.temp }}/vicidial-container-test-state.sqlite3"
@@ -70,24 +117,51 @@ jobs:
           mkdir -p evidence/test-results
           PYTHONPATH=vicidial/src python -m pytest -q --junitxml=evidence/test-results/phase3a.xml vicidial/tests/test_phase3a_release_network.py
           PYTHONPATH=vicidial/src python -m pytest -q --junitxml=evidence/test-results/phase3b.xml vicidial/tests/test_phase3b_security.py
-          PYTHONPATH=vicidial/src python -m pytest -q --junitxml=evidence/test-results/phase3c.xml vicidial/tests/test_phase3c_domains.py
-          PYTHONPATH=vicidial/src python -m pytest -q --junitxml=evidence/test-results/phase3d.xml vicidial/tests/test_phase3d_container.py
+          PYTHONPATH=vicidial/src python -m pytest -q --junitxml=evidence/test-results/phase3c.xml vicidial/tests/test_phase3c_domains.py vicidial/tests/test_campaign_adoption_atomicity.py
+          PYTHONPATH=vicidial/src python -m pytest -q --junitxml=evidence/test-results/phase3d.xml vicidial/tests/test_phase3d_container.py vicidial/tests/test_verify_oci_export.py vicidial/tests/test_attestation_value_contracts.py vicidial/tests/test_exact_build_identity.py
           PYTHONPATH=vicidial/src python -m pytest -q --junitxml=evidence/test-results/full.xml vicidial/tests
-      - name: Build and verify manifest-bound host release
+          PYTHONPATH=vicidial/src python -m pytest -q --junitxml=evidence/test-results/root-vicidial.xml tests
+          python -m compileall -q campaign_provisioning scripts vicidial/src vicidial/scripts vicidial/tests tests
+          python -m py_compile \
+            scripts/vicidial_sync.py \
+            scripts/canonical_event_client.py
+      - name: Verify deterministic installed-layout contract
         run: |
-          release_root="${RUNNER_TEMP}/host-release/${SOURCE_SHA}"
+          release_root="${RUNNER_TEMP}/installed-layout/${SOURCE_SHA}"
           python vicidial/scripts/build_host_release.py \
             --source vicidial \
             --output "${release_root}" \
             --source-sha "${SOURCE_SHA}" \
             --generated-at 2026-01-01T00:00:00Z
-          tar -C "${RUNNER_TEMP}/host-release" -czf evidence/vicidial-host-release.tar.gz "${SOURCE_SHA}"
-          sha256sum evidence/vicidial-host-release.tar.gz > evidence/vicidial-host-release.tar.gz.sha256
+          test -s "${release_root}/INSTALLED_MANIFEST.json"
+          "${release_root}/.venv/bin/python" "${release_root}/scripts/verify_installed_manifest.py" \
+            --root "${release_root}" --manifest "${release_root}/INSTALLED_MANIFEST.json"
+          runtime_secret="${RUNNER_TEMP}/installed-layout-hmac"
+          head -c 32 /dev/zero > "${runtime_secret}"
+          chmod 0600 "${runtime_secret}"
+          CODESTRA_RELEASE_METADATA_REQUIRED=true \
+          CODESTRA_RELEASE_MANIFEST_ROOT="${release_root}" \
+          CODESTRA_RELEASE_MANIFEST_FILE="${release_root}/INSTALLED_MANIFEST.json" \
+          CODESTRA_ADAPTER_DEPLOYMENT=staging-read-only \
+          CODESTRA_ADAPTER_BACKEND=memory \
+          ENABLE_VICIDIAL_WRITES=false ENABLE_PROVISIONING=false \
+          ENABLE_AGENT_SYNC=false ENABLE_LEAD_PUBLICATION=false \
+          ENABLE_IVR_CALLBACKS=false ENABLE_WARM_TRANSFER=false \
+          ENABLE_PRODUCTION_DIALING=false \
+          AUTHORIZED_APPLICATION_SERVER_IP=65.109.65.169 \
+          AUTHORIZED_PRIVATE_SOURCE_IP=10.40.0.1 \
+          MIDDLEWARE_BASE_URL=https://api.codestra.co \
+          KEYCLOAK_ISSUER_URL=https://auth.codestra.co/realms/codestra \
+          CODESTRA_ADAPTER_HMAC_FILE="${runtime_secret}" \
+            "${release_root}/.venv/bin/python" "${release_root}/scripts/validate_runtime.py"
       - uses: docker/setup-buildx-action@v3
       - name: Build runnable linux/amd64 review image
         uses: docker/build-push-action@v6
         with:
-          context: .
+          context: "https://github.com/${{ github.repository }}.git#${{ env.SOURCE_SHA }}"
+          github-token: ${{ github.token }}
+          secrets: |
+            GIT_AUTH_TOKEN.github.com=${{ github.token }}
           file: vicidial/docker/Dockerfile
           platforms: linux/amd64
           load: true
@@ -95,19 +169,24 @@ jobs:
           build-args: |
             SOURCE_SHA=${{ env.SOURCE_SHA }}
             BUILD_DATE=2026-01-01T00:00:00Z
+            SOURCE_DATE_EPOCH=1767225600
           sbom: false
           provenance: false
       - name: Export attested linux/amd64 OCI candidate
         uses: docker/build-push-action@v6
         with:
-          context: .
+          context: "https://github.com/${{ github.repository }}.git#${{ env.SOURCE_SHA }}"
+          github-token: ${{ github.token }}
+          secrets: |
+            GIT_AUTH_TOKEN.github.com=${{ github.token }}
           file: vicidial/docker/Dockerfile
           platforms: linux/amd64
           push: false
-          outputs: type=oci,dest=evidence/vicidial-adapter.oci.tar
+          outputs: type=oci,dest=evidence/vicidial-adapter.oci.tar,name=codestra/vicidial-restricted-adapter:${{ env.SOURCE_SHA }}
           build-args: |
             SOURCE_SHA=${{ env.SOURCE_SHA }}
             BUILD_DATE=2026-01-01T00:00:00Z
+            SOURCE_DATE_EPOCH=1767225600
           sbom: true
           provenance: mode=max
       - name: Test container contract
@@ -115,6 +194,49 @@ jobs:
           VICIDIAL_CONTAINER_TEST_IMAGE: codestra/vicidial-restricted-adapter:${{ env.SOURCE_SHA }}
           VICIDIAL_CONTAINER_ENGINE: docker
         run: python -m pytest -q vicidial/tests/test_phase3d_container.py
+      - name: Verify scoped secret-authority socket as runtime UID and GID
+        run: |
+          authority_dir="${RUNNER_TEMP}/synthetic-authority"
+          authority_socket="${authority_dir}/authority.sock"
+          mkdir -m 0711 "${authority_dir}"
+          AUTHORITY_SOCKET="${authority_socket}" python - <<'PY' &
+          import json
+          import os
+          import socket
+
+          path = os.environ["AUTHORITY_SOCKET"]
+          with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as server:
+              server.bind(path)
+              os.chmod(path, 0o660)
+              server.listen(1)
+              connection, _ = server.accept()
+              with connection:
+                  request = json.loads(connection.makefile("rb").readline(4097))
+                  assert request == {
+                      "operation": "vicidial-bootstrap",
+                      "username": "appolon",
+                      "extension": "6901",
+                      "idempotency_key": "synthetic-profile-proof",
+                  }
+                  connection.sendall(json.dumps({
+                      "credential": "synthetic-value-never-persisted-0001",
+                      "reference": "synthetic-authority-reference",
+                  }).encode() + b"\n")
+          PY
+          authority_pid=$!
+          trap 'kill "${authority_pid}" >/dev/null 2>&1 || true' EXIT
+          for attempt in $(seq 1 30); do
+            test -S "${authority_socket}" && break
+            test "$attempt" -lt 30
+            sleep 1
+          done
+          sudo chown "$(id -u):10001" "${authority_socket}"
+          docker run --rm --user 10001:10001 --entrypoint python \
+            --volume "${authority_dir}:/run/secret-authority" \
+            codestra/vicidial-restricted-adapter:${SOURCE_SHA} -c \
+            'import os; from pathlib import Path; from codestra_vicidial.credential_authority import UnixCredentialAuthority; assert (os.getuid(), os.getgid()) == (10001, 10001); issued = UnixCredentialAuthority(Path("/run/secret-authority/authority.sock")).issue(username="appolon", extension="6901", idempotency_key="synthetic-profile-proof"); assert issued.reference == "synthetic-authority-reference" and len(issued.value) >= 24'
+          wait "${authority_pid}"
+          echo "SCOPED_AUTHORITY_SOCKET=PASS UID=10001 GID=10001"
       - name: Capture exact image metadata and runtime regression
         run: |
           mkdir -p evidence
@@ -128,7 +250,7 @@ jobs:
             --metadata evidence/IMAGE_METADATA.json \
             --source-sha "${SOURCE_SHA}" \
             --output evidence/OCI_EXPORT_VERIFICATION.json
-          sha256sum evidence/vicidial-adapter.oci.tar > evidence/vicidial-adapter.oci.tar.sha256
+          (cd evidence && sha256sum vicidial-adapter.oci.tar > vicidial-adapter.oci.tar.sha256)
       - name: Generate and verify source manifest
         run: |
           python vicidial/scripts/generate_release_manifest.py --root . \
@@ -205,13 +327,24 @@ jobs:
           jq 'map({Id,Digest,RepoDigests,Architecture,Os,Config:{User:.Config.User,Labels:.Config.Labels}})' \
             evidence/IMAGE_METADATA.json > "${export_dir}/IMAGE_METADATA.json"
           find "${export_dir}" -type f -exec chmod 0600 {} +
-          (cd "${export_dir}" && find . -type f -print0 | sort -z | xargs -0 sha256sum) \
-            > evidence/EVIDENCE_EXPORT_CHECKSUMS.sha256
+          secret_report="${RUNNER_TEMP}/EVIDENCE_SECRET_SCAN.json"
           "${RUNNER_TEMP}/gitleaks-bin" dir --no-banner --redact --exit-code 1 \
-            --report-format json --report-path evidence/EVIDENCE_SECRET_SCAN.json \
+            --report-format json --report-path "${secret_report}" \
             "${export_dir}"
+          cp "${secret_report}" "${export_dir}/EVIDENCE_SECRET_SCAN.json"
+          (cd "${export_dir}" && find . -type f ! -name CHECKSUMS.sha256 -print0 | sort -z | xargs -0 sha256sum) \
+            > "${export_dir}/CHECKSUMS.sha256"
       - uses: actions/upload-artifact@v4
-        if: always()
+        if: success()
         with:
           name: vicidial-adapter-container-evidence
-          path: evidence/
+          path: evidence/evidence-export/
+          if-no-files-found: error
+      - uses: actions/upload-artifact@v4
+        if: success()
+        with:
+          name: vicidial-adapter-oci-${{ env.SOURCE_SHA }}
+          path: |
+            evidence/vicidial-adapter.oci.tar
+            evidence/vicidial-adapter.oci.tar.sha256
+          if-no-files-found: error
