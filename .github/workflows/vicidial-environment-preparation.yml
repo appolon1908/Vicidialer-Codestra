@@ -1,0 +1,57 @@
+name: VICIdial staging and production preparation
+on:
+  pull_request:
+    paths:
+      - .codestra/deployment-candidate.json
+      - scripts/prepare_vicidial_environments.py
+      - tests/test_prepare_vicidial_environments.py
+      - .github/workflows/vicidial-environment-preparation.yml
+      - .github/workflows/publish-server-b-source-release.yml
+      - docs/STAGING_PRODUCTION_PREPARATION.md
+  push:
+    branches: [main]
+    paths:
+      - .codestra/deployment-candidate.json
+      - scripts/prepare_vicidial_environments.py
+      - tests/test_prepare_vicidial_environments.py
+      - .github/workflows/vicidial-environment-preparation.yml
+      - .github/workflows/publish-server-b-source-release.yml
+      - docs/STAGING_PRODUCTION_PREPARATION.md
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  prepare:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    env:
+      PREPARATION_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+    steps:
+      - name: Check out exact preparation source
+        uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8
+        with:
+          ref: ${{ env.PREPARATION_SHA }}
+          persist-credentials: false
+      - name: Verify exact source and run offline regression tests
+        run: |
+          set -Eeuo pipefail
+          test "$(git rev-parse HEAD)" = "$PREPARATION_SHA"
+          python -m unittest discover -s tests -p test_prepare_vicidial_environments.py -v
+      - name: Generate preparation without deployment or credential access
+        run: |
+          set -Eeuo pipefail
+          python scripts/prepare_vicidial_environments.py \
+            --manifest .codestra/deployment-candidate.json \
+            --output "$RUNNER_TEMP/vicidial-prepared"
+          (cd "$RUNNER_TEMP/vicidial-prepared" && sha256sum --check SHA256SUMS)
+      - name: Validate Compose structure without pulling or starting containers
+        env:
+          VICIDIAL_STAGING_HMAC_FILE: /nonexistent/synthetic-staging-hmac
+        run: docker compose -f "$RUNNER_TEMP/vicidial-prepared/staging.compose.json" config --no-env-resolution --quiet
+      - name: Upload preparation package (not a certification or release)
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: vicidial-environment-preparation-${{ env.PREPARATION_SHA }}
+          path: ${{ runner.temp }}/vicidial-prepared/
+          if-no-files-found: error
+          retention-days: 30
