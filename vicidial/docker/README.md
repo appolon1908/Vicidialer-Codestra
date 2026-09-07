@@ -37,3 +37,9 @@ SHA, and refuses startup if any live capability flag is true.
 CI builds linux/amd64 without pushing, tests startup/health/restart behavior,
 and emits an SPDX SBOM plus an in-toto/SLSA provenance statement as workflow
 artifacts. Neither Compose file mounts the Docker socket.
+
+Production Compose requires `VICIDIAL_ADAPTER_IMAGE` to contain the complete
+verified release reference, including the permitted GHCR repository and
+immutable `sha256` digest. Generate it only with
+`vicidial/scripts/validate_deployment_artifact.py`; a tag or digest-only variable is not
+accepted.

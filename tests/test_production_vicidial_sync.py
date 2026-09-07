@@ -155,18 +155,35 @@ def test_minimal_payload_excludes_sensitive_and_oversized_fields():
 
 
 def test_production_pending_selector_is_explicit_allowlist():
+    count = Cursor([{"backlog_count": 0}])
     select = Cursor([])
-    conn = Connection([select])
+    conn = Connection([count, select])
     worker.process_pending_events(
         conn,
         {"batch_size": 10, "send_events": True, "delivery_kill_switch": ""},
     )
-    sql, params = select.sql[0]
-    assert "event_type=%s" in sql
-    assert "source_table IN (%s,%s)" in sql
-    assert params[:3] == (
-        "call_end", "production_vicidial_log", "production_vicidial_closer_log"
+    count_sql, count_params = count.sql[0]
+    select_sql, select_params = select.sql[0]
+    for sql in (count_sql, select_sql):
+        assert "event_type=%s" in sql
+        assert "source_table IN (%s,%s)" in sql
+    assert count_params == (
+        "call_end",
+        "production_vicidial_log",
+        "production_vicidial_closer_log",
     )
+    assert select_params[:3] == count_params
+
+
+def test_full_production_backlog_is_enforced_before_batch_selection():
+    count = Cursor([{"backlog_count": worker.PRODUCTION_BACKLOG_LIMIT + 1}])
+    conn = Connection([count])
+    with pytest.raises(RuntimeError, match="backlog exceeds hard limit"):
+        worker.process_pending_events(
+            conn,
+            {"batch_size": 10, "send_events": True, "delivery_kill_switch": ""},
+        )
+    assert len(count.sql) == 1
 
 
 def test_identical_timestamp_uses_stable_tie_breaker(watermark, monkeypatch):
@@ -250,11 +267,12 @@ def test_send_events_false_before_start():
 
 
 class Response:
-    def __init__(self, status):
+    def __init__(self, status, body=b""):
         self.status_code = status
+        self.body = body
 
     def iter_content(self, _):
-        return iter(())
+        return iter((self.body,)) if self.body else iter(())
 
 
 class Session:
@@ -267,6 +285,8 @@ class Session:
         outcome = next(self.outcomes)
         if isinstance(outcome, Exception):
             raise outcome
+        if isinstance(outcome, Response):
+            return outcome
         return Response(outcome)
 
 
@@ -281,10 +301,58 @@ def prepared(session, attempts=1):
     return transport, transport.prepare(event, timestamp=1784978659)
 
 
-@pytest.mark.parametrize("status", [200, 201, 202, 204])
-def test_http_success_codes(status):
-    transport, value = prepared(Session([status]))
-    assert transport.deliver(value)["sent"] is True
+def durable_ack(prepared_event, **changes):
+    value = {
+        "persisted": True,
+        "status": "persisted",
+        "event_id": prepared_event.event_id,
+        "idempotency_key": prepared_event.idempotency_key,
+    }
+    value.update(changes)
+    return json.dumps(value, sort_keys=True, separators=(",", ":")).encode("utf-8")
+
+
+
+
+@pytest.mark.parametrize("status", [200, 201, 202])
+def test_http_success_requires_durable_persistence_acknowledgement(status):
+    session = Session([])
+    transport, value = prepared(session)
+    session.outcomes = iter([Response(status, durable_ack(value))])
+    result = transport.deliver(value)
+    assert result["sent"] is True
+    assert result["persistence_status"] == "persisted"
+
+
+@pytest.mark.parametrize(
+    "response",
+    [
+        Response(204),
+        Response(202),
+        Response(202, b"{}"),
+    ],
+)
+def test_success_without_durable_acknowledgement_is_rejected(response):
+    transport, value = prepared(Session([response]))
+    with pytest.raises(client.DeliveryError, match="persistence"):
+        transport.deliver(value)
+
+
+@pytest.mark.parametrize(
+    "changes",
+    [
+        {"persisted": False},
+        {"status": "accepted"},
+        {"event_id": "00000000-0000-4000-8000-000000000099"},
+        {"idempotency_key": "vicidial:wrong"},
+    ],
+)
+def test_mismatched_or_non_durable_acknowledgement_is_rejected(changes):
+    session = Session([])
+    transport, value = prepared(session)
+    session.outcomes = iter([Response(202, durable_ack(value, **changes))])
+    with pytest.raises(client.DeliveryError, match="persistence|identity|idempotency"):
+        transport.deliver(value)
 
 
 @pytest.mark.parametrize("status", [400, 401, 403, 404, 409, 422])
@@ -298,8 +366,9 @@ def test_permanent_http_failures_are_not_retried(status):
 
 @pytest.mark.parametrize("status", [429, 500, 502, 503, 504])
 def test_retryable_http_failures_have_bounded_backoff(status):
-    session = Session([status, status, 202])
+    session = Session([])
     transport, value = prepared(session, attempts=3)
+    session.outcomes = iter([status, status, Response(202, durable_ack(value))])
     assert transport.deliver(value)["sent"] is True
     assert session.calls == 3
 
