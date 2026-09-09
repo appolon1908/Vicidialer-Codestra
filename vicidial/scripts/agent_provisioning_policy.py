@@ -10,8 +10,6 @@ import os
 import sys
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Annotated
-
 from pydantic import TypeAdapter
 
 SOURCE = Path(__file__).resolve().parents[1] / "src"
@@ -23,7 +21,7 @@ from codestra_vicidial.models import AgentSpec, ProvisionAgentCommand  # noqa: E
 
 def validate_request_reference(field_name: str, value: str) -> str:
     field = ProvisionAgentCommand.model_fields[field_name]
-    constrained = Annotated.__class_getitem__((field.annotation, *field.metadata))
+    constrained = field.rebuild_annotation()
     return TypeAdapter(constrained).validate_python(value)
 
 
