@@ -12,6 +12,7 @@ import pytest
 from codestra_vicidial.ami_gateway import (
     AgentBinding,
     AgentDirectory,
+    GatewayConfigurationError,
     LifecycleStore,
     parse_ami_block,
 )
@@ -22,6 +23,30 @@ from codestra_vicidial.internal_call_transport import (
 )
 from codestra_vicidial.internal_calling import InternalCallError, InternalCallExecutor
 from test_internal_calling import command, executor, policy, seed_connected
+
+
+def binding(**changes):
+    values = {
+        "extension": "6901", "tenant_id": "tenant-test",
+        "business_unit_id": "synthetic-unit", "campaign_id": "TEST_SYN",
+        "agent_id": "appolon", "keycloak_subject": "subject-appolon",
+        "queue_aliases": ("TEST_SYN",),
+    }
+    values.update(changes)
+    return AgentBinding(**values)
+
+
+@pytest.mark.parametrize("changes,match", [
+    ({"extension": "6902", "agent_id": "appolon"}, "duplicate agent"),
+    ({"extension": "6902", "agent_id": "other",
+      "keycloak_subject": "subject-appolon"}, "Keycloak subject"),
+    ({"extension": "6902", "agent_id": "other",
+      "keycloak_subject": "subject-other", "campaign_id": "OTHER001"},
+     "multiple campaigns"),
+])
+def test_agent_directory_rejects_ambiguous_authority(changes, match):
+    with pytest.raises(GatewayConfigurationError, match=match):
+        AgentDirectory([binding(), binding(**changes)])
 
 
 def race(first, second):

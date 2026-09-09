@@ -182,6 +182,28 @@ def compatible_user_group(allowed_campaigns: str) -> dict:
     }
 
 
+def provision_callback_dependencies(service: AdapterService) -> None:
+    service.provision_campaign(
+        "callback-owned-campaign", CampaignCommand.model_validate(campaign_payload()))
+    service.publish_lead(
+        "callback-owned-lead", LeadCommand.model_validate({
+            "context": context(),
+            "lead": {
+                "external_id": "callback-lead", "list_id": 21001,
+                "phone_code": "1", "phone_number": "5550100001",
+            },
+        }))
+    service.sync_agent(
+        "callback-owned-agent", AgentCommand.model_validate({
+            "context": context(),
+            "agent": {
+                "user_id": "COD1001", "full_name": "Synthetic Agent",
+                "user_group": "COD_TEST_SDR", "campaigns": ["CODT0001"],
+                "inbound_groups": [], "active": False,
+            },
+        }))
+
+
 def test_route_contract_is_present(harness):
     service, _ = harness
     auth = RequestAuthenticator("codestra-middleware", b"x" * 32, frozenset({"127.0.0.1"}))
@@ -333,43 +355,35 @@ def test_secret_detectors_match_real_whitespace_not_literal_backslashes():
     assert content_categories(b"password=\nsynthetic-public-value\n") == set()
 
 
-def test_user_group_campaign_already_present_is_adopted(harness):
+def test_broader_user_group_campaign_access_is_rejected(harness):
     service, repo = harness
     repo.groups[("user", "COD_TEST_SDR")] = compatible_user_group(
         " LEGACY01 CODT0001 -")
-    result = service.provision_campaign(
-        "group-present", CampaignCommand.model_validate(campaign_payload()))
-    group_result = next(row for row in result["resources"]
-                        if row["type"] == "user_group")
-    assert group_result["result"] == "adopted"
-    assert normalize_allowed_campaigns(
-        repo.groups[("user", "COD_TEST_SDR")]["allowed_campaigns"]
-    ) == ["LEGACY01", "CODT0001"]
+    with pytest.raises(CollisionError, match="exactly one campaign"):
+        service.provision_campaign(
+            "group-present", CampaignCommand.model_validate(campaign_payload()))
 
 
-def test_user_group_missing_campaign_is_added_without_overwrite(harness):
+def test_user_group_missing_campaign_is_not_rewritten(harness):
     service, repo = harness
     repo.groups[("user", "COD_TEST_SDR")] = compatible_user_group(
         " LEGACY01 OTHER002 -")
-    result = service.provision_campaign(
-        "group-add", CampaignCommand.model_validate(campaign_payload()))
-    group_result = next(row for row in result["resources"]
-                        if row["type"] == "user_group")
-    assert group_result["result"] == "updated"
-    assert normalize_allowed_campaigns(
-        repo.groups[("user", "COD_TEST_SDR")]["allowed_campaigns"]
-    ) == ["LEGACY01", "OTHER002", "CODT0001"]
+    before = repo.groups[("user", "COD_TEST_SDR")].copy()
+    with pytest.raises(CollisionError, match="exactly one campaign"):
+        service.provision_campaign(
+            "group-add", CampaignCommand.model_validate(campaign_payload()))
+    assert repo.groups[("user", "COD_TEST_SDR")] == before
 
 
 def test_user_group_repeated_request_does_not_duplicate_campaign(harness):
     service, repo = harness
-    repo.groups[("user", "COD_TEST_SDR")] = compatible_user_group(" LEGACY01 -")
+    repo.groups[("user", "COD_TEST_SDR")] = compatible_user_group(" CODT0001 -")
     command = CampaignCommand.model_validate(campaign_payload())
     service.provision_campaign("group-repeat-one", command)
     service.provision_campaign("group-repeat-two", command)
     memberships = normalize_allowed_campaigns(
         repo.groups[("user", "COD_TEST_SDR")]["allowed_campaigns"])
-    assert memberships == ["LEGACY01", "CODT0001"]
+    assert memberships == ["CODT0001"]
     assert memberships.count("CODT0001") == 1
 
 
@@ -599,8 +613,7 @@ def test_lead_publication_duplicate_retry_and_collision(harness):
 
 def test_callback_and_transfer_policy(harness):
     service, repo = harness
-    service.provision_campaign(
-        "campaign-for-xfer", CampaignCommand.model_validate(campaign_payload()))
+    provision_callback_dependencies(service)
     callback = CallbackCommand.model_validate({
         "context": context(),
         "callback": {
@@ -738,6 +751,7 @@ def test_user_group_ownership_allows_same_business_unit_sharing(tmp_path):
 
 def test_callback_external_id_requires_identical_immutable_payload(harness):
     service, repo = harness
+    provision_callback_dependencies(service)
     payload = {
         "context": context(),
         "callback": {
@@ -753,10 +767,62 @@ def test_callback_external_id_requires_identical_immutable_payload(harness):
         "callback-retry", CallbackCommand.model_validate(payload))
     assert first["actual"]["callback_id"] == retry["actual"]["callback_id"]
     payload["callback"]["lead_id"] = 2
-    with pytest.raises(CollisionError, match="callback external id collision"):
+    with pytest.raises(PermissionError, match="lead does not belong"):
         service.create_callback(
             "callback-collision", CallbackCommand.model_validate(payload))
     assert len(repo.callbacks) == 1
+
+
+def callback_command(**changes) -> CallbackCommand:
+    callback = {
+        "external_id": "callback-isolated", "lead_id": 1,
+        "campaign_id": "CODT0001", "user_id": "COD1001",
+        "callback_time": "2026-07-28T14:00:00Z",
+        "recipient": "USERONLY", "comments": "Synthetic",
+    }
+    callback.update(changes)
+    return CallbackCommand.model_validate({"context": context(), "callback": callback})
+
+
+def test_callback_schema_rejects_shared_recipient():
+    with pytest.raises(ValueError):
+        callback_command(recipient="ANYONE")
+
+
+@pytest.mark.parametrize("drift", ["policy", "lead", "agent", "desired_agent"])
+def test_callback_rejects_missing_or_cross_campaign_authority(harness, drift):
+    service, repo = harness
+    provision_callback_dependencies(service)
+    if drift == "policy":
+        service.state.put_campaign_policy(
+            "CODT0001", [], "recording-policy", "reporting-map", False)
+    elif drift == "lead":
+        repo.leads[1]["list_id"] = 31001
+    elif drift == "agent":
+        repo.agents["COD1001"]["campaigns"] = ["OTHER001"]
+    else:
+        service.state.put_agent_desired(
+            "COD1001", service.state.agent_desired("COD1001")["desired"]
+            | {"campaigns": ["OTHER001"]})
+    with pytest.raises(PermissionError):
+        service.create_callback("callback-isolation-" + drift, callback_command())
+    assert repo.callbacks == {}
+
+
+def test_callback_rejects_postwrite_readback_drift(harness, monkeypatch):
+    service, repo = harness
+    provision_callback_dependencies(service)
+    original = repo.callback
+
+    def drifted(callback_id):
+        row = original(callback_id)
+        row["campaign_id"] = "OTHER001"
+        return row
+
+    monkeypatch.setattr(repo, "callback", drifted)
+    with pytest.raises(ReadbackMismatch, match="read-back mismatch"):
+        service.create_callback("callback-postwrite-drift", callback_command())
+    assert service.state.mapping("callback", "callback-isolated") is None
 
 
 def test_reconciliation_compares_desired_and_actual_and_reports_drift(harness):

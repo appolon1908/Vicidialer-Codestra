@@ -8,7 +8,6 @@ from pydantic import ValidationError
 
 from codestra_vicidial.models import (
     AgentCommand,
-    CallbackCommand,
     CallbackSpec,
     CampaignCommand,
     TransferPolicyCommand,
@@ -133,13 +132,13 @@ def test_owned_agent_accepts_desired_state_update_after_readback(tmp_path):
     }
     service.sync_agent("agent-version-1", AgentCommand.model_validate(payload))
     payload["agent"]["full_name"] = "Updated Synthetic Agent"
-    payload["agent"]["campaigns"] = ["CODT0001", "CODT0002"]
+    payload["agent"]["campaigns"] = ["CODT0002"]
     result = service.sync_agent(
         "agent-version-2", AgentCommand.model_validate(payload)
     )
     assert result["actual"]["full_name"] == "Updated Synthetic Agent"
     assert service.state.agent_desired("COD1001")["desired"]["campaigns"] == [
-        "CODT0001", "CODT0002"
+        "CODT0002"
     ]
 
 

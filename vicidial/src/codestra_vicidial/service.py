@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import uuid
 from dataclasses import dataclass
+from datetime import timezone
 
 from .models import (
     AgentCommand,
@@ -12,7 +13,12 @@ from .models import (
     ProvisionAgentCommand,
     TransferPolicyCommand,
 )
-from .repository import CollisionError, Repository, normalize_allowed_campaigns
+from .repository import (
+    CollisionError,
+    Repository,
+    callback_payload_hash,
+    normalize_allowed_campaigns,
+)
 from .state import StateStore
 from .credential_authority import CredentialAuthorityUnavailable
 
@@ -132,7 +138,7 @@ class AdapterService:
                     try:
                         campaigns = normalize_allowed_campaigns(
                             row.get("allowed_campaigns"))
-                        if spec.actual_id not in campaigns:
+                        if campaigns != [spec.actual_id]:
                             extra.append("allowed_campaigns")
                     except CollisionError:
                         extra.append("allowed_campaigns")
@@ -355,8 +361,7 @@ class AdapterService:
                     and existing.get("full_name") == desired["full_name"]
                     and existing.get("user_group") == desired["user_group"]
                     and existing.get("active") in (False, "N")
-                    and set(desired["campaigns"]).issubset(
-                        set(existing.get("campaigns", [])))
+                    and existing.get("campaigns") == desired["campaigns"]
                     and set(existing.get("inbound_groups", []))
                     == set(desired["inbound_groups"])
                 )
@@ -376,9 +381,7 @@ class AdapterService:
                         mismatches.append(field)
                 if actual.get("active") not in (False, "N"):
                     mismatches.append("active")
-                if not set(desired["campaigns"]).issubset(
-                    set(actual.get("campaigns", []))
-                ):
+                if actual.get("campaigns") != desired["campaigns"]:
                     mismatches.append("campaigns")
                 if set(actual.get("inbound_groups", [])) != set(
                     desired["inbound_groups"]
@@ -448,7 +451,7 @@ class AdapterService:
                 mismatches.append("user_level")
             if actual.get("extension") != command.agent.extension:
                 mismatches.append("extension")
-            if not set(desired["campaigns"]).issubset(set(actual.get("campaigns", []))):
+            if actual.get("campaigns") != desired["campaigns"]:
                 mismatches.append("campaigns")
             if set(actual.get("inbound_groups", [])) != set(desired["inbound_groups"]):
                 mismatches.append("inbound_groups")
@@ -496,13 +499,96 @@ class AdapterService:
     def create_callback(self, key: str, command: CallbackCommand) -> dict:
         self._require(self.flags.callback_writes, "callback writes")
 
+        spec = command.callback
+        def authorize() -> None:
+            if spec.recipient != "USERONLY":
+                raise PermissionError("callbacks must remain assigned to one agent")
+            owner = self.repository.campaign_owner(spec.campaign_id)
+            if owner is None or self.state.mapping("campaign", owner) is None:
+                raise PermissionError("callback campaign ownership is not durable")
+            policy = self.state.campaign_policy(spec.campaign_id)
+            if not policy or not policy.get("callback_enabled"):
+                raise PermissionError("callback policy is disabled or missing")
+            lead = self.repository.lead(spec.lead_id)
+            campaign = self.repository.campaign(spec.campaign_id)
+            campaign_list_ids = {
+                int(row["list_id"])
+                for row in (campaign or {}).get("lists", [])
+            }
+            if (
+                lead is None
+                or int(lead.get("list_id", -1)) not in campaign_list_ids
+            ):
+                raise PermissionError("callback lead does not belong to campaign")
+            agent = self.repository.agent(spec.user_id)
+            desired_agent = self.state.agent_desired(spec.user_id)
+            if (
+                agent is None
+                or desired_agent is None
+                or agent.get("campaigns") != [spec.campaign_id]
+                or desired_agent["desired"].get("campaigns") != [spec.campaign_id]
+            ):
+                raise PermissionError("callback agent campaign binding is not exact")
+
+        authorize()
+
         def apply() -> dict:
-            actual = self.repository.create_callback(command.callback)
-            if not actual.get("callback_id"):
-                raise RuntimeError("callback read-back failed")
+            authorize()
+            actual = self.repository.create_callback(spec)
+            callback_id = actual.get("callback_id")
+            observed = self.repository.callback(int(callback_id)) if callback_id else None
+            marker = str((observed or {}).get("comments", ""))
+            expected_time = spec.callback_time.isoformat().replace("+00:00", "Z")
+            observed_time = (observed or {}).get("callback_time")
+            if hasattr(observed_time, "replace") and not isinstance(
+                observed_time, str
+            ):
+                observed_time = (
+                    observed_time.replace(tzinfo=timezone.utc)
+                    .isoformat()
+                    .replace("+00:00", "Z")
+                )
+            expected = {
+                "lead_id": spec.lead_id,
+                "campaign_id": spec.campaign_id,
+                "user": spec.user_id,
+                "recipient": "USERONLY",
+                "status": "ACTIVE",
+                "callback_time": expected_time,
+            }
+            aliases = {"user": "user_id"}
+            mismatches = []
+            for field, value in expected.items():
+                observed_value = (
+                    observed_time
+                    if field == "callback_time"
+                    else (observed or {}).get(
+                        field, (observed or {}).get(aliases.get(field, ""))
+                    )
+                )
+                if str(observed_value) != str(value):
+                    mismatches.append(field)
+            if marker.startswith("CODESTRA:"):
+                parts = marker.split(":", 3)
+                if (
+                    len(parts) < 4
+                    or parts[1] != spec.external_id
+                    or parts[2] != callback_payload_hash(spec)
+                    or parts[3] != spec.comments
+                ):
+                    mismatches.append("external_reference")
+            elif marker != spec.comments or (observed or {}).get("external_id") != spec.external_id:
+                mismatches.append("external_reference")
+            if not callback_id or mismatches:
+                raise ReadbackMismatch([{
+                    "type": "callback",
+                    "id": callback_id,
+                    "mismatches": sorted(set(mismatches or ["missing"])),
+                }])
+            authorize()
             self.state.put_mapping("callback", command.callback.external_id,
-                                   str(actual["callback_id"]), self.state.digest(actual))
-            return {"status": "created", "actual": actual}
+                                   str(callback_id), self.state.digest(observed))
+            return {"status": "created", "actual": observed}
 
         return self._execute("callback.create", key, command,
                              command.callback.external_id, apply)

@@ -64,11 +64,13 @@ def owned_user_group(canonical_id: str, business_unit: str, group_code: str) -> 
     ) == group_code
 
 
-def additive_campaign_membership(current: str, desired: str) -> tuple[str, bool]:
+def exact_campaign_membership(current: str, desired: str) -> str:
     campaigns = normalize_allowed_campaigns(current)
-    if desired in campaigns:
-        return format_allowed_campaigns(campaigns), False
-    return format_allowed_campaigns([*campaigns, desired]), True
+    if campaigns != [desired]:
+        raise CollisionError(
+            "user group must be dedicated to exactly one campaign"
+        )
+    return format_allowed_campaigns(campaigns)
 
 
 class Repository(Protocol):
@@ -84,6 +86,7 @@ class Repository(Protocol):
     def provision_agent_disabled(self, spec: AgentSpec, credential: str) -> dict: ...
     def disable_agent(self, user_id: str) -> dict: ...
     def lead_by_external_id(self, external_id: str) -> dict | None: ...
+    def lead(self, lead_id: int) -> dict | None: ...
     def publish_lead(self, spec: LeadSpec) -> dict: ...
     def callback(self, callback_id: int) -> dict | None: ...
     def callback_by_external_id(self, external_id: str) -> dict | None: ...
@@ -226,7 +229,7 @@ class MemoryRepository:
                     raise CollisionError(f"incompatible ownership: {item.code}")
                 current = self.groups.get((item.kind, item.code))
                 if current:
-                    additive_campaign_membership(
+                    exact_campaign_membership(
                         current.get("allowed_campaigns"), spec.actual_id)
         results = []
         campaign = {
@@ -262,10 +265,10 @@ class MemoryRepository:
                            for field in ("name", "kind", "active")):
                         raise CollisionError(
                             f"incompatible collision: {item.code}")
-                    normalized, added = additive_campaign_membership(
+                    normalized = exact_campaign_membership(
                         current.get("allowed_campaigns"), spec.actual_id)
                     current["allowed_campaigns"] = normalized
-                    status = "updated" if added else "adopted"
+                    status = "adopted"
             else:
                 status = self._adopt(
                     self.groups, (item.kind, item.code), desired,
@@ -353,6 +356,9 @@ class MemoryRepository:
     def lead_by_external_id(self, external_id: str) -> dict | None:
         return next((deepcopy(row) for row in self.leads.values()
                      if row["external_id"] == external_id), None)
+
+    def lead(self, lead_id: int) -> dict | None:
+        return deepcopy(self.leads.get(lead_id))
 
     def publish_lead(self, spec: LeadSpec) -> dict:
         prior = self.lead_by_external_id(spec.external_id)
@@ -553,7 +559,7 @@ class MySQLRepository:
                     "FROM vicidial_user_groups WHERE user_group=%s", (item.code,))
                 self._check(row, {"name": item.name}, ("name",), item.code)
                 if row:
-                    additive_campaign_membership(row.get("allowed_campaigns"), spec.actual_id)
+                    exact_campaign_membership(row.get("allowed_campaigns"), spec.actual_id)
             else:
                 row = self._one(
                     "SELECT group_id AS code,group_name AS name,active "
@@ -653,7 +659,7 @@ class MySQLRepository:
                 self._check(current_group, {"name": item.name},
                             ("name",), item.code)
                 if current_group:
-                    additive_campaign_membership(
+                    exact_campaign_membership(
                         current_group.get("allowed_campaigns"), spec.actual_id)
             else:
                 current_group = self._one(
@@ -751,13 +757,9 @@ class MySQLRepository:
                          format_allowed_campaigns([spec.actual_id])))
                     group_result = "created"
                 else:
-                    normalized, added = additive_campaign_membership(
+                    exact_campaign_membership(
                         current["allowed_campaigns"], spec.actual_id)
-                    if added:
-                        self._execute(
-                            "UPDATE vicidial_user_groups SET allowed_campaigns=%s "
-                            "WHERE user_group=%s", (normalized, item.code))
-                    group_result = "updated" if added else "adopted"
+                    group_result = "adopted"
             else:
                 current = self._one(
                     "SELECT group_id AS code,group_name AS name,active FROM vicidial_inbound_groups "
@@ -958,9 +960,8 @@ class MySQLRepository:
         )
         if group is None:
             raise CollisionError("approved user group is missing")
-        allowed = set(normalize_allowed_campaigns(group["allowed_campaigns"]))
-        if not set(spec.campaigns).issubset(allowed):
-            raise CollisionError("approved campaigns are absent from user group")
+        if normalize_allowed_campaigns(group["allowed_campaigns"]) != spec.campaigns:
+            raise CollisionError("approved user group is not campaign-isolated")
         try:
             self._execute(
                 "INSERT INTO vicidial_users "
@@ -1005,6 +1006,13 @@ class MySQLRepository:
         return self._one(
             "SELECT lead_id,vendor_lead_code AS external_id,list_id,phone_code,phone_number,"
             "first_name,last_name,status FROM vicidial_list WHERE vendor_lead_code=%s", (external_id,))
+
+    def lead(self, lead_id: int) -> dict | None:
+        return self._one(
+            "SELECT lead_id,vendor_lead_code AS external_id,list_id,phone_code,phone_number,"
+            "first_name,last_name,status FROM vicidial_list WHERE lead_id=%s",
+            (lead_id,),
+        )
 
     def publish_lead(self, spec: LeadSpec) -> dict:
         prior = self.lead_by_external_id(spec.external_id)

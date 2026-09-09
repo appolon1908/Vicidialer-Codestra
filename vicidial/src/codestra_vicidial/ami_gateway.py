@@ -312,12 +312,32 @@ class AgentDirectory:
             )
         by_extension: dict[str, AgentBinding] = {}
         by_alias: dict[str, AgentBinding] = {}
+        agent_ids: dict[str, AgentBinding] = {}
+        subjects: dict[str, AgentBinding] = {}
+        queue_campaigns: dict[str, str] = {}
         for entry in entries:
             if entry.extension in by_extension:
                 raise GatewayConfigurationError(
                     f"duplicate agent extension: {entry.extension}"
                 )
             by_extension[entry.extension] = entry
+            if entry.agent_id in agent_ids:
+                raise GatewayConfigurationError(
+                    f"duplicate agent identity: {entry.agent_id}"
+                )
+            if entry.keycloak_subject in subjects:
+                raise GatewayConfigurationError(
+                    "Keycloak subject belongs to multiple agent bindings"
+                )
+            agent_ids[entry.agent_id] = entry
+            subjects[entry.keycloak_subject] = entry
+            for queue in entry.queue_aliases:
+                prior_campaign = queue_campaigns.get(queue)
+                if prior_campaign and prior_campaign != entry.campaign_id:
+                    raise GatewayConfigurationError(
+                        f"queue belongs to multiple campaigns: {queue}"
+                    )
+                queue_campaigns[queue] = entry.campaign_id
             for alias in entry.endpoint_aliases:
                 key = alias.lower()
                 prior = by_alias.get(key)

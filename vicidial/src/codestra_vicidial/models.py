@@ -122,7 +122,7 @@ class AgentSpec(StrictModel):
     user_id: Annotated[str, Field(pattern=r"^[A-Z]{3}[0-9]{4,12}$")]
     full_name: Annotated[str, Field(min_length=2, max_length=50)]
     user_group: ResourceCode
-    campaigns: list[ActualCampaign] = Field(min_length=1, max_length=30)
+    campaigns: list[ActualCampaign] = Field(min_length=1, max_length=1)
     inbound_groups: list[ResourceCode] = Field(default_factory=list, max_length=30)
     active: Literal[False] = False
     adopt_existing_sha256: Annotated[
@@ -181,8 +181,8 @@ class CallbackSpec(StrictModel):
     campaign_id: ActualCampaign
     user_id: Annotated[str, Field(pattern=r"^[A-Z]{3}[0-9]{4,12}$")]
     callback_time: datetime
-    recipient: Literal["USERONLY", "ANYONE"] = "USERONLY"
-    comments: Annotated[str, Field(max_length=255)] = ""
+    recipient: Literal["USERONLY"] = "USERONLY"
+    comments: Annotated[str, Field(max_length=127)] = ""
 
     @field_validator("callback_time")
     @classmethod
