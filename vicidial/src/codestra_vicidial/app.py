@@ -35,7 +35,7 @@ from .security import RequestAuthenticator
 from .service import AdapterService, FeatureFlags, ReadbackMismatch
 from .state import (
     IdempotencyConflict, MutationCompletionUncertain, ResourceMutationInProgress,
-    StaleResourceVersion, StateStore,
+    ResourceSnapshotChanged, StaleResourceVersion, StateStore,
 )
 
 _AUTHENTICATION_HEADERS = (
@@ -243,6 +243,13 @@ def create_app(
             for error in exc.errors(include_input=False, include_context=False)
         ]})
 
+    @app.exception_handler(ResourceSnapshotChanged)
+    async def snapshot_handler(_request: Request, _exc: ResourceSnapshotChanged):
+        return JSONResponse(status_code=409, content={
+            "code": "resource_snapshot_changed",
+            "detail": "resource changed during read-back; retry the read",
+        })
+
     @app.exception_handler(MutationCompletionUncertain)
     async def completion_handler(_request: Request, _exc: MutationCompletionUncertain):
         return JSONResponse(status_code=503, content={
@@ -391,14 +398,18 @@ def create_app(
     async def campaign_actual(request: Request, campaign_id: str,
                               values=Depends(read_headers)):
         await authorize(request, "telephony:read", *values)
-        actual = service.repository.campaign(campaign_id)
-        if not actual:
-            raise HTTPException(404, "campaign missing")
         mapping = service.state.mapping_for_actual("campaign", campaign_id)
-        return actual | {"resource_version": (
-            service.state.resource_version(f"campaign:{mapping['external_id']}")
-            if mapping else None
-        )}
+        if mapping:
+            actual = service.versioned_readback(
+                f"campaign:{mapping['external_id']}",
+                lambda: service.repository.campaign(campaign_id),
+            )
+        else:
+            row = service.repository.campaign(campaign_id)
+            actual = row | {"resource_version": None} if row else None
+        if actual is None:
+            raise HTTPException(404, "campaign missing")
+        return actual
 
     @app.post("/v1/agents/sync")
     async def agent_sync(request: Request, values=Depends(headers)):
@@ -433,12 +444,12 @@ def create_app(
     @app.get("/v1/agents/{user_id}/actual-state")
     async def agent_actual(request: Request, user_id: str, values=Depends(read_headers)):
         await authorize(request, "telephony:read", *values)
-        actual = service.repository.agent(user_id)
-        if not actual:
+        actual = service.versioned_readback(
+            f"agent:{user_id}", lambda: service.repository.agent(user_id),
+        )
+        if actual is None:
             raise HTTPException(404, "agent missing")
-        return actual | {
-            "resource_version": service.state.resource_version(f"agent:{user_id}")
-        }
+        return actual
 
     @app.get("/v1/agents/availability/{user_id}/{extension}")
     async def agent_availability(request: Request, user_id: str, extension: str,

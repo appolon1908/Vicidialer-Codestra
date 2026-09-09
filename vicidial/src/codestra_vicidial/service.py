@@ -22,7 +22,10 @@ from .repository import (
     callback_payload_hash,
     normalize_allowed_campaigns,
 )
-from .state import MutationCompletionUncertain, StaleResourceVersion, StateStore
+from .state import (
+    MutationCompletionUncertain, ResourceMutationInProgress, ResourceSnapshotChanged,
+    StaleResourceVersion, StateStore,
+)
 from .credential_authority import CredentialAuthorityUnavailable
 
 
@@ -101,11 +104,28 @@ class AdapterService:
                              "rejected", {"error_type": type(exc).__name__})
             raise
 
+    def versioned_readback(self, resource_key: str, reader) -> dict | None:
+        before = self.state.resource_observation(resource_key)
+        if before[2]:
+            raise ResourceMutationInProgress("resource mutation is already in progress")
+        actual = reader()
+        after = self.state.resource_observation(resource_key)
+        if before != after or after[2]:
+            raise ResourceSnapshotChanged("resource changed during read-back; retry the read")
+        return actual | {"resource_version": before[0]} if actual is not None else None
+
     def callback_by_external_id(self, external_id: str) -> dict | None:
         mapping = self.state.mapping("callback", external_id)
         if mapping is None:
             return None
         callback_id = int(mapping["actual_id"])
+        result = self.versioned_readback(
+            f"callback:{external_id}",
+            lambda: self._callback_readback(external_id, callback_id),
+        )
+        return result
+
+    def _callback_readback(self, external_id: str, callback_id: int) -> dict:
         actual = self.repository.callback(callback_id)
         marker = str((actual or {}).get("comments", "")).split(":", 3)
         observed_external = (

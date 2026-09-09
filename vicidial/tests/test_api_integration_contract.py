@@ -238,3 +238,56 @@ def test_callback_lookup_normalizes_mysql_shape(api):
     assert response.status_code == 200
     assert response.json()["callback_time"] == "2026-07-28T14:00:00Z"
     assert "comments" not in response.json()
+
+
+@pytest.mark.parametrize("outcome", ["complete", "failed", "pending"])
+def test_agent_readback_never_pairs_stale_state_with_a_new_version(api, monkeypatch, outcome):
+    from test_adapter import provision_callback_dependencies
+
+    provision_callback_dependencies(api[2])
+    service = api[2]
+    read = service.repository.agent
+
+    def concurrent_read(user_id):
+        old = read(user_id)
+        service.state.claim_resource_version("agent:COD1001", 1, "overlapping-command")
+        service.repository.agents[user_id]["full_name"] = "Concurrent update"
+        if outcome == "complete":
+            service.state.complete_resource_version("agent:COD1001", 1, "overlapping-command")
+        elif outcome == "failed":
+            service.state.release_resource_claim("agent:COD1001", 1, "overlapping-command")
+        return old
+
+    monkeypatch.setattr(service.repository, "agent", concurrent_read)
+    response = get(api, "/v1/agents/COD1001/actual-state")
+    assert response.status_code == 409
+    assert response.json()["code"] == "resource_snapshot_changed"
+    assert "actual" not in response.json()
+
+
+def test_pending_agent_write_blocks_read_before_repository_access(api, monkeypatch):
+    api[2].state.claim_resource_version("agent:COD1001", 0, "pending-agent")
+
+    def must_not_read(_user_id):
+        pytest.fail("pending mutation must block the repository read")
+
+    monkeypatch.setattr(api[2].repository, "agent", must_not_read)
+    response = get(api, "/v1/agents/COD1001/actual-state")
+    assert response.status_code == 409
+    assert response.json()["code"] == "resource_mutation_in_progress"
+
+
+def test_campaign_readback_rejects_overlapping_mutation(api, monkeypatch):
+    assert post(api, "/v1/campaigns/provision-disabled", campaign_payload()).status_code == 200
+    read = api[2].repository.campaign
+
+    def concurrent_read(campaign_id):
+        old = read(campaign_id)
+        api[2].state.claim_resource_version("campaign:COD-TEST-OUT", 1, "campaign-overlap")
+        api[2].state.complete_resource_version("campaign:COD-TEST-OUT", 1, "campaign-overlap")
+        return old
+
+    monkeypatch.setattr(api[2].repository, "campaign", concurrent_read)
+    response = get(api, "/v1/campaigns/CODT0001/actual-state")
+    assert response.status_code == 409
+    assert response.json()["code"] == "resource_snapshot_changed"

@@ -24,6 +24,10 @@ class MutationCompletionUncertain(RuntimeError):
     """Persistence after a verified mutation requires operator reconciliation."""
 
 
+class ResourceSnapshotChanged(RuntimeError):
+    """Actual state cannot be paired with a version across a concurrent write."""
+
+
 class StateStore:
     def __init__(self, path: Path):
         path.parent.mkdir(parents=True, exist_ok=True)
@@ -66,6 +70,8 @@ class StateStore:
           business_unit TEXT NOT NULL, supervisor_subject TEXT NOT NULL);
         CREATE TABLE IF NOT EXISTS resource_versions(
           resource_key TEXT PRIMARY KEY, version INTEGER NOT NULL);
+        CREATE TABLE IF NOT EXISTS resource_epochs(
+          resource_key TEXT PRIMARY KEY, epoch INTEGER NOT NULL);
         CREATE TABLE IF NOT EXISTS resource_mutations(
           resource_key TEXT PRIMARY KEY, expected_version INTEGER NOT NULL,
           idempotency_key TEXT NOT NULL, created_at TEXT NOT NULL);
@@ -109,6 +115,21 @@ class StateStore:
         ).fetchone()
         return int(row["version"]) if row else 0
 
+    def resource_observation(self, resource_key: str) -> tuple[int, int, bool]:
+        # One SQLite statement observes all three fields from one committed
+        # snapshot, independent of transactions on the shared connection.
+        db = sqlite3.connect(self.path)
+        try:
+            version, epoch, pending = db.execute(
+                "SELECT COALESCE((SELECT version FROM resource_versions WHERE resource_key=?),0),"
+                "COALESCE((SELECT epoch FROM resource_epochs WHERE resource_key=?),0),"
+                "EXISTS(SELECT 1 FROM resource_mutations WHERE resource_key=?)",
+                (resource_key, resource_key, resource_key),
+            ).fetchone()
+            return int(version), int(epoch), bool(pending)
+        finally:
+            db.close()
+
     def claim_resource_version(
         self, resource_key: str, expected: int, idempotency_key: str
     ) -> None:
@@ -133,6 +154,10 @@ class StateStore:
                 "INSERT INTO resource_mutations VALUES(?,?,?,?)",
                 (resource_key, expected, idempotency_key,
                  datetime.now(timezone.utc).isoformat()),
+            )
+            self.db.execute(
+                "INSERT INTO resource_epochs VALUES(?,1) ON CONFLICT(resource_key) "
+                "DO UPDATE SET epoch=epoch+1", (resource_key,),
             )
             self.db.commit()
         except Exception:

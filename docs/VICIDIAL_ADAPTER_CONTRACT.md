@@ -138,3 +138,15 @@ the external reference, and returns a typed response containing `external_id`,
 The status is current read-back, while the version is the committed adapter version.
 An unknown mapping returns 404; missing, conflicting or invalid actual state returns
 409 with `status=reconciliation_required` instead of stale mapping data.
+
+### Consistent versioned read-back
+
+Managed campaign, agent and callback reads observe the committed version, pending
+claim and mutation epoch before and after reading VICIdial. A pending claim blocks
+the read with HTTP 409 `resource_mutation_in_progress`. A changed observation
+returns HTTP 409 `resource_snapshot_changed`; the caller should retry the read.
+Each successful claim increments a durable epoch, even when that mutation later
+fails and releases its claim. This also detects a write that starts and fails
+entirely during read-back without advancing the committed version. The protocol
+covers adapter-owned mutations; out-of-band VICIdial changes remain reconciliation
+concerns. A successful read reserves nothing for the next command.
