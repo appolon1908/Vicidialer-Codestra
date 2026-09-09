@@ -223,3 +223,45 @@ def test_originate_and_hangup_write_append_only_audit_outcomes(tmp_path):
         ("internal-call.hangup", "requested"),
         ("internal-call.hangup", "requested"),
     ]
+
+
+@pytest.mark.parametrize("field", ["internal_only", "external_dialing", "recording_requested"])
+@pytest.mark.parametrize("value", [0, 1, 0.0, 1.0, "false", "true", None])
+def test_command_requires_boolean_safety_controls(field, value):
+    from pydantic import ValidationError
+
+    with pytest.raises(ValidationError):
+        command(**{field: value})
+
+
+@pytest.mark.parametrize("field", ["internal_only", "external_dialing", "recording"])
+@pytest.mark.parametrize("value", [0, 1, 0.0, 1.0, "false", "true", None])
+def test_policy_requires_boolean_safety_controls(field, value):
+    from pydantic import ValidationError
+
+    payload = policy().model_dump(mode="json")
+    payload[field] = value
+    with pytest.raises(ValidationError):
+        InternalCallPolicy.model_validate(payload)
+
+
+@pytest.mark.parametrize("value", [True, 1.0, "1", None])
+def test_policy_requires_integer_call_limit(value):
+    from pydantic import ValidationError
+
+    payload = policy().model_dump(mode="json")
+    payload["max_calls"] = value
+    with pytest.raises(ValidationError):
+        InternalCallPolicy.model_validate(payload)
+
+
+@pytest.mark.parametrize("gate", ["enabled", "identity_ready"])
+@pytest.mark.parametrize("value", [1, "false", "true", {"ready": False}, [True], None, False])
+def test_execution_requires_explicit_boolean_gate_evidence(tmp_path, gate, value):
+    service, transport, _ = executor(tmp_path)
+    setattr(service, gate, lambda: value)
+    with pytest.raises(PermissionError):
+        service.originate(command())
+    assert transport.actions == []
+    with sqlite3.connect(service.state_path) as db:
+        assert db.execute("SELECT count(*) FROM internal_calls").fetchone()[0] == 0
