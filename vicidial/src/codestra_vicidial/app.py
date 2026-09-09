@@ -20,6 +20,7 @@ from .credential_authority import UnixCredentialAuthority
 from .models import (
     AgentCommand,
     CallbackCommand,
+    CallbackLookup,
     CampaignCommand,
     DisableAgentCommand,
     LeadCommand,
@@ -32,7 +33,10 @@ from .release import load_release_info
 from .repository import CollisionError, MemoryRepository, MySQLRepository
 from .security import RequestAuthenticator
 from .service import AdapterService, FeatureFlags, ReadbackMismatch
-from .state import ResourceMutationInProgress, StaleResourceVersion, StateStore
+from .state import (
+    IdempotencyConflict, MutationCompletionUncertain, ResourceMutationInProgress,
+    StaleResourceVersion, StateStore,
+)
 
 _AUTHENTICATION_HEADERS = (
     "X-Service-Identity",
@@ -60,6 +64,7 @@ _PROTECTED_SCOPE_BY_ROUTE = {
     ("get", "/v1/leads/by-external-id/{external_id}"): "telephony:read",
     ("post", "/v1/callbacks/create"): "telephony:callback-write",
     ("get", "/v1/callbacks/{callback_id}"): "telephony:read",
+    ("get", "/v1/callbacks/by-external-id/{external_id}"): "telephony:read",
     (
         "post",
         "/v1/reconciliation/campaigns/provision-disabled",
@@ -181,6 +186,9 @@ def install_openapi_contract(app: FastAPI) -> None:
                 operation["responses"]["409"] = {
                     "description": "Resource collision, stale version, mutation in progress, or read-back mismatch"
                 }
+                operation["responses"]["503"] = {
+                    "description": "Command completion uncertain; reconciliation required before another write"
+                }
                 operation["responses"]["422"] = {
                     "description": "Invalid request; submitted values are omitted from command validation errors"
                 }
@@ -234,6 +242,21 @@ def create_app(
             {"loc": list(error["loc"]), "type": error["type"]}
             for error in exc.errors(include_input=False, include_context=False)
         ]})
+
+    @app.exception_handler(MutationCompletionUncertain)
+    async def completion_handler(_request: Request, _exc: MutationCompletionUncertain):
+        return JSONResponse(status_code=503, content={
+            "code": "mutation_completion_uncertain",
+            "status": "reconciliation_required",
+            "detail": "command completion requires reconciliation",
+        })
+
+    @app.exception_handler(IdempotencyConflict)
+    async def idempotency_handler(_request: Request, _exc: IdempotencyConflict):
+        return JSONResponse(status_code=409, content={
+            "code": "idempotency_conflict",
+            "detail": "idempotency key already used with a different command",
+        })
 
     @app.exception_handler(StaleResourceVersion)
     @app.exception_handler(ResourceMutationInProgress)
@@ -315,7 +338,7 @@ def create_app(
             return handler(idempotency_key, command)
         except PermissionError as exc:
             raise HTTPException(status_code=403, detail=str(exc)) from exc
-        except (ValidationError, StaleResourceVersion):
+        except (ValidationError, StaleResourceVersion, IdempotencyConflict, CollisionError):
             raise
         except ValueError as exc:
             raise HTTPException(status_code=422, detail=str(exc)) from exc
@@ -397,7 +420,7 @@ def create_app(
             return service.provision_agent(key, command)
         except PermissionError as exc:
             raise HTTPException(status_code=403, detail=str(exc)) from exc
-        except (ValidationError, StaleResourceVersion):
+        except (ValidationError, StaleResourceVersion, IdempotencyConflict, CollisionError):
             raise
         except ValueError as exc:
             raise HTTPException(status_code=422, detail=str(exc)) from exc
@@ -502,6 +525,15 @@ def create_app(
         return await mutation(request, CallbackCommand, service.create_callback,
                               "telephony:callback-write", *values)
 
+    @app.get("/v1/callbacks/by-external-id/{external_id}", response_model=CallbackLookup)
+    async def callback_lookup(request: Request, external_id: str,
+                              values=Depends(read_headers)):
+        await authorize(request, "telephony:read", *values)
+        result = service.callback_by_external_id(external_id)
+        if result is None:
+            raise HTTPException(404, "callback mapping missing")
+        return result
+
     @app.get("/v1/callbacks/{callback_id}")
     async def callback_actual(request: Request, callback_id: int,
                               values=Depends(read_headers)):
@@ -526,7 +558,7 @@ def create_app(
             return service.provision_campaign(key, command)
         except PermissionError as exc:
             raise HTTPException(status_code=403, detail=str(exc)) from exc
-        except (ValidationError, StaleResourceVersion):
+        except (ValidationError, StaleResourceVersion, IdempotencyConflict, CollisionError):
             raise
         except ValueError as exc:
             raise HTTPException(status_code=422, detail=str(exc)) from exc

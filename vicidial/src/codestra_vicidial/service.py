@@ -2,11 +2,14 @@ from __future__ import annotations
 
 import uuid
 from dataclasses import dataclass
-from datetime import timezone
+from datetime import datetime, timezone
+
+from pydantic import ValidationError
 
 from .models import (
     AgentCommand,
     CallbackCommand,
+    CallbackLookup,
     CampaignCommand,
     DisableAgentCommand,
     LeadCommand,
@@ -19,7 +22,7 @@ from .repository import (
     callback_payload_hash,
     normalize_allowed_campaigns,
 )
-from .state import StaleResourceVersion, StateStore
+from .state import MutationCompletionUncertain, StaleResourceVersion, StateStore
 from .credential_authority import CredentialAuthorityUnavailable
 
 
@@ -63,23 +66,33 @@ class AdapterService:
         context = command.context
         resource_key = f"{operation.split('.', 1)[0]}:{target}"
         claimed = False
+        completing = False
         try:
             self.state.claim_resource_version(
                 resource_key, context.expected_version, key
             )
             claimed = True
             result = fn()
-            result = result | {
-                "resource_version": self.state.complete_resource_version(
-                    resource_key, context.expected_version, key
-                )
-            }
+            completing = True
+            result = self.state.complete_command(
+                resource_key, context.expected_version, key, operation, digest,
+                result, context.correlation_id, context.actor, target,
+            )
             claimed = False
-            self.state.record(operation, key, digest, result)
-            self.state.audit(context.correlation_id, context.actor, operation, target,
-                             "success", result)
             return result | {"idempotent_replay": False}
         except Exception as exc:
+            if completing:
+                # The telephony mutation was read back, but local completion
+                # failed. Preserve the durable claim to block blind retries.
+                raise MutationCompletionUncertain(
+                    "command completion requires reconciliation"
+                ) from exc
+            if isinstance(exc, StaleResourceVersion):
+                # Another worker may have completed this exact command between
+                # our initial replay lookup and the version claim.
+                prior = self.state.prior(operation, key, digest)
+                if prior is not None:
+                    return prior | {"idempotent_replay": True}
             if claimed:
                 self.state.release_resource_claim(
                     resource_key, context.expected_version, key
@@ -87,6 +100,44 @@ class AdapterService:
             self.state.audit(context.correlation_id, context.actor, operation, target,
                              "rejected", {"error_type": type(exc).__name__})
             raise
+
+    def callback_by_external_id(self, external_id: str) -> dict | None:
+        mapping = self.state.mapping("callback", external_id)
+        if mapping is None:
+            return None
+        callback_id = int(mapping["actual_id"])
+        actual = self.repository.callback(callback_id)
+        marker = str((actual or {}).get("comments", "")).split(":", 3)
+        observed_external = (
+            marker[1] if len(marker) == 4 and marker[0] == "CODESTRA"
+            else (actual or {}).get("external_id")
+        )
+        if actual is None or observed_external != external_id:
+            raise ReadbackMismatch([{
+                "type": "callback", "id": callback_id,
+                "mismatches": ["external_reference"],
+            }])
+        try:
+            if int(actual["callback_id"]) != callback_id:
+                raise ValueError("callback identity mismatch")
+            callback_time = actual["callback_time"]
+            if isinstance(callback_time, str):
+                callback_time = datetime.fromisoformat(callback_time.replace("Z", "+00:00"))
+            if callback_time.tzinfo is None:
+                callback_time = callback_time.replace(tzinfo=timezone.utc)
+            return CallbackLookup.model_validate({
+                "external_id": external_id, "callback_id": callback_id,
+                "resource_version": self.state.resource_version(f"callback:{external_id}"),
+                "campaign_id": actual["campaign_id"], "lead_id": actual["lead_id"],
+                "user_id": actual.get("user", actual.get("user_id")),
+                "recipient": actual["recipient"], "status": actual["status"],
+                "callback_time": callback_time.astimezone(timezone.utc),
+            }).model_dump(mode="json")
+        except (KeyError, ValueError, AttributeError, ValidationError) as exc:
+            raise ReadbackMismatch([{
+                "type": "callback", "id": callback_id,
+                "mismatches": ["invalid_actual_state"],
+            }]) from exc
 
     def _require_campaign_scope(
         self, command, campaign_id: str, business_unit: str | None = None,

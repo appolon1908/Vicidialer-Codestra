@@ -112,3 +112,29 @@ Campaign and agent actual-state reads and lead external-ID lookups include
 durable ownership mapping return null instead of an invented managed version.
 Versions cover adapter commands, not out-of-band VICIdial edits. Read-back does not
 reserve a version: a subsequent concurrent write can still cause a 409.
+
+### Durable command completion and callback recovery
+
+After a mutation passes read-back, the adapter commits the resource version,
+idempotency response and success audit in one SQLite transaction on a dedicated
+connection. A completion error rolls all three back and retains the resource claim.
+The API returns HTTP 503 with `code=mutation_completion_uncertain` and
+`status=reconciliation_required`; subsequent writes to that resource remain blocked
+by the claim. This transaction covers adapter metadata only: it cannot roll back
+an already applied VICIdial mutation. No automatic claim expiry or deletion is
+performed. Reconciliation must verify both stores before controlled recovery.
+
+An exact replay survives an adapter restart. If another worker completes the exact
+command between replay lookup and version claiming, the adapter returns the recorded
+response. Reusing a completed key with a different payload returns HTTP 409 with
+`code=idempotency_conflict`; callers must not change the payload under the old key.
+Resource collisions also return 409 instead of being converted to validation errors.
+
+`GET /v1/callbacks/by-external-id/{external_id}` requires signed `telephony:read`
+authority. It resolves the durable mapping, reads VICIdial by callback ID, verifies
+the external reference, and returns a typed response containing `external_id`,
+`callback_id`, `resource_version`, `campaign_id`, `lead_id`, `user_id`, `recipient`,
+`status`, and UTC `callback_time`. Internal comments/ownership markers are omitted.
+The status is current read-back, while the version is the committed adapter version.
+An unknown mapping returns 404; missing, conflicting or invalid actual state returns
+409 with `status=reconciliation_required` instead of stale mapping data.

@@ -162,3 +162,79 @@ def test_agent_and_lead_readback_include_committed_versions(api):
     assert agent.json()["resource_version"] == 1
     assert lead.json()["resource_version"] == 1
     assert lead.json()["external_id"] == "callback-lead"
+
+
+def test_reused_command_key_with_changed_payload_is_409(api):
+    payload = campaign_payload()
+    assert post(api, "/v1/campaigns/provision-disabled", payload).status_code == 200
+    payload["context"]["reason"] = "revised synthetic request"
+    response = post(api, "/v1/campaigns/provision-disabled", payload)
+    assert response.status_code == 409
+    assert response.json()["code"] == "idempotency_conflict"
+    assert api[2].state.resource_version("campaign:COD-TEST-OUT") == 1
+
+
+def test_completion_failure_reports_reconciliation_and_blocks_retry(api):
+    state = api[2].state
+    state.db.execute("CREATE TRIGGER fail_completion BEFORE INSERT ON requests "
+                     "BEGIN SELECT RAISE(ABORT, 'private-storage-error'); END")
+    state.db.commit()
+    response = post(api, "/v1/campaigns/provision-disabled", campaign_payload())
+    assert response.status_code == 503
+    assert response.json()["code"] == "mutation_completion_uncertain"
+    assert "private-storage-error" not in response.text
+    retry = post(api, "/v1/campaigns/provision-disabled", campaign_payload())
+    assert retry.status_code == 409
+    assert retry.json()["code"] == "resource_mutation_in_progress"
+
+
+def create_callback(api):
+    from test_adapter import callback_command, provision_callback_dependencies
+
+    provision_callback_dependencies(api[2])
+    response = post(api, "/v1/callbacks/create", callback_command().model_dump(mode="json"),
+                    scope="telephony:callback-write")
+    assert response.status_code == 200
+    return response.json()["actual"]["callback_id"]
+
+
+def test_callback_lookup_recovers_id_and_live_state(api):
+    callback_id = create_callback(api)
+    path = "/v1/callbacks/by-external-id/callback-isolated"
+    api[2].repository.callbacks[callback_id]["status"] = "INACTIVE"
+    response = get(api, path)
+    assert response.status_code == 200
+    assert response.json() == {
+        "external_id": "callback-isolated", "callback_id": callback_id,
+        "resource_version": 1, "campaign_id": "CODT0001", "lead_id": 1,
+        "user_id": "COD1001", "recipient": "USERONLY", "status": "INACTIVE",
+        "callback_time": "2026-07-28T14:00:00Z",
+    }
+    assert api[0].get(path).status_code == 422
+    assert get(api, "/v1/callbacks/by-external-id/unknown").status_code == 404
+
+
+@pytest.mark.parametrize("drift", ["missing", "external_id", "callback_time"])
+def test_callback_lookup_rejects_unverified_actual_state(api, drift):
+    callback_id = create_callback(api)
+    if drift == "missing":
+        del api[2].repository.callbacks[callback_id]
+    else:
+        api[2].repository.callbacks[callback_id][drift] = "invalid-value"
+    response = get(api, "/v1/callbacks/by-external-id/callback-isolated")
+    assert response.status_code == 409
+    assert response.json()["status"] == "reconciliation_required"
+    assert "invalid-value" not in response.text
+
+
+def test_callback_lookup_normalizes_mysql_shape(api):
+    callback_id = create_callback(api)
+    actual = api[2].repository.callbacks[callback_id]
+    actual["user"] = actual.pop("user_id")
+    actual["comments"] = "CODESTRA:callback-isolated:" + "a" * 64 + ":Synthetic"
+    del actual["external_id"]
+    actual["callback_time"] = "2026-07-28 14:00:00"
+    response = get(api, "/v1/callbacks/by-external-id/callback-isolated")
+    assert response.status_code == 200
+    assert response.json()["callback_time"] == "2026-07-28T14:00:00Z"
+    assert "comments" not in response.json()

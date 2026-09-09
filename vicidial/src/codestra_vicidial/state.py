@@ -16,9 +16,18 @@ class ResourceMutationInProgress(RuntimeError):
     """A durable claim prevents overlapping writes to the same resource."""
 
 
+class IdempotencyConflict(ValueError):
+    """A completed command key cannot be reused with a different payload."""
+
+
+class MutationCompletionUncertain(RuntimeError):
+    """Persistence after a verified mutation requires operator reconciliation."""
+
+
 class StateStore:
     def __init__(self, path: Path):
         path.parent.mkdir(parents=True, exist_ok=True)
+        self.path = path.resolve()
         self.db = sqlite3.connect(path, check_same_thread=False)
         self._transaction_lock = threading.RLock()
         self.db.row_factory = sqlite3.Row
@@ -181,6 +190,56 @@ class StateStore:
             )
             self.db.commit()
 
+    def complete_command(
+        self, resource_key: str, expected: int, key: str, operation: str,
+        request_hash: str, result: dict, correlation_id: str, actor: str,
+        target: str,
+    ) -> dict:
+        """Commit the version, replay result and audit as one durable unit.
+
+        Use a dedicated connection so unrelated users of the shared connection
+        cannot accidentally commit part of this transaction.
+        """
+        completed = result | {"resource_version": expected + 1}
+        encoded = json.dumps(completed, sort_keys=True)
+        occurred_at = datetime.now(timezone.utc).isoformat()
+        db = sqlite3.connect(self.path)
+        try:
+            db.execute("BEGIN IMMEDIATE")
+            claim = db.execute(
+                "SELECT expected_version,idempotency_key FROM resource_mutations "
+                "WHERE resource_key=?", (resource_key,),
+            ).fetchone()
+            version = db.execute(
+                "SELECT version FROM resource_versions WHERE resource_key=?",
+                (resource_key,),
+            ).fetchone()
+            if claim != (expected, key) or (version[0] if version else 0) != expected:
+                raise RuntimeError("resource mutation claim was lost")
+            db.execute(
+                "INSERT INTO requests VALUES(?,?,?,?,?)",
+                (operation, key, request_hash, encoded, occurred_at),
+            )
+            db.execute(
+                "INSERT INTO resource_versions VALUES(?,?) "
+                "ON CONFLICT(resource_key) DO UPDATE SET version=excluded.version",
+                (resource_key, expected + 1),
+            )
+            db.execute(
+                "INSERT INTO audit(occurred_at,correlation_id,actor,operation,"
+                "target_hash,outcome,detail_hash) VALUES(?,?,?,?,?,?,?)",
+                (occurred_at, correlation_id, actor, operation, self.digest(target),
+                 "success", self.digest(completed)),
+            )
+            db.execute("DELETE FROM resource_mutations WHERE resource_key=?", (resource_key,))
+            db.commit()
+            return completed
+        except Exception:
+            db.rollback()
+            raise
+        finally:
+            db.close()
+
     def put_campaign_authority(
         self, campaign_id: str, tenant_id: str, business_unit: str,
         supervisor_subject: str,
@@ -292,7 +351,7 @@ class StateStore:
         if row is None:
             return None
         if row["request_hash"] != request_hash:
-            raise ValueError("idempotency conflict")
+            raise IdempotencyConflict("idempotency conflict")
         return json.loads(row["result"])
 
     def record(self, operation: str, key: str, request_hash: str, result: dict) -> None:
