@@ -9,7 +9,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Literal, Protocol
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from .ami_gateway import rfc3339
 from .internal_call_transport import digest, load_protected_json
@@ -50,6 +50,17 @@ def validate_lifecycle_schema(path: Path) -> None:
 class StrictModel(BaseModel):
     model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
 
+    @field_validator(
+        "internal_only", "external_dialing", "recording", "recording_requested",
+        mode="before", check_fields=False,
+    )
+    @classmethod
+    def require_boolean(cls, value):
+        # Literal equality alone also accepts 0/1 and 0.0/1.0.
+        if type(value) is not bool:
+            raise ValueError("safety controls require JSON booleans")
+        return value
+
 
 class InternalCallPolicy(StrictModel):
     schema_version: Literal["1.0"]
@@ -72,6 +83,13 @@ class InternalCallPolicy(StrictModel):
     recording: Literal[False]
     max_calls: Literal[1]
     route_sha256: str = Field(pattern=r"^[a-f0-9]{64}$")
+
+    @field_validator("max_calls", mode="before")
+    @classmethod
+    def require_integer_limit(cls, value):
+        if type(value) is not int:
+            raise ValueError("call limit requires an integer")
+        return value
 
     @classmethod
     def from_file(cls, path: Path, release_sha: str) -> InternalCallPolicy:
@@ -246,7 +264,7 @@ class InternalCallExecutor:
     def _originate(self, command):
         policy = self._policy()
         self._authorize(command, policy)
-        if not self.enabled():
+        if self.enabled() is not True:
             raise PermissionError("internal call originate disabled")
         request_hash = digest(command.model_dump(mode="json"))
         policy_hash = digest(policy.model_dump(mode="json"))
@@ -277,7 +295,7 @@ class InternalCallExecutor:
                 raise PermissionError(
                     "one-call authorization already consumed; administrator reconciliation required"
                 )
-            if not self.identity_ready():
+            if self.identity_ready() is not True:
                 raise PermissionError(
                     "live appolon/6901 activation and campaign binding not verified"
                 )
