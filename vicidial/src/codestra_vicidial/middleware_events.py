@@ -3,6 +3,7 @@ from __future__ import annotations
 import hashlib
 import hmac
 import json
+import os
 import ssl
 import threading
 import time
@@ -168,34 +169,46 @@ class URLlibMTLSTransport:
             ) from exc
 
 
+def _parse_https_endpoint(value: str, *, label: str):
+    # Reject controls before urlsplit can silently remove them.
+    if not isinstance(value, str) or any(ord(c) < 32 or ord(c) == 127 for c in value):
+        raise GatewayConfigurationError(f"{label} must be a clean HTTPS endpoint")
+    cleaned = value.strip()
+    try:
+        parsed = urlsplit(cleaned)
+        port = parsed.port
+        if (
+            parsed.scheme != "https"
+            or not parsed.hostname
+            or parsed.username is not None
+            or parsed.password is not None
+            or any(c.isspace() for c in cleaned)
+            or "\\" in cleaned
+            or parsed.query
+            or parsed.fragment
+            or port == 0
+            or parsed.netloc.endswith(":")
+        ):
+            raise ValueError("invalid endpoint")
+    except ValueError:
+        raise GatewayConfigurationError(
+            f"{label} must be a clean HTTPS endpoint"
+        ) from None
+    return cleaned, parsed
+
+
 def clean_https_origin(value: str, *, label: str) -> str:
-    parsed = urlsplit(value.strip())
-    if (
-        parsed.scheme != "https"
-        or not parsed.hostname
-        or parsed.username is not None
-        or parsed.password is not None
-        or parsed.path not in {"", "/"}
-        or parsed.query
-        or parsed.fragment
-    ):
+    cleaned, parsed = _parse_https_endpoint(value, label=label)
+    if parsed.path not in {"", "/"}:
         raise GatewayConfigurationError(f"{label} must be a clean HTTPS origin")
-    return value.strip().rstrip("/")
+    return cleaned.rstrip("/")
 
 
 def clean_https_url(value: str, *, label: str) -> str:
-    parsed = urlsplit(value.strip())
-    if (
-        parsed.scheme != "https"
-        or not parsed.hostname
-        or parsed.username is not None
-        or parsed.password is not None
-        or not parsed.path.startswith("/")
-        or parsed.query
-        or parsed.fragment
-    ):
+    cleaned, parsed = _parse_https_endpoint(value, label=label)
+    if not parsed.path.startswith("/"):
         raise GatewayConfigurationError(f"{label} must be a clean HTTPS URL")
-    return value.strip()
+    return cleaned
 
 
 @dataclass(frozen=True, slots=True)
