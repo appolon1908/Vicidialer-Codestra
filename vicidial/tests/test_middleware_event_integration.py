@@ -108,3 +108,44 @@ def test_cross_identity_or_malformed_acceptance_is_not_success(changes):
         events.MiddlewareEventPublisher._validate_result(
             result(202, **body), event_id="event-test-001", tenant_id="tenant-test",
         )
+
+
+@pytest.mark.parametrize("body", [
+    b'{"event_id":"other","event_id":"event-test-001","tenant_id":"tenant-test","status":"accepted","duplicate":false}',
+    b'{"event_id":"event-test-001","tenant_id":"tenant-test","status":"accepted","duplicate":false,"extra":NaN}',
+    b'[]', b'null', b'{', b'\xff',
+])
+def test_ambiguous_acknowledgment_is_not_delivery_evidence(body):
+    with pytest.raises(events.PermanentDeliveryError):
+        events.MiddlewareEventPublisher._validate_result(
+            events.HTTPResult(status=202, headers={}, body=body),
+            event_id="event-test-001", tenant_id="tenant-test",
+        )
+
+
+@pytest.mark.parametrize("token", ["", " synthetic", "synthetic ", "two words", "line\nbreak", "\u00e9"])
+def test_malformed_token_is_never_cached_or_sent_to_middleware(token):
+    transport = Transport([
+        result(200, token_type="Bearer", access_token=token, expires_in=60),
+        result(200, token_type="Bearer", access_token="synthetic-valid", expires_in=60),
+    ])
+    provider = events.ClientCredentialsTokenProvider(config=config(), transport=transport, clock=lambda: 1000)
+    publisher = events.MiddlewareEventPublisher(config=config(), transport=transport,
+                                                token_provider=provider, clock=lambda: 1000)
+    with pytest.raises(events.PermanentDeliveryError):
+        publisher.publish(envelope())
+    assert len(transport.requests) == 1
+    assert transport.requests[0]["url"] == config().keycloak_token_url
+    assert provider.token() == "synthetic-valid"
+    assert len(transport.requests) == 2
+
+
+def test_duplicate_token_members_are_rejected_without_response_disclosure():
+    body = b'{"token_type":"Bearer","access_token":"synthetic-private","access_token":"synthetic-other","expires_in":60}'
+    transport = Transport([events.HTTPResult(status=200, headers={}, body=body)])
+    provider = events.ClientCredentialsTokenProvider(config=config(), transport=transport)
+    with pytest.raises(events.PermanentDeliveryError) as failure:
+        provider.token()
+    assert "synthetic-private" not in str(failure.value)
+    assert "synthetic-other" not in str(failure.value)
+    assert failure.value.__suppress_context__ is True
