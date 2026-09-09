@@ -909,6 +909,14 @@ class MySQLRepository:
                     raise CollisionError("active existing agent cannot be adopted")
                 if current_hash != spec.adopt_existing_sha256:
                     raise CollisionError("existing agent adoption proof became stale")
+            group = self._one(
+                "SELECT g.allowed_campaigns FROM vicidial_user_groups AS g "
+                "WHERE g.user_group=%s", (spec.user_group,),
+            )
+            if group is None:
+                raise CollisionError("approved user group is missing")
+            if normalize_allowed_campaigns(group.get("allowed_campaigns")) != spec.campaigns:
+                raise CollisionError("approved user group is not campaign-isolated")
             affected = self._execute(
                 "UPDATE vicidial_users SET active='N',full_name=%s,user_group=%s,"
                 "closer_campaigns=%s WHERE user=%s" +

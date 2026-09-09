@@ -844,6 +844,7 @@ def test_callback_external_id_requires_identical_immutable_payload(harness):
         "callback-retry", CallbackCommand.model_validate(retry_payload))
     assert first["actual"]["callback_id"] == retry["actual"]["callback_id"]
     payload["callback"]["lead_id"] = 2
+    payload["context"] = context(expected_version=2)
     with pytest.raises(PermissionError, match="lead does not belong"):
         service.create_callback(
             "callback-collision", CallbackCommand.model_validate(payload))
@@ -917,3 +918,43 @@ def test_reconciliation_compares_desired_and_actual_and_reports_drift(harness):
                   if row["type"] == "script")
     assert script["status"] == "mismatch"
     assert script["repair_classification"] == "approval_required"
+
+
+@pytest.mark.parametrize("drift", ["policy", "lead", "agent"])
+def test_callback_exact_replay_survives_mutable_policy_drift(harness, drift):
+    service, repo = harness
+    provision_callback_dependencies(service)
+    command = callback_command()
+    first = service.create_callback("callback-stable-replay", command)
+    if drift == "policy":
+        service.state.put_campaign_policy("CODT0001", [], "recording-policy", "reporting-map", False)
+    elif drift == "lead":
+        repo.leads[1]["list_id"] = 31001
+    else:
+        repo.agents["COD1001"]["campaigns"] = ["OTHER001"]
+    replay = service.create_callback("callback-stable-replay", command)
+    assert replay == first | {"idempotent_replay": True}
+    assert len(repo.callbacks) == 1
+    new_command = command.model_copy(update={"context": command.context.model_copy(update={"expected_version": 1})})
+    with pytest.raises(PermissionError):
+        service.create_callback("callback-new-attempt", new_command)
+    assert len(repo.callbacks) == 1
+
+
+@pytest.mark.parametrize("membership", [None, " CODT0001 OTHER001 -", " OTHER001 -"])
+def test_mysql_sync_preflights_target_group_before_update(membership):
+    from types import SimpleNamespace
+    from codestra_vicidial.models import AgentSpec
+    from codestra_vicidial.repository import MySQLRepository
+
+    calls = []
+    repo = MySQLRepository.__new__(MySQLRepository)
+    repo.db = SimpleNamespace(commit=lambda: calls.append("commit"), rollback=lambda: calls.append("rollback"))
+    repo._agent = lambda user: {"user_id": user, "active": "N"}
+    repo._one = lambda sql, args: None if membership is None else {"allowed_campaigns": membership}
+    repo._execute = lambda *args: calls.append("write") or 1
+    spec = AgentSpec(user_id="COD1001", full_name="Synthetic Agent", user_group="COD_TEST_SDR",
+                     campaigns=["CODT0001"], inbound_groups=[], active=False)
+    with pytest.raises(CollisionError):
+        repo.sync_agent_disabled(spec)
+    assert calls == ["rollback"]

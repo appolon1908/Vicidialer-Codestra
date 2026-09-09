@@ -601,8 +601,6 @@ class AdapterService:
             ):
                 raise PermissionError("callback agent campaign binding is not exact")
 
-        authorize()
-
         def apply() -> dict:
             authorize()
             actual = self.repository.create_callback(spec)
