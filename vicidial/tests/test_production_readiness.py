@@ -155,9 +155,7 @@ def test_mysql_readiness_fails_when_operational_connection_cannot_reconnect(
         def ping(self, reconnect=False):
             raise RuntimeError("stale connection")
 
-    module.app.state.adapter_service = SimpleNamespace(
-        repository=MySQLRepository(DeadConnection())
-    )
+    module.app.state.adapter_service.repository = MySQLRepository(DeadConnection())
     monkeypatch.setenv("CODESTRA_ADAPTER_BACKEND", "mysql")
 
     status, body = module.build_readiness()
