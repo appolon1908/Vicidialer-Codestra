@@ -35,6 +35,9 @@ def request_context() -> dict:
     return {
         "correlation_id": "r3-phase2-correlation",
         "actor": "r3-phase2-test",
+        "tenant_id": "tenant-cod", "business_unit": "COD",
+        "campaign_id": "CODT0001", "supervisor_subject": "supervisor-cod",
+        "expected_version": 0,
         "reason": "validate explicit lead publication boundary",
         "requested_at": "2026-08-25T16:00:00Z",
     }
@@ -63,9 +66,16 @@ def service(
     allowed: frozenset[int] = frozenset(),
 ) -> tuple[AdapterService, MemoryRepository]:
     repository = MemoryRepository()
+    state = StateStore(tmp_path / "state.sqlite3")
+    state.put_campaign_authority(
+        "CODT0001", "tenant-cod", "COD", "supervisor-cod")
+    repository.campaigns["CODT0001"] = {"campaign_id": "CODT0001"}
+    repository.lists[21001] = {
+        "list_id": 21001, "campaign_id": "CODT0001", "active": "N"
+    }
     adapter = AdapterService(
         repository,
-        StateStore(tmp_path / "state.sqlite3"),
+        state,
         FeatureFlags(
             writes=writes,
             lead_publication=lead_publication,

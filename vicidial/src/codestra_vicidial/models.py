@@ -27,6 +27,13 @@ class StrictModel(BaseModel):
 class RequestContext(StrictModel):
     correlation_id: Annotated[str, Field(min_length=8, max_length=128)]
     actor: Annotated[str, Field(min_length=3, max_length=128)]
+    tenant_id: Annotated[str, Field(pattern=r"^[A-Za-z0-9._:-]{2,128}$")]
+    business_unit: Literal["MOY", "COD", "SCP", "MBL", "RLP", "FTP", "TRX", "CAL", "TEST"]
+    campaign_id: ActualCampaign
+    supervisor_subject: Annotated[
+        str, Field(pattern=r"^[A-Za-z0-9._:@-]{3,128}$")
+    ]
+    expected_version: Annotated[int, Field(ge=0)]
     reason: Annotated[str, Field(min_length=8, max_length=500)]
     requested_at: datetime
 
@@ -122,7 +129,7 @@ class AgentSpec(StrictModel):
     user_id: Annotated[str, Field(pattern=r"^[A-Z]{3}[0-9]{4,12}$")]
     full_name: Annotated[str, Field(min_length=2, max_length=50)]
     user_group: ResourceCode
-    campaigns: list[ActualCampaign] = Field(min_length=1, max_length=30)
+    campaigns: list[ActualCampaign] = Field(min_length=1, max_length=1)
     inbound_groups: list[ResourceCode] = Field(default_factory=list, max_length=30)
     active: Literal[False] = False
     adopt_existing_sha256: Annotated[
@@ -181,8 +188,8 @@ class CallbackSpec(StrictModel):
     campaign_id: ActualCampaign
     user_id: Annotated[str, Field(pattern=r"^[A-Z]{3}[0-9]{4,12}$")]
     callback_time: datetime
-    recipient: Literal["USERONLY", "ANYONE"] = "USERONLY"
-    comments: Annotated[str, Field(max_length=255)] = ""
+    recipient: Literal["USERONLY"] = "USERONLY"
+    comments: Annotated[str, Field(max_length=127)] = ""
 
     @field_validator("callback_time")
     @classmethod

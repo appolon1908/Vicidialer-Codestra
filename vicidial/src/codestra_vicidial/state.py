@@ -3,6 +3,7 @@ from __future__ import annotations
 import hashlib
 import json
 import sqlite3
+import threading
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -10,7 +11,8 @@ from pathlib import Path
 class StateStore:
     def __init__(self, path: Path):
         path.parent.mkdir(parents=True, exist_ok=True)
-        self.db = sqlite3.connect(path)
+        self.db = sqlite3.connect(path, check_same_thread=False)
+        self._transaction_lock = threading.RLock()
         self.db.row_factory = sqlite3.Row
         self.db.execute("PRAGMA journal_mode=WAL")
         self.db.executescript("""
@@ -42,6 +44,14 @@ class StateStore:
           campaign_id TEXT PRIMARY KEY, transfer_targets TEXT NOT NULL,
           recording_policy_reference TEXT NOT NULL, reporting_mapping TEXT NOT NULL,
           callback_enabled INTEGER NOT NULL, updated_at TEXT NOT NULL);
+        CREATE TABLE IF NOT EXISTS campaign_authority(
+          campaign_id TEXT PRIMARY KEY, tenant_id TEXT NOT NULL,
+          business_unit TEXT NOT NULL, supervisor_subject TEXT NOT NULL);
+        CREATE TABLE IF NOT EXISTS resource_versions(
+          resource_key TEXT PRIMARY KEY, version INTEGER NOT NULL);
+        CREATE TABLE IF NOT EXISTS resource_mutations(
+          resource_key TEXT PRIMARY KEY, expected_version INTEGER NOT NULL,
+          idempotency_key TEXT NOT NULL, created_at TEXT NOT NULL);
         CREATE TABLE IF NOT EXISTS agent_desired(
           user_id TEXT PRIMARY KEY, desired_json TEXT NOT NULL,
           desired_hash TEXT NOT NULL, updated_at TEXT NOT NULL);
@@ -74,6 +84,116 @@ class StateStore:
           ON auth_rate_events(source, occurred_at);
         """)
         self.db.commit()
+
+    def resource_version(self, resource_key: str) -> int:
+        row = self.db.execute(
+            "SELECT version FROM resource_versions WHERE resource_key=?",
+            (resource_key,),
+        ).fetchone()
+        return int(row["version"]) if row else 0
+
+    def claim_resource_version(
+        self, resource_key: str, expected: int, idempotency_key: str
+    ) -> None:
+        with self._transaction_lock:
+            self._claim_resource_version(resource_key, expected, idempotency_key)
+
+    def _claim_resource_version(
+        self, resource_key: str, expected: int, idempotency_key: str
+    ) -> None:
+        try:
+            self.db.execute("BEGIN IMMEDIATE")
+            current = self.resource_version(resource_key)
+            if current != expected:
+                raise ValueError("expected version is stale")
+            pending = self.db.execute(
+                "SELECT 1 FROM resource_mutations WHERE resource_key=?",
+                (resource_key,),
+            ).fetchone()
+            if pending:
+                raise RuntimeError("resource mutation is already in progress")
+            self.db.execute(
+                "INSERT INTO resource_mutations VALUES(?,?,?,?)",
+                (resource_key, expected, idempotency_key,
+                 datetime.now(timezone.utc).isoformat()),
+            )
+            self.db.commit()
+        except Exception:
+            self.db.rollback()
+            raise
+
+    def complete_resource_version(
+        self, resource_key: str, expected: int, idempotency_key: str
+    ) -> int:
+        with self._transaction_lock:
+            return self._complete_resource_version(
+                resource_key, expected, idempotency_key
+            )
+
+    def _complete_resource_version(
+        self, resource_key: str, expected: int, idempotency_key: str
+    ) -> int:
+        try:
+            self.db.execute("BEGIN IMMEDIATE")
+            claim = self.db.execute(
+                "SELECT expected_version,idempotency_key FROM resource_mutations "
+                "WHERE resource_key=?", (resource_key,),
+            ).fetchone()
+            if (
+                claim is None
+                or int(claim["expected_version"]) != expected
+                or claim["idempotency_key"] != idempotency_key
+                or self.resource_version(resource_key) != expected
+            ):
+                raise RuntimeError("resource mutation claim was lost")
+            updated = expected + 1
+            self.db.execute(
+                "INSERT INTO resource_versions(resource_key,version) VALUES(?,?) "
+                "ON CONFLICT(resource_key) DO UPDATE SET version=excluded.version",
+                (resource_key, updated),
+            )
+            self.db.execute(
+                "DELETE FROM resource_mutations WHERE resource_key=?",
+                (resource_key,),
+            )
+            self.db.commit()
+            return updated
+        except Exception:
+            self.db.rollback()
+            raise
+
+    def release_resource_claim(
+        self, resource_key: str, expected: int, idempotency_key: str
+    ) -> None:
+        with self._transaction_lock:
+            self.db.execute(
+                "DELETE FROM resource_mutations WHERE resource_key=? "
+                "AND expected_version=? AND idempotency_key=?",
+                (resource_key, expected, idempotency_key),
+            )
+            self.db.commit()
+
+    def put_campaign_authority(
+        self, campaign_id: str, tenant_id: str, business_unit: str,
+        supervisor_subject: str,
+    ) -> None:
+        current = self.campaign_authority(campaign_id)
+        desired = (tenant_id, business_unit, supervisor_subject)
+        if current and tuple(current[key] for key in (
+            "tenant_id", "business_unit", "supervisor_subject"
+        )) != desired:
+            raise ValueError("campaign authority collision")
+        self.db.execute(
+            "INSERT OR IGNORE INTO campaign_authority VALUES(?,?,?,?)",
+            (campaign_id, *desired),
+        )
+        self.db.commit()
+
+    def campaign_authority(self, campaign_id: str) -> sqlite3.Row | None:
+        return self.db.execute(
+            "SELECT tenant_id,business_unit,supervisor_subject "
+            "FROM campaign_authority WHERE campaign_id=?", (campaign_id,)
+        ).fetchone()
 
     def consume_nonce(
         self,
