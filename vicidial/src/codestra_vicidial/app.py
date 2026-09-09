@@ -8,6 +8,7 @@ from pathlib import Path
 from fastapi import Depends, FastAPI, Header, HTTPException, Request
 from fastapi.openapi.utils import get_openapi
 from fastapi.responses import JSONResponse
+from pydantic import ValidationError
 
 from . import __version__
 from .agent_provisioning import AgentProvisioningPolicy
@@ -31,7 +32,7 @@ from .release import load_release_info
 from .repository import CollisionError, MemoryRepository, MySQLRepository
 from .security import RequestAuthenticator
 from .service import AdapterService, FeatureFlags, ReadbackMismatch
-from .state import StateStore
+from .state import ResourceMutationInProgress, StaleResourceVersion, StateStore
 
 _AUTHENTICATION_HEADERS = (
     "X-Service-Identity",
@@ -66,6 +67,21 @@ _PROTECTED_SCOPE_BY_ROUTE = {
     ("post", "/v1/transfer-policies/sync"): "telephony:transfer-policy",
     ("post", "/v1/reconciliation/run"): "telephony:read",
     ("get", "/v1/reconciliation/{run_id}"): "telephony:read",
+}
+
+
+_COMMAND_MODEL_BY_ROUTE = {
+    "/v1/campaigns/validate": CampaignCommand,
+    "/v1/campaigns/provision-disabled": CampaignCommand,
+    "/v1/campaigns/disable": CampaignCommand,
+    "/v1/agents/sync": AgentCommand,
+    "/v1/agents/provision-disabled": ProvisionAgentCommand,
+    "/v1/agents/disable": DisableAgentCommand,
+    "/v1/leads/publish": LeadCommand,
+    "/v1/callbacks/create": CallbackCommand,
+    "/v1/transfer-policies/sync": TransferPolicyCommand,
+    "/v1/reconciliation/campaigns/provision-disabled": ReconciliationCampaignCommand,
+    "/v1/calls/internal/originate": OriginateCommand,
 }
 
 
@@ -124,6 +140,23 @@ def install_openapi_contract(app: FastAPI) -> None:
             },
         })
 
+        # Bodies are parsed only after signature verification. Publish their
+        # actual Pydantic schemas explicitly so generated clients see the same
+        # command contract without moving validation ahead of authentication.
+        schemas = components.setdefault("schemas", {})
+        for route_path, model in _COMMAND_MODEL_BY_ROUTE.items():
+            command_schema = model.model_json_schema(
+                ref_template="#/components/schemas/{model}"
+            )
+            schemas.update(command_schema.pop("$defs", {}))
+            schemas[model.__name__] = command_schema
+            schema["paths"][route_path]["post"]["requestBody"] = {
+                "required": True,
+                "content": {"application/json": {"schema": {
+                    "$ref": f"#/components/schemas/{model.__name__}"
+                }}},
+            }
+
         observed: set[tuple[str, str]] = set()
         for route_path, path_item in schema.get("paths", {}).items():
             if not route_path.startswith("/v1/"):
@@ -142,6 +175,15 @@ def install_openapi_contract(app: FastAPI) -> None:
                         "OpenAPI protected route has no scope contract: "
                         f"{key}"
                     )
+                operation["responses"]["403"] = {
+                    "description": "Authentication or operation authority denied"
+                }
+                operation["responses"]["409"] = {
+                    "description": "Resource collision, stale version, mutation in progress, or read-back mismatch"
+                }
+                operation["responses"]["422"] = {
+                    "description": "Invalid request; submitted values are omitted from command validation errors"
+                }
                 operation["security"] = [{
                     "ServiceIdentity": [],
                     "RequestSignature": [],
@@ -185,6 +227,24 @@ def create_app(
     )
     app.state.adapter_service = service
     app.state.internal_call_executor = internal_call_executor
+
+    @app.exception_handler(ValidationError)
+    async def command_validation_handler(_request: Request, exc: ValidationError):
+        return JSONResponse(status_code=422, content={"detail": [
+            {"loc": list(error["loc"]), "type": error["type"]}
+            for error in exc.errors(include_input=False, include_context=False)
+        ]})
+
+    @app.exception_handler(StaleResourceVersion)
+    @app.exception_handler(ResourceMutationInProgress)
+    async def version_conflict_handler(_request: Request, exc: Exception):
+        code = (
+            "stale_resource_version" if isinstance(exc, StaleResourceVersion)
+            else "resource_mutation_in_progress"
+        )
+        return JSONResponse(status_code=409, content={
+            "code": code, "detail": str(exc),
+        })
 
     @app.exception_handler(CollisionError)
     async def collision_handler(_request: Request, exc: CollisionError):
@@ -255,6 +315,8 @@ def create_app(
             return handler(idempotency_key, command)
         except PermissionError as exc:
             raise HTTPException(status_code=403, detail=str(exc)) from exc
+        except (ValidationError, StaleResourceVersion):
+            raise
         except ValueError as exc:
             raise HTTPException(status_code=422, detail=str(exc)) from exc
 
@@ -285,12 +347,10 @@ def create_app(
 
     @app.post("/v1/campaigns/validate")
     async def campaign_validate(request: Request, values=Depends(headers)):
-        key, identity, scopes, timestamp, nonce, signature, signature_version = values
-        body = await authorize(
-            request, "telephony:read", identity, scopes, timestamp, nonce,
-            signature, signature_version, key,
+        return await mutation(
+            request, CampaignCommand, lambda _key, command: service.validate_campaign(command),
+            "telephony:read", *values,
         )
-        return service.validate_campaign(CampaignCommand.model_validate_json(body))
 
     @app.post("/v1/campaigns/provision-disabled")
     async def campaign_provision(request: Request, values=Depends(headers)):
@@ -311,7 +371,11 @@ def create_app(
         actual = service.repository.campaign(campaign_id)
         if not actual:
             raise HTTPException(404, "campaign missing")
-        return actual
+        mapping = service.state.mapping_for_actual("campaign", campaign_id)
+        return actual | {"resource_version": (
+            service.state.resource_version(f"campaign:{mapping['external_id']}")
+            if mapping else None
+        )}
 
     @app.post("/v1/agents/sync")
     async def agent_sync(request: Request, values=Depends(headers)):
@@ -333,6 +397,8 @@ def create_app(
             return service.provision_agent(key, command)
         except PermissionError as exc:
             raise HTTPException(status_code=403, detail=str(exc)) from exc
+        except (ValidationError, StaleResourceVersion):
+            raise
         except ValueError as exc:
             raise HTTPException(status_code=422, detail=str(exc)) from exc
 
@@ -347,7 +413,9 @@ def create_app(
         actual = service.repository.agent(user_id)
         if not actual:
             raise HTTPException(404, "agent missing")
-        return actual
+        return actual | {
+            "resource_version": service.state.resource_version(f"agent:{user_id}")
+        }
 
     @app.get("/v1/agents/availability/{user_id}/{extension}")
     async def agent_availability(request: Request, user_id: str, extension: str,
@@ -424,7 +492,10 @@ def create_app(
         mapping = service.state.mapping("lead", external_id)
         if not mapping:
             raise HTTPException(404, "lead missing")
-        return {"external_id": external_id, "lead_id": mapping["actual_id"]}
+        return {
+            "external_id": external_id, "lead_id": mapping["actual_id"],
+            "resource_version": service.state.resource_version(f"lead:{external_id}"),
+        }
 
     @app.post("/v1/callbacks/create")
     async def callback_create(request: Request, values=Depends(headers)):
@@ -455,6 +526,8 @@ def create_app(
             return service.provision_campaign(key, command)
         except PermissionError as exc:
             raise HTTPException(status_code=403, detail=str(exc)) from exc
+        except (ValidationError, StaleResourceVersion):
+            raise
         except ValueError as exc:
             raise HTTPException(status_code=422, detail=str(exc)) from exc
 

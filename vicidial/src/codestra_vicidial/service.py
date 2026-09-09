@@ -19,7 +19,7 @@ from .repository import (
     callback_payload_hash,
     normalize_allowed_campaigns,
 )
-from .state import StateStore
+from .state import StaleResourceVersion, StateStore
 from .credential_authority import CredentialAuthorityUnavailable
 
 
@@ -258,7 +258,7 @@ class AdapterService:
         )
         resource_key = f"campaign:{command.campaign.canonical_id}"
         if self.state.resource_version(resource_key) != command.context.expected_version:
-            raise ValueError("expected version is stale")
+            raise StaleResourceVersion("expected version is stale")
         preflight = self.repository.validate_campaign(command.campaign)
         return {"valid": True, "collision": preflight["collision"],
                 "actual_id": command.campaign.actual_id,

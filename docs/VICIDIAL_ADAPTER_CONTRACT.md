@@ -87,3 +87,28 @@ Requirements:
 All newly created campaigns, lists, groups, scripts, and workflows are disabled or non-dialing by default.
 
 The adapter must refuse an activation command unless the middleware sends evidence references for the required gates and the activation feature flag is enabled.
+
+## Middleware request and concurrency contract
+
+`/openapi.json` includes the exact JSON command schemas for every body-bearing
+command, including tenant, business-unit, campaign, supervisor and
+`expected_version` requirements. HMAC v2 still signs the exact transmitted bytes;
+command parsing follows authentication. Campaign validation uses the same error
+handling as provisioning and returns 403 for denied authority and 422 for malformed
+commands. Command validation errors identify field locations and error types,
+without echoing submitted values.
+
+A stale `expected_version` returns HTTP 409 with `code=stale_resource_version`.
+An outstanding durable resource claim returns HTTP 409 with
+`code=resource_mutation_in_progress`. Neither rejection applies a new mutation.
+Clients should reconcile a stale version before submitting a revised command with
+a new idempotency key. For an ambiguous response, retry the identical command and
+key with a fresh timestamp, nonce and signature; a recorded successful result
+retains its original resource version and reports `idempotent_replay=true`.
+A pending claim requires reconciliation; clients must not clear claims themselves.
+
+Campaign and agent actual-state reads and lead external-ID lookups include
+`resource_version`, the adapter's committed command version. Campaigns without a
+durable ownership mapping return null instead of an invented managed version.
+Versions cover adapter commands, not out-of-band VICIdial edits. Read-back does not
+reserve a version: a subsequent concurrent write can still cause a 409.

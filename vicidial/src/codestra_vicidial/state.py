@@ -8,6 +8,14 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 
+class StaleResourceVersion(ValueError):
+    """The caller must reconcile its version before submitting a new command."""
+
+
+class ResourceMutationInProgress(RuntimeError):
+    """A durable claim prevents overlapping writes to the same resource."""
+
+
 class StateStore:
     def __init__(self, path: Path):
         path.parent.mkdir(parents=True, exist_ok=True)
@@ -105,13 +113,13 @@ class StateStore:
             self.db.execute("BEGIN IMMEDIATE")
             current = self.resource_version(resource_key)
             if current != expected:
-                raise ValueError("expected version is stale")
+                raise StaleResourceVersion("expected version is stale")
             pending = self.db.execute(
                 "SELECT 1 FROM resource_mutations WHERE resource_key=?",
                 (resource_key,),
             ).fetchone()
             if pending:
-                raise RuntimeError("resource mutation is already in progress")
+                raise ResourceMutationInProgress("resource mutation is already in progress")
             self.db.execute(
                 "INSERT INTO resource_mutations VALUES(?,?,?,?)",
                 (resource_key, expected, idempotency_key,
