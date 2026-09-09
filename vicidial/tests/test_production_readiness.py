@@ -97,8 +97,6 @@ def test_mysql_readiness_reconnects_and_probes_operational_repository(
     monkeypatch, tmp_path
 ):
     module = load_production_app(monkeypatch, tmp_path)
-    from types import SimpleNamespace
-
     from codestra_vicidial.repository import MySQLRepository
 
     class ReadyCursor:
@@ -136,7 +134,7 @@ def test_mysql_readiness_reconnects_and_probes_operational_repository(
 
     connection = ReadyConnection()
     repository = MySQLRepository(connection)
-    module.app.state.adapter_service = SimpleNamespace(repository=repository)
+    module.app.state.adapter_service.repository = repository
     monkeypatch.setenv("CODESTRA_ADAPTER_BACKEND", "mysql")
 
     status, body = module.build_readiness()
@@ -151,8 +149,6 @@ def test_mysql_readiness_fails_when_operational_connection_cannot_reconnect(
     monkeypatch, tmp_path
 ):
     module = load_production_app(monkeypatch, tmp_path)
-    from types import SimpleNamespace
-
     from codestra_vicidial.repository import MySQLRepository
 
     class DeadConnection:
@@ -168,3 +164,54 @@ def test_mysql_readiness_fails_when_operational_connection_cannot_reconnect(
 
     assert status == 503
     assert body["checks"]["repository"] is False
+
+
+def test_readiness_rejects_empty_sqlite_file(monkeypatch, tmp_path):
+    module = load_production_app(monkeypatch, tmp_path)
+    state = module.app.state.adapter_service.state
+    state.db.close()
+    for suffix in ("", "-wal", "-shm"):
+        path = tmp_path / ("state.sqlite3" + suffix)
+        path.unlink(missing_ok=True)
+    (tmp_path / "state.sqlite3").touch()
+    status, body = module.build_readiness()
+    assert status == 503
+    assert body["checks"]["state_store"] is False
+    assert (tmp_path / "state.sqlite3").stat().st_size == 0
+
+
+def test_readiness_rejects_missing_replay_schema(monkeypatch, tmp_path):
+    module = load_production_app(monkeypatch, tmp_path)
+    state = module.app.state.adapter_service.state
+    state.db.execute("DROP TABLE requests")
+    state.db.commit()
+    status, body = module.build_readiness()
+    assert status == 503
+    assert body["checks"]["state_store"] is False
+
+
+def test_readiness_rejects_incompatible_version_schema(monkeypatch, tmp_path):
+    module = load_production_app(monkeypatch, tmp_path)
+    state = module.app.state.adapter_service.state
+    state.db.execute("ALTER TABLE resource_epochs RENAME COLUMN epoch TO obsolete_epoch")
+    state.db.commit()
+    assert module.build_readiness()[0] == 503
+
+
+def test_readiness_rejects_different_configured_state_store(monkeypatch, tmp_path):
+    from codestra_vicidial.state import StateStore
+
+    module = load_production_app(monkeypatch, tmp_path)
+    other_path = tmp_path / "other.sqlite3"
+    StateStore(other_path).db.close()
+    monkeypatch.setenv("CODESTRA_ADAPTER_STATE", str(other_path))
+    assert module.build_readiness()[0] == 503
+
+
+def test_readiness_missing_file_is_not_recreated(monkeypatch, tmp_path):
+    module = load_production_app(monkeypatch, tmp_path)
+    state = module.app.state.adapter_service.state
+    state.db.close()
+    state.path.unlink()
+    assert module.build_readiness()[0] == 503
+    assert not state.path.exists()
