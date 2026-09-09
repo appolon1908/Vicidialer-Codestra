@@ -149,3 +149,43 @@ def test_duplicate_token_members_are_rejected_without_response_disclosure():
     assert "synthetic-private" not in str(failure.value)
     assert "synthetic-other" not in str(failure.value)
     assert failure.value.__suppress_context__ is True
+
+
+def test_runtime_binds_token_and_event_transports_to_distinct_hosts(tmp_path, monkeypatch):
+    from types import SimpleNamespace
+    from codestra_vicidial import run_ami_gateway as runtime
+
+    event_transport = events.URLlibMTLSTransport(
+        ca_file=tmp_path / "ca.pem", client_cert_file=tmp_path / "client.pem",
+        client_key_file=tmp_path / "client.key", server_hostname="middleware.invalid",
+    )
+    settings = SimpleNamespace(
+        agent_directory_file=tmp_path / "directory.json", state_database=tmp_path / "state.db",
+        delivery_idle_seconds=0.25, ami=object(), status_file=tmp_path / "status.json",
+        source_sha="a" * 40,
+    )
+    monkeypatch.setattr(runtime.GatewayRuntimeConfig, "from_environment", lambda source: settings)
+    monkeypatch.setattr(runtime.AgentDirectory, "from_file", lambda path: object())
+    monkeypatch.setattr(runtime, "LifecycleStore", lambda path: object())
+    monkeypatch.setattr(runtime, "delivery_config_from_environment", lambda source: (config(), event_transport))
+    monkeypatch.setattr(runtime, "AMIClient", lambda ami: object())
+    monkeypatch.setattr(runtime, "StatusWriter", lambda *args, **kwargs: object())
+    monkeypatch.setattr(runtime, "GatewayRuntime", lambda **kwargs: SimpleNamespace(**kwargs))
+    built = runtime.build_runtime({})
+    publisher = built.delivery_worker.publisher
+    token_transport = publisher.token_provider.transport
+    assert publisher.transport is event_transport
+    assert token_transport is not event_transport
+    assert token_transport.server_hostname == "identity.invalid"
+    assert event_transport.server_hostname == "middleware.invalid"
+    for field in ("ca_file", "client_cert_file", "client_key_file", "maximum_response_bytes"):
+        assert getattr(token_transport, field) == getattr(event_transport, field)
+
+    # A mistaken cross-host call must fail before opening a socket.
+    for transport, url in (
+        (token_transport, config().event_url),
+        (event_transport, config().keycloak_token_url),
+    ):
+        monkeypatch.setattr(transport, "_opener", lambda: pytest.fail("unexpected network attempt"))
+        with pytest.raises(events.PermanentDeliveryError, match="TLS identity"):
+            transport.request(method="POST", url=url, headers={}, body=b"", timeout_seconds=1)
