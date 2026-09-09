@@ -28,9 +28,16 @@ from codestra_vicidial.state import StateStore
 from pydantic import ValidationError
 
 
-def context() -> dict:
+def context(
+    *, expected_version: int = 0, campaign_id: str = "CODT0001",
+    business_unit: str = "COD", tenant_id: str = "tenant-cod",
+    supervisor_subject: str = "supervisor-cod",
+) -> dict:
     return {
         "correlation_id": "corr-12345678", "actor": "middleware-test",
+        "tenant_id": tenant_id, "business_unit": business_unit,
+        "campaign_id": campaign_id, "supervisor_subject": supervisor_subject,
+        "expected_version": expected_version,
         "reason": "synthetic disabled provisioning test",
         "requested_at": "2026-07-27T20:00:00Z",
     }
@@ -143,8 +150,11 @@ def test_all_certified_reconciliation_campaign_ids_match_contract():
 @pytest.fixture
 def harness(tmp_path: Path):
     repo = MemoryRepository()
+    state = StateStore(tmp_path / "state.sqlite3")
+    state.put_campaign_authority(
+        "CODT0001", "tenant-cod", "COD", "supervisor-cod")
     service = AdapterService(
-        repo, StateStore(tmp_path / "state.sqlite3"),
+        repo, state,
         FeatureFlags(
             writes=True,
             provisioning=True,
@@ -160,8 +170,11 @@ def harness(tmp_path: Path):
 
 
 def service_for(repo: MemoryRepository, tmp_path: Path) -> AdapterService:
+    state = StateStore(tmp_path / "state.sqlite3")
+    state.put_campaign_authority(
+        "CODT0001", "tenant-cod", "COD", "supervisor-cod")
     return AdapterService(
-        repo, StateStore(tmp_path / "state.sqlite3"),
+        repo, state,
         FeatureFlags(
             writes=True,
             provisioning=True,
@@ -335,7 +348,10 @@ def test_compatible_adoption(harness):
     service, _ = harness
     command = CampaignCommand.model_validate(campaign_payload())
     service.provision_campaign("first-key", command)
-    result = service.provision_campaign("second-key", command)
+    payload = campaign_payload()
+    payload["context"] = context(expected_version=1)
+    result = service.provision_campaign(
+        "second-key", CampaignCommand.model_validate(payload))
     assert {row["result"] for row in result["resources"]} == {"adopted"}
 
 
@@ -380,7 +396,10 @@ def test_user_group_repeated_request_does_not_duplicate_campaign(harness):
     repo.groups[("user", "COD_TEST_SDR")] = compatible_user_group(" CODT0001 -")
     command = CampaignCommand.model_validate(campaign_payload())
     service.provision_campaign("group-repeat-one", command)
-    service.provision_campaign("group-repeat-two", command)
+    payload = campaign_payload()
+    payload["context"] = context(expected_version=1)
+    service.provision_campaign(
+        "group-repeat-two", CampaignCommand.model_validate(payload))
     memberships = normalize_allowed_campaigns(
         repo.groups[("user", "COD_TEST_SDR")]["allowed_campaigns"])
     assert memberships == ["CODT0001"]
@@ -573,6 +592,51 @@ def test_kill_switch_blocks_mutation(tmp_path):
     assert repo.campaigns == {}
 
 
+@pytest.mark.parametrize(
+    ("field", "value", "error"),
+    [
+        ("tenant_id", "tenant-other", PermissionError),
+        ("business_unit", "SCP", PermissionError),
+        ("campaign_id", "OTHER001", PermissionError),
+        ("supervisor_subject", "supervisor-other", PermissionError),
+    ],
+)
+def test_campaign_authority_claims_fail_closed_without_mutation(
+    harness, field, value, error
+):
+    service, repo = harness
+    payload = campaign_payload()
+    payload["context"] = context(**{field: value})
+    with pytest.raises(error):
+        service.disable_campaign(
+            "cross-authority", CampaignCommand.model_validate(payload)
+        )
+    assert repo.campaigns == {}
+
+
+def test_stale_expected_version_rejects_before_second_mutation(harness):
+    service, repo = harness
+    command = CampaignCommand.model_validate(campaign_payload())
+    first = service.provision_campaign("version-first", command)
+    before = deepcopy(repo.campaigns)
+    assert first["resource_version"] == 1
+    with pytest.raises(ValueError, match="expected version is stale"):
+        service.disable_campaign("version-stale", command)
+    assert repo.campaigns == before
+
+
+def test_resource_version_claim_prevents_overlapping_mutations(tmp_path):
+    state = StateStore(tmp_path / "version-claim.sqlite3")
+    state.claim_resource_version("campaign:COD-TEST-OUT", 0, "first")
+    with pytest.raises(RuntimeError, match="already in progress"):
+        state.claim_resource_version("campaign:COD-TEST-OUT", 0, "second")
+    state.release_resource_claim("campaign:COD-TEST-OUT", 0, "first")
+    state.claim_resource_version("campaign:COD-TEST-OUT", 0, "second")
+    assert state.complete_resource_version(
+        "campaign:COD-TEST-OUT", 0, "second"
+    ) == 1
+
+
 def test_agent_sync_disable(harness):
     service, repo = harness
     command = AgentCommand.model_validate({
@@ -586,13 +650,17 @@ def test_agent_sync_disable(harness):
     assert service.sync_agent("agent-sync", command)["actual"]["active"] is False
     disabled = service.disable_agent(
         "agent-disable", DisableAgentCommand.model_validate(
-            {"context": context(), "user_id": "COD1001"}))
+            {"context": context(expected_version=1), "user_id": "COD1001"}))
     assert disabled["actual"]["active"] is False
     assert repo.agents["COD1001"]["full_name"] == "Synthetic Agent"
 
 
 def test_lead_publication_duplicate_retry_and_collision(harness):
     service, repo = harness
+    repo.campaigns["CODT0001"] = {"campaign_id": "CODT0001"}
+    repo.lists[21001] = {
+        "list_id": 21001, "campaign_id": "CODT0001", "active": "N"
+    }
     payload = {
         "context": context(),
         "lead": {
@@ -603,10 +671,13 @@ def test_lead_publication_duplicate_retry_and_collision(harness):
     }
     command = LeadCommand.model_validate(payload)
     first = service.publish_lead("lead-one", command)
+    payload["context"] = context(expected_version=1)
+    command = LeadCommand.model_validate(payload)
     second = service.publish_lead("lead-two", command)
     assert first["actual"]["lead_id"] == second["actual"]["lead_id"]
     assert len(repo.leads) == 1
     payload["lead"]["phone_number"] = "2025550100"
+    payload["context"] = context(expected_version=2)
     with pytest.raises(CollisionError):
         service.publish_lead("lead-three", LeadCommand.model_validate(payload))
 
@@ -631,7 +702,7 @@ def test_callback_and_transfer_policy(harness):
     result = service.sync_transfer_policy("policy-one", policy)
     assert result["allowed_targets"] == ["COD_TEST_CLOSERS"]
     bad = TransferPolicyCommand.model_validate({
-        "context": context(),
+        "context": context(expected_version=1),
         "policy": {"campaign_id": "CODT0001", "allowed_targets": ["SCP_OTHER_CLOSER"]},
     })
     with pytest.raises(ValueError, match="target missing"):
@@ -642,7 +713,10 @@ def test_disable_and_reconciliation(harness):
     service, _ = harness
     command = CampaignCommand.model_validate(campaign_payload())
     service.provision_campaign("provision-first", command)
-    disabled = service.disable_campaign("disable-next", command)
+    payload = campaign_payload()
+    payload["context"] = context(expected_version=1)
+    disabled = service.disable_campaign(
+        "disable-next", CampaignCommand.model_validate(payload))
     assert disabled["actual"]["active"] == "N"
     assert service.reconciliation()["inventory"]["campaigns"] == 1
 
@@ -688,6 +762,7 @@ def test_provision_rejects_canonical_remap_before_creating_second_campaign(harne
     service.provision_campaign("mapping-first", command)
     changed = campaign_payload()
     changed["campaign"]["actual_id"] = "CODT0002"
+    changed["context"] = context(campaign_id="CODT0002", expected_version=1)
     with pytest.raises(CollisionError, match="mapping collision"):
         service.provision_campaign(
             "mapping-second", CampaignCommand.model_validate(changed))
@@ -763,8 +838,10 @@ def test_callback_external_id_requires_identical_immutable_payload(harness):
     }
     first = service.create_callback(
         "callback-original", CallbackCommand.model_validate(payload))
+    retry_payload = deepcopy(payload)
+    retry_payload["context"] = context(expected_version=1)
     retry = service.create_callback(
-        "callback-retry", CallbackCommand.model_validate(payload))
+        "callback-retry", CallbackCommand.model_validate(retry_payload))
     assert first["actual"]["callback_id"] == retry["actual"]["callback_id"]
     payload["callback"]["lead_id"] = 2
     with pytest.raises(PermissionError, match="lead does not belong"):

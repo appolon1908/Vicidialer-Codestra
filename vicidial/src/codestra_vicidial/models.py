@@ -27,6 +27,13 @@ class StrictModel(BaseModel):
 class RequestContext(StrictModel):
     correlation_id: Annotated[str, Field(min_length=8, max_length=128)]
     actor: Annotated[str, Field(min_length=3, max_length=128)]
+    tenant_id: Annotated[str, Field(pattern=r"^[A-Za-z0-9._:-]{2,128}$")]
+    business_unit: Literal["MOY", "COD", "SCP", "MBL", "RLP", "FTP", "TRX", "CAL", "TEST"]
+    campaign_id: ActualCampaign
+    supervisor_subject: Annotated[
+        str, Field(pattern=r"^[A-Za-z0-9._:@-]{3,128}$")
+    ]
+    expected_version: Annotated[int, Field(ge=0)]
     reason: Annotated[str, Field(min_length=8, max_length=500)]
     requested_at: datetime
 

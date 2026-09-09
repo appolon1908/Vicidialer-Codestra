@@ -29,7 +29,12 @@ def enabled_service(tmp_path):
         writes=True, provisioning=True, agent_sync=True,
         callback_writes=True, transfer_policy_sync=True,
     )
-    return AdapterService(repo, StateStore(tmp_path / "state.sqlite3"), flags), repo
+    state = StateStore(tmp_path / "state.sqlite3")
+    state.put_campaign_authority(
+        "CODT0001", "tenant-cod", "COD", "supervisor-cod")
+    state.put_campaign_authority(
+        "CODT0002", "tenant-cod", "COD", "supervisor-cod")
+    return AdapterService(repo, state, flags), repo
 
 
 @pytest.mark.parametrize("external_id", ["unsafe%id", "unsafe_id", "slash/id", "space id"])
@@ -86,8 +91,10 @@ def test_agent_desired_ownership_and_complete_readback_are_durable(tmp_path):
             row["inbound_groups"] = []
             return row
 
-    broken = AdapterService(IncompleteReadback(), StateStore(tmp_path / "broken.sqlite3"),
-                            service.flags)
+    broken_state = StateStore(tmp_path / "broken.sqlite3")
+    broken_state.put_campaign_authority(
+        "CODT0001", "tenant-cod", "COD", "supervisor-cod")
+    broken = AdapterService(IncompleteReadback(), broken_state, service.flags)
     with pytest.raises(RuntimeError, match="inbound_groups"):
         broken.sync_agent("broken-agent", command)
     assert broken.state.mapping("agent", "COD1001") is None
@@ -133,6 +140,7 @@ def test_owned_agent_accepts_desired_state_update_after_readback(tmp_path):
     service.sync_agent("agent-version-1", AgentCommand.model_validate(payload))
     payload["agent"]["full_name"] = "Updated Synthetic Agent"
     payload["agent"]["campaigns"] = ["CODT0002"]
+    payload["context"] = context(expected_version=1, campaign_id="CODT0002")
     result = service.sync_agent(
         "agent-version-2", AgentCommand.model_validate(payload)
     )
@@ -249,6 +257,9 @@ def test_mysql_agent_disable_does_not_parse_legacy_campaign_membership():
 def test_test_syn_transfer_uses_test_business_unit(tmp_path):
     service, repo = enabled_service(tmp_path)
     payload = campaign_payload()
+    payload["context"] = context(
+        campaign_id="TSTSYN01", business_unit="TEST",
+        tenant_id="tenant-test", supervisor_subject="subject-appolon")
     payload["campaign"].update({
         "canonical_id": "TEST_SYN", "actual_id": "TSTSYN01",
         "business_unit": "TEST", "name": "Synthetic TEST campaign",
@@ -268,7 +279,10 @@ def test_test_syn_transfer_uses_test_business_unit(tmp_path):
     service.provision_campaign("test-syn", command)
     target = command.campaign.transfer_targets[0]
     policy = TransferPolicyCommand.model_validate({
-        "context": context(),
+        "context": context(
+            campaign_id="TSTSYN01", business_unit="TEST",
+            tenant_id="tenant-test", supervisor_subject="subject-appolon",
+        ),
         "policy": {"campaign_id": command.campaign.actual_id,
                    "allowed_targets": [target]},
     })

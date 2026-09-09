@@ -61,16 +61,53 @@ class AdapterService:
         if prior is not None:
             return prior | {"idempotent_replay": True}
         context = command.context
+        resource_key = f"{operation.split('.', 1)[0]}:{target}"
+        claimed = False
         try:
+            self.state.claim_resource_version(
+                resource_key, context.expected_version, key
+            )
+            claimed = True
             result = fn()
+            result = result | {
+                "resource_version": self.state.complete_resource_version(
+                    resource_key, context.expected_version, key
+                )
+            }
+            claimed = False
             self.state.record(operation, key, digest, result)
             self.state.audit(context.correlation_id, context.actor, operation, target,
                              "success", result)
             return result | {"idempotent_replay": False}
         except Exception as exc:
+            if claimed:
+                self.state.release_resource_claim(
+                    resource_key, context.expected_version, key
+                )
             self.state.audit(context.correlation_id, context.actor, operation, target,
                              "rejected", {"error_type": type(exc).__name__})
             raise
+
+    def _require_campaign_scope(
+        self, command, campaign_id: str, business_unit: str | None = None,
+        *, allow_unregistered: bool = False,
+    ) -> None:
+        context = command.context
+        if context.campaign_id != campaign_id:
+            raise PermissionError("request campaign claim mismatch")
+        if business_unit is not None and context.business_unit != business_unit:
+            raise PermissionError("request business-unit claim mismatch")
+        authority = self.state.campaign_authority(campaign_id)
+        if authority is None:
+            if allow_unregistered:
+                return
+            raise PermissionError("campaign authority is not registered")
+        if (
+            authority["tenant_id"] != context.tenant_id
+            or authority["business_unit"] != context.business_unit
+            or authority["supervisor_subject"] != context.supervisor_subject
+        ):
+            raise PermissionError("request campaign authority mismatch")
 
     def _require(self, enabled: bool, name: str) -> None:
         if not self.flags.writes:
@@ -215,6 +252,13 @@ class AdapterService:
         return actual, results
 
     def validate_campaign(self, command: CampaignCommand) -> dict:
+        self._require_campaign_scope(
+            command, command.campaign.actual_id, command.campaign.business_unit,
+            allow_unregistered=True,
+        )
+        resource_key = f"campaign:{command.campaign.canonical_id}"
+        if self.state.resource_version(resource_key) != command.context.expected_version:
+            raise ValueError("expected version is stale")
         preflight = self.repository.validate_campaign(command.campaign)
         return {"valid": True, "collision": preflight["collision"],
                 "actual_id": command.campaign.actual_id,
@@ -222,6 +266,10 @@ class AdapterService:
 
     def provision_campaign(self, key: str, command: CampaignCommand) -> dict:
         self._require(self.flags.provisioning, "campaign provisioning")
+        self._require_campaign_scope(
+            command, command.campaign.actual_id, command.campaign.business_unit,
+            allow_unregistered=True,
+        )
 
         def apply() -> dict:
             desired_payload = command.campaign.model_dump(mode="json")
@@ -291,6 +339,12 @@ class AdapterService:
                     command.campaign.canonical_id,
                     "reconciliation_required", redacted)
                 raise ReadbackMismatch(readback)
+            self.state.put_campaign_authority(
+                command.campaign.actual_id,
+                command.context.tenant_id,
+                command.context.business_unit,
+                command.context.supervisor_subject,
+            )
             self.state.record_evidence(
                 "campaign.provision-disabled",
                 command.campaign.canonical_id,
@@ -307,6 +361,8 @@ class AdapterService:
 
     def disable_campaign(self, key: str, command: CampaignCommand) -> dict:
         self._require(self.flags.provisioning, "campaign provisioning")
+        self._require_campaign_scope(
+            command, command.campaign.actual_id, command.campaign.business_unit)
 
         def apply() -> dict:
             spec = command.campaign
@@ -335,6 +391,7 @@ class AdapterService:
 
     def sync_agent(self, key: str, command: AgentCommand) -> dict:
         self._require(self.flags.agent_sync, "agent sync")
+        self._require_campaign_scope(command, command.agent.campaigns[0])
 
         def apply() -> dict:
             desired = command.agent.model_dump(mode="json") | {"active": False}
@@ -413,6 +470,7 @@ class AdapterService:
 
     def provision_agent(self, key: str, command: ProvisionAgentCommand) -> dict:
         self._require(self.flags.agent_provisioning, "agent provisioning")
+        self._require_campaign_scope(command, command.agent.campaigns[0])
         if self.credential_authority is None:
             raise CredentialAuthorityUnavailable("approved secret authority unavailable")
 
@@ -471,6 +529,11 @@ class AdapterService:
 
     def disable_agent(self, key: str, command: DisableAgentCommand) -> dict:
         self._require(self.flags.agent_sync, "agent sync")
+        desired = self.state.agent_desired(command.user_id)
+        campaigns = (desired or {}).get("desired", {}).get("campaigns", [])
+        if len(campaigns) != 1:
+            raise PermissionError("agent campaign binding is not durable and exact")
+        self._require_campaign_scope(command, campaigns[0])
 
         def apply() -> dict:
             actual = self.repository.disable_agent(command.user_id)
@@ -482,9 +545,16 @@ class AdapterService:
 
     def publish_lead(self, key: str, command: LeadCommand) -> dict:
         self._require(self.flags.lead_publication, "lead publication")
+        self._require_campaign_scope(command, command.context.campaign_id)
 
         if command.lead.list_id not in self.flags.allowed_lead_list_ids:
             raise PermissionError("lead list is not authorized")
+        campaign = self.repository.campaign(command.context.campaign_id)
+        campaign_list_ids = {
+            int(row["list_id"]) for row in (campaign or {}).get("lists", [])
+        }
+        if command.lead.list_id not in campaign_list_ids:
+            raise PermissionError("lead list does not belong to campaign")
 
         def apply() -> dict:
             actual = self.repository.publish_lead(command.lead)
@@ -498,6 +568,7 @@ class AdapterService:
 
     def create_callback(self, key: str, command: CallbackCommand) -> dict:
         self._require(self.flags.callback_writes, "callback writes")
+        self._require_campaign_scope(command, command.callback.campaign_id)
 
         spec = command.callback
         def authorize() -> None:
@@ -595,6 +666,7 @@ class AdapterService:
 
     def sync_transfer_policy(self, key: str, command: TransferPolicyCommand) -> dict:
         self._require(self.flags.transfer_policy_sync, "transfer policy sync")
+        self._require_campaign_scope(command, command.policy.campaign_id)
 
         def apply() -> dict:
             actual = self.repository.campaign(command.policy.campaign_id)
@@ -634,10 +706,20 @@ class AdapterService:
         blocked = False
         for stored in desired_rows:
             try:
+                authority = self.state.campaign_authority(stored["actual_id"])
+                if authority is None:
+                    raise PermissionError("campaign authority is not registered")
                 command = CampaignCommand.model_validate({
                     "context": {
                         "correlation_id": "reconciliation-readback",
                         "actor": "adapter-reconciler",
+                        "tenant_id": authority["tenant_id"],
+                        "business_unit": authority["business_unit"],
+                        "campaign_id": stored["actual_id"],
+                        "supervisor_subject": authority["supervisor_subject"],
+                        "expected_version": self.state.resource_version(
+                            f"campaign:{stored['canonical_id']}"
+                        ),
                         "reason": "compare persisted desired and actual state",
                         "requested_at": "2026-01-01T00:00:00Z",
                     },

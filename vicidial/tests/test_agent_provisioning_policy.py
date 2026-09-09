@@ -25,10 +25,20 @@ class SecretAuthority:
         return IssuedCredential("synthetic-value-never-returned-0001", "secret-ref-1")
 
 
+def authority_state(path):
+    state = StateStore(path)
+    state.put_campaign_authority(
+        "TEST_SYN", "tenant-test", "TEST", "subject-appolon")
+    return state
+
+
 def command(**changes):
     payload = {
         "context": {"correlation_id": "correlation-synthetic-0001",
                     "actor": "codestra-provisioning",
+                    "tenant_id": "tenant-test", "business_unit": "TEST",
+                    "campaign_id": "TEST_SYN", "supervisor_subject": "subject-appolon",
+                    "expected_version": 0,
                     "reason": "Approved disabled synthetic provisioning",
                     "requested_at": "2026-09-05T12:00:00Z"},
         "agent": AGENT, "user_level": 8,
@@ -36,6 +46,12 @@ def command(**changes):
         "plan_sha256": canonical_sha256(AGENT),
         "backup_reference": "codestra-vicidial-20260905T092327Z.tar.enc",
     }
+    context_changes = {
+        key: changes.pop(key) for key in tuple(changes)
+        if key in {"expected_version", "tenant_id", "business_unit",
+                   "campaign_id", "supervisor_subject"}
+    }
+    payload["context"].update(context_changes)
     payload.update(changes)
     return ProvisionAgentCommand.model_validate(payload)
 
@@ -92,7 +108,7 @@ def test_missing_expired_or_malformed_grant_is_rejected(tmp_path):
 
 def test_provision_is_separate_idempotent_and_collision_safe(tmp_path):
     repo = MemoryRepository()
-    service = AdapterService(repo, StateStore(tmp_path / "state.sqlite3"),
+    service = AdapterService(repo, authority_state(tmp_path / "state.sqlite3"),
         FeatureFlags(writes=True, agent_sync=False, agent_provisioning=True), SecretAuthority())
     first = service.provision_agent("idempotency-synthetic-0001", command())
     replay = service.provision_agent("idempotency-synthetic-0001", command())
@@ -101,14 +117,16 @@ def test_provision_is_separate_idempotent_and_collision_safe(tmp_path):
     assert replay["idempotent_replay"] is True
     assert len(repo.agents) == 1
     with pytest.raises(CollisionError, match="already exists"):
-        service.provision_agent("idempotency-synthetic-0002", command())
+        service.provision_agent(
+            "idempotency-synthetic-0002", command(expected_version=1)
+        )
 
 
 def test_global_and_independent_kill_switches_remain_closed(tmp_path):
     for flags in (FeatureFlags(writes=False, agent_provisioning=True),
                   FeatureFlags(writes=True, agent_provisioning=False)):
         service = AdapterService(MemoryRepository(),
-            StateStore(tmp_path / f"{flags.writes}.sqlite3"), flags, SecretAuthority())
+            authority_state(tmp_path / f"{flags.writes}.sqlite3"), flags, SecretAuthority())
         with pytest.raises(PermissionError):
             service.provision_agent("idempotency-synthetic-0001", command())
     assert FeatureFlags().production_dialing is False
@@ -118,7 +136,7 @@ def test_global_and_independent_kill_switches_remain_closed(tmp_path):
 
 def test_retry_recovers_commit_before_state_finalization(tmp_path, monkeypatch):
     repo = MemoryRepository()
-    state = StateStore(tmp_path / "state.sqlite3")
+    state = authority_state(tmp_path / "state.sqlite3")
     service = AdapterService(repo, state,
         FeatureFlags(writes=True, agent_provisioning=True), SecretAuthority())
     finalize = state.finalize_agent_adoption
@@ -148,7 +166,7 @@ def test_username_and_extension_collisions_preserve_existing_agent(tmp_path):
     repo.agents["cod00016"] = {"user_id": "cod00016", "extension": "6101", "active": False}
     repo.phones["6101"] = {"extension": "6101", "user_id": "cod00016", "active": False}
     repo.agents["appolon"] = {"user_id": "appolon", "active": False}
-    service = AdapterService(repo, StateStore(tmp_path / "state.sqlite3"),
+    service = AdapterService(repo, authority_state(tmp_path / "state.sqlite3"),
         FeatureFlags(writes=True, agent_provisioning=True), SecretAuthority())
     with pytest.raises(CollisionError, match="already exists"):
         service.provision_agent("idempotency-collision-0001", command())
@@ -162,7 +180,7 @@ def test_username_and_extension_collisions_preserve_existing_agent(tmp_path):
 
 
 def test_credential_is_absent_from_result_and_audit(tmp_path):
-    state = StateStore(tmp_path / "state.sqlite3")
+    state = authority_state(tmp_path / "state.sqlite3")
     service = AdapterService(MemoryRepository(), state,
         FeatureFlags(writes=True, agent_provisioning=True), SecretAuthority())
     result = service.provision_agent("idempotency-redaction-0001", command())
@@ -173,7 +191,7 @@ def test_credential_is_absent_from_result_and_audit(tmp_path):
 
 
 def test_secret_authority_unavailable_fails_closed(tmp_path):
-    service = AdapterService(MemoryRepository(), StateStore(tmp_path / "state.sqlite3"),
+    service = AdapterService(MemoryRepository(), authority_state(tmp_path / "state.sqlite3"),
         FeatureFlags(writes=True, agent_provisioning=True))
     with pytest.raises(RuntimeError, match="secret authority unavailable"):
         service.provision_agent("idempotency-no-authority-0001", command())
@@ -188,7 +206,7 @@ def test_partial_phone_failure_rolls_back_user(tmp_path):
 
     repo = MemoryRepository()
     repo.phones = FailingPhones()
-    service = AdapterService(repo, StateStore(tmp_path / "state.sqlite3"),
+    service = AdapterService(repo, authority_state(tmp_path / "state.sqlite3"),
         FeatureFlags(writes=True, agent_provisioning=True), SecretAuthority())
     with pytest.raises(RuntimeError, match="phone failure"):
         service.provision_agent("idempotency-rollback-0001", command())

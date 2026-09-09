@@ -18,6 +18,9 @@ def command():
              "internal_only": True, "external_dialing": False}
     return ProvisionAgentCommand.model_validate({
         "context": {"correlation_id": "mysql-rollback-correlation", "actor": "test",
+                    "tenant_id": "tenant-test", "business_unit": "TEST",
+                    "campaign_id": "TEST_SYN", "supervisor_subject": "subject-appolon",
+                    "expected_version": 0,
                     "reason": "isolated rollback test", "requested_at": "2026-09-05T12:00:00Z"},
         "agent": agent, "user_level": 8, "authorization_reference": "CHG-20260905-MYSQL-TEST",
         "plan_sha256": canonical_sha256(agent), "backup_reference": "isolated-backup-20260905",
