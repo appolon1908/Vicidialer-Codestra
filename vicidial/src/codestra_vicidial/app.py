@@ -14,6 +14,9 @@ from .agent_provisioning import AgentProvisioningPolicy
 from .internal_calling import (
     InternalCallError, InternalCallExecutor, InternalCallPolicy, OriginateCommand,
 )
+from .external_calling import (
+    ExternalCallError, ExternalCallExecutor, ExternalCallPolicy, ExternalOriginateCommand,
+)
 from .internal_call_transport import SocketAmiTransport
 from .credential_authority import UnixCredentialAuthority
 from .models import (
@@ -174,6 +177,7 @@ def create_app(
     agent_provisioning_policy: AgentProvisioningPolicy | None = None,
     internal_call_executor: InternalCallExecutor | None = None,
     release_info: Mapping[str, object] | None = None,
+    external_call_executor: ExternalCallExecutor | None = None,
 ) -> FastAPI:
     release_document = dict(
         release_info
@@ -186,6 +190,7 @@ def create_app(
     )
     app.state.adapter_service = service
     app.state.internal_call_executor = internal_call_executor
+    app.state.external_call_executor = external_call_executor
 
     @app.exception_handler(CollisionError)
     async def collision_handler(_request: Request, exc: CollisionError):
@@ -360,13 +365,25 @@ def create_app(
 
 
     @app.post("/v1/calls/originate")
-    async def external_originate_disabled(request: Request, values=Depends(headers)):
+    async def external_originate(request: Request, values=Depends(headers)):
+        if external_call_executor is None:
+            raise HTTPException(503, "production dialing executor is not enabled")
         key, identity, scopes, timestamp, nonce, signature, signature_version = values
-        await authorize(
+        body = await authorize(
             request, "telephony:external-call", identity, scopes, timestamp, nonce,
             signature, signature_version, key,
         )
-        raise HTTPException(503, "production dialing executor is not enabled")
+        try:
+            command = ExternalOriginateCommand.model_validate_json(body)
+            if key != command.operation_id:
+                raise ValueError("idempotency key must equal operation_id")
+            return external_call_executor.originate(command, actor=identity)
+        except PermissionError as exc:
+            raise HTTPException(403, str(exc)) from exc
+        except ValueError as exc:
+            raise HTTPException(422, "invalid external call command") from exc
+        except ExternalCallError as exc:
+            raise HTTPException(503, str(exc)) from exc
 
     @app.exception_handler(InternalCallError)
     async def internal_call_error(_request: Request, _exc: InternalCallError):
@@ -518,7 +535,7 @@ def app_from_environment() -> FastAPI:
         ),
         callback_writes=os.environ.get("ENABLE_IVR_CALLBACKS") == "true",
         transfer_policy_sync=os.environ.get("ENABLE_WARM_TRANSFER") == "true",
-        production_dialing=False,
+        production_dialing=os.environ.get("ENABLE_PRODUCTION_DIALING") == "true",
     )
     backend_name = os.environ.get("CODESTRA_ADAPTER_BACKEND", "memory")
     if backend_name == "mysql":
@@ -611,6 +628,11 @@ def app_from_environment() -> FastAPI:
         required=(
             os.environ.get("CODESTRA_RELEASE_METADATA_REQUIRED", "false").lower()
             == "true"
+            or deployment in {
+                "production-reconciliation",
+                "production-internal-test",
+                "production-external-one-call",
+            }
         )
     )
     policy = None
@@ -670,6 +692,52 @@ def app_from_environment() -> FastAPI:
             enabled=lambda: os.environ.get("ENABLE_INTERNAL_TEST_CALLING", "false") == "true",
             audit_path=Path(os.environ.get("CODESTRA_ADAPTER_STATE", "/var/lib/codestra-vicidial/state.sqlite3")),
         )
+    external_executor = None
+    external_gate = os.environ.get("ENABLE_PRODUCTION_DIALING", "false")
+    if external_gate not in {"true", "false"}:
+        raise RuntimeError("invalid production dialing gate")
+    external_profile = deployment == "production-external-one-call"
+    if not external_profile and external_gate != "false":
+        raise RuntimeError("external dialing requires production-external-one-call profile")
+    if external_profile:
+        if external_gate != "true":
+            raise RuntimeError("external one-call profile requires explicit dialing gate")
+        if backend_name != "memory":
+            raise RuntimeError("external one-call profile requires isolated memory backend")
+        if any(os.environ.get(name, "false") != "false" for name in (
+            "ENABLE_VICIDIAL_WRITES", "ENABLE_PROVISIONING", "ENABLE_AGENT_PROVISIONING",
+            "ENABLE_AGENT_SYNC", "ENABLE_LEAD_PUBLICATION", "ENABLE_LIVE_CALL_CONTROL",
+            "ENABLE_WARM_TRANSFER", "ENABLE_IVR_ROUTING", "ENABLE_IVR_CALLBACKS",
+            "ENABLE_SMS_DELIVERY", "ENABLE_EMAIL_DELIVERY", "ENABLE_EXTERNAL_DELIVERY",
+            "ENABLE_AI_ACTIONS", "ENABLE_INTERNAL_TEST_CALLING")):
+            raise RuntimeError("external one-call profile requires unrelated writes disabled")
+        release_sha = release_info.get("git_sha")
+        if release_info.get("verified") is not True or not isinstance(release_sha, str):
+            raise RuntimeError("verified release metadata required for external calling")
+        external_policy_path = Path(os.environ["CODESTRA_EXTERNAL_CALL_POLICY_FILE"])
+        external_policy = ExternalCallPolicy.from_file(external_policy_path, release_sha)
+        ami_credential_path = Path(os.environ["CODESTRA_AMI_CREDENTIAL_FILE"])
+        external_executor = ExternalCallExecutor(
+            external_policy,
+            Path(os.environ.get(
+                "CODESTRA_EXTERNAL_CALL_STATE",
+                "/var/lib/codestra-vicidial-restricted-adapter/external-calls.sqlite3",
+            )),
+            SocketAmiTransport(ami_credential_path),
+            policy_provider=lambda: ExternalCallPolicy.from_file(
+                external_policy_path, release_sha
+            ),
+            enabled=lambda: (
+                os.environ.get("CODESTRA_ADAPTER_DEPLOYMENT")
+                == "production-external-one-call"
+                and os.environ.get("ENABLE_PRODUCTION_DIALING") == "true"
+            ),
+            audit_path=Path(os.environ.get(
+                "CODESTRA_ADAPTER_STATE",
+                "/var/lib/codestra-vicidial-restricted-adapter/state.sqlite3",
+            )),
+        )
+
     return create_app(
         service,
         auth,
@@ -677,6 +745,7 @@ def app_from_environment() -> FastAPI:
         agent_policy,
         internal_executor,
         release_info=release_info,
+        external_call_executor=external_executor,
     )
 
 

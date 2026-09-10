@@ -19,7 +19,6 @@ ALWAYS_DISABLED_FLAGS = (
     "ENABLE_WARM_TRANSFER",
     "ENABLE_IVR_ROUTING",
     "ENABLE_IVR_CALLBACKS",
-    "ENABLE_PRODUCTION_DIALING",
     "ENABLE_SMS_DELIVERY",
     "ENABLE_EMAIL_DELIVERY",
     "ENABLE_EXTERNAL_DELIVERY",
@@ -33,6 +32,7 @@ LEGACY_FLAGS = (
 )
 
 INTERNAL_TEST_PROFILE = "production-internal-test"
+EXTERNAL_ONE_CALL_PROFILE = "production-external-one-call"
 
 
 def _enabled(name: str) -> bool:
@@ -113,6 +113,7 @@ def _repository_ready(profile: str) -> tuple[bool, str]:
             "development-loopback",
             "staging-read-only",
             "production-candidate",
+            EXTERNAL_ONE_CALL_PROFILE,
         }, backend
     if backend == "mysql":
         ok, _database = _mysql_ready()
@@ -123,7 +124,10 @@ def _repository_ready(profile: str) -> tuple[bool, str]:
 def _release_ready(profile: str) -> tuple[bool, str | None, dict]:
     required = (
         os.environ.get("CODESTRA_RELEASE_METADATA_REQUIRED", "false").lower() == "true"
-        or profile in {"production-candidate", "production-reconciliation", INTERNAL_TEST_PROFILE}
+        or profile in {
+            "production-candidate", "production-reconciliation",
+            INTERNAL_TEST_PROFILE, EXTERNAL_ONE_CALL_PROFILE,
+        }
     )
     try:
         release = load_release_info(required=required)
@@ -162,6 +166,16 @@ def _kill_switch_ready(profile: str, reconciliation_policy_verified: bool) -> bo
     internal_gate = os.environ.get("ENABLE_INTERNAL_TEST_CALLING", "false")
     if internal_gate not in {"true", "false"} or (internal_gate == "true" and profile != INTERNAL_TEST_PROFILE):
         return False
+    external_gate = os.environ.get("ENABLE_PRODUCTION_DIALING", "false")
+    if external_gate not in {"true", "false"}:
+        return False
+    if profile == EXTERNAL_ONE_CALL_PROFILE:
+        if external_gate != "true" or internal_gate != "false":
+            return False
+        if getattr(app.state, "external_call_executor", None) is None:
+            return False
+    elif external_gate != "false":
+        return False
     if profile == INTERNAL_TEST_PROFILE and _enabled("ENABLE_AGENT_PROVISIONING"):
         return False
     if internal_gate == "true" and getattr(app.state, "internal_call_executor", None) is None:
@@ -169,9 +183,6 @@ def _kill_switch_ready(profile: str, reconciliation_policy_verified: bool) -> bo
     writes = _enabled("ENABLE_VICIDIAL_WRITES")
     provisioning = _enabled("ENABLE_PROVISIONING")
     if profile == "production-reconciliation":
-        # Reconciliation is the one bounded exception: both switches must be on,
-        # the immutable request-bound policy must be verified, and every live
-        # customer capability above must remain off.
         return writes and provisioning and reconciliation_policy_verified
     return not writes and not provisioning
 
@@ -204,6 +215,19 @@ def build_readiness() -> tuple[int, dict]:
         except Exception:
             checks["internal_call_policy"] = False
 
+    if profile == EXTERNAL_ONE_CALL_PROFILE:
+        from .external_calling import ExternalCallPolicy
+        try:
+            policy = ExternalCallPolicy.from_file(
+                Path(os.environ["CODESTRA_EXTERNAL_CALL_POLICY_FILE"]), release_sha
+            )
+            checks["external_call_policy"] = (
+                policy.release_sha == release_sha
+                and getattr(app.state, "external_call_executor", None) is not None
+            )
+        except Exception:
+            checks["external_call_policy"] = False
+
     status = "ready" if all(checks.values()) else "not_ready"
     writes_enabled = (
         profile == "production-reconciliation"
@@ -221,7 +245,11 @@ def build_readiness() -> tuple[int, dict]:
         "checks": checks,
         "writes_enabled": writes_enabled,
         "internal_test_calling": profile == INTERNAL_TEST_PROFILE and _enabled("ENABLE_INTERNAL_TEST_CALLING"),
-        "production_dialing": False,
+        "production_dialing": (
+            profile == EXTERNAL_ONE_CALL_PROFILE
+            and _enabled("ENABLE_PRODUCTION_DIALING")
+            and checks.get("external_call_policy", False)
+        ),
         "customer_traffic_authorized": False,
     }
     return (200 if status == "ready" else 503), body

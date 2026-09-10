@@ -191,6 +191,55 @@ class SocketAmiTransport:
                 "live route 6000 differs from the approved isolated echo route"
             )
 
+    def verify_external_route(self, policy):
+        dial_extension = policy.dial_prefix + policy.destination_e164[1:]
+        rows = self._request(
+            "ShowDialPlan",
+            {"Context": policy.dialplan_context, "Extension": dial_extension},
+            "ShowDialPlanComplete",
+        )
+        if not rows:
+            raise CallDenied("external DIDWW dialplan route is unavailable")
+        observed = []
+        for row in rows:
+            if row.event != "ListDialplan":
+                continue
+            if row.get("Context") != policy.dialplan_context:
+                raise CallDenied("external route escaped approved context")
+            if row.get("Switch") or row.get("IncludeContext") or row.get("IgnorePattern"):
+                raise CallDenied("external route contains dynamic dialplan resolution")
+            observed.append((row.get("Application"), row.get("AppData")))
+        required = {
+            ("Set", f"CALLERID(num)={policy.caller_id}"),
+            ("Set", "OUTNUM=+${EXTEN:1}"),
+            ("Dial", f"SIP/${{OUTNUM}}@{policy.trunk},60,tTo"),
+            ("Hangup", ""),
+        }
+        if not required <= set(observed):
+            raise CallDenied("live external route differs from approved DIDWW contract")
+
+    def originate_external(self, policy, operation_id: str, uniqueid: str) -> None:
+        if not re.fullmatch(r"codestra-pstn-[a-f0-9]{28}", uniqueid):
+            raise CallDenied("invalid external channel identity")
+        dial_extension = policy.dial_prefix + policy.destination_e164[1:]
+        if not re.fullmatch(r"8[1-9][0-9]{7,14}", dial_extension):
+            raise CallDenied("invalid approved external dial extension")
+        self._request(
+            "Originate",
+            {
+                "Channel": f"Local/{dial_extension}@{policy.dialplan_context}/n",
+                "Application": "Wait",
+                "Data": str(policy.max_connected_seconds),
+                "Async": "true",
+                "ChannelId": uniqueid,
+                "CallerID": policy.caller_id,
+                "Variable": (
+                    f"CODESTRA_OPERATION_ID={operation_id},"
+                    f"CODESTRA_CAMPAIGN={policy.campaign}"
+                ),
+            },
+        )
+
     def action(self, fields):
         values = dict(fields)
         action = values.pop("Action")
