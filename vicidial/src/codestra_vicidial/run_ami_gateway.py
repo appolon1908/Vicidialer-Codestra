@@ -238,6 +238,7 @@ class StatusWriter:
         self.path = path
         self.source_sha = source_sha
         self._lock = threading.Lock()
+        self._runtime_status = "starting"
         self._state: dict[str, object] = {
             "schema_version": "1.0",
             "service": "codestra-vicidial-ami-events",
@@ -245,6 +246,9 @@ class StatusWriter:
             "ami_connected": False,
             "delivery_worker_running": False,
             "pending_events": 0,
+            "retrying_events": 0,
+            "dead_letter_events": 0,
+            "delivery_status": "idle",
             "last_ami_event_at": None,
             "last_delivery_cycle_at": None,
             "last_error_code": None,
@@ -253,7 +257,24 @@ class StatusWriter:
 
     def update(self, **values: object) -> None:
         with self._lock:
+            if "status" in values:
+                self._runtime_status = str(values["status"])
             self._state.update(values)
+            if self._state["dead_letter_events"]:
+                delivery_status = "dead_letter"
+            elif self._state["retrying_events"]:
+                delivery_status = "retrying"
+            elif self._state["pending_events"]:
+                delivery_status = "pending"
+            else:
+                delivery_status = "idle"
+            self._state["delivery_status"] = delivery_status
+            self._state["status"] = (
+                "degraded"
+                if self._runtime_status == "ready"
+                and delivery_status in {"retrying", "dead_letter"}
+                else self._runtime_status
+            )
             self._state["observed_at"] = (
                 datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
             )
@@ -311,15 +332,14 @@ class GatewayRuntime:
     def _delivery_loop(self) -> None:
         self.status.update(
             delivery_worker_running=True,
-            status="starting",
-            pending_events=self.store.pending_count(),
+            **self.store.delivery_health(),
         )
         try:
             while not self.stop.is_set():
                 worked = self.delivery_worker.run_once()
                 self.status.update(
                     delivery_worker_running=True,
-                    pending_events=self.store.pending_count(),
+                    **self.store.delivery_health(),
                     last_delivery_cycle_at=(
                         datetime.now(timezone.utc)
                         .isoformat()
@@ -334,7 +354,7 @@ class GatewayRuntime:
                 status="failed",
                 delivery_worker_running=False,
                 last_error_code=exc.__class__.__name__,
-                pending_events=self.store.pending_count(),
+                **self.store.delivery_health(),
             )
             self.stop.set()
         finally:
@@ -353,7 +373,7 @@ class GatewayRuntime:
                 self.status.update(
                     status="connecting",
                     ami_connected=False,
-                    pending_events=self.store.pending_count(),
+                    **self.store.delivery_health(),
                     last_error_code=None,
                 )
                 authenticated = threading.Event()
@@ -364,7 +384,7 @@ class GatewayRuntime:
                         status="ready",
                         ami_connected=True,
                         last_error_code=None,
-                        pending_events=self.store.pending_count(),
+                        **self.store.delivery_health(),
                     )
 
                 try:
@@ -385,7 +405,7 @@ class GatewayRuntime:
                                 .isoformat()
                                 .replace("+00:00", "Z")
                             ),
-                            pending_events=self.store.pending_count(),
+                            **self.store.delivery_health(),
                         )
                         reconnect_delay = self.config.reconnect_min_seconds
                         if self.stop.is_set():
@@ -408,7 +428,7 @@ class GatewayRuntime:
                         status="degraded",
                         ami_connected=False,
                         last_error_code=exc.__class__.__name__,
-                        pending_events=self.store.pending_count(),
+                        **self.store.delivery_health(),
                     )
                     self.stop.wait(reconnect_delay)
                     reconnect_delay = min(
@@ -426,7 +446,7 @@ class GatewayRuntime:
                 ),
                 ami_connected=False,
                 delivery_worker_running=False,
-                pending_events=self.store.pending_count(),
+                **self.store.delivery_health(),
             )
         if delivery.is_alive():
             raise RuntimeError("event delivery worker did not stop cleanly")
