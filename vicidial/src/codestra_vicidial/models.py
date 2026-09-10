@@ -219,3 +219,15 @@ class TransferPolicySpec(StrictModel):
 class TransferPolicyCommand(StrictModel):
     context: RequestContext
     policy: TransferPolicySpec
+
+
+class CallbackLookup(StrictModel):
+    external_id: str
+    callback_id: Annotated[int, Field(gt=0)]
+    resource_version: Annotated[int, Field(ge=0)]
+    campaign_id: ActualCampaign
+    lead_id: Annotated[int, Field(gt=0)]
+    user_id: str
+    recipient: str
+    status: str
+    callback_time: datetime
