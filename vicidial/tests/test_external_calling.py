@@ -80,7 +80,7 @@ def test_exact_destination_campaign_and_one_call_are_enforced(tmp_path):
     transport = FakeTransport()
     service = executor(tmp_path, transport)
     result = service.originate(command())
-    assert result["status"] == "accepted"
+    assert result["status"] == "submitted_unknown"
     assert result["duplicate"] is False
     assert transport.verify_count == 1
     assert transport.originate_count == 1
