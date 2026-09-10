@@ -5,40 +5,41 @@ import pathlib
 import sys
 import types
 from datetime import datetime
+from unittest.mock import patch
 
 import pytest
 
 
 ROOT = pathlib.Path(__file__).parents[1]
 sys.path.insert(0, str(ROOT / "scripts"))
-if "phonenumbers" not in sys.modules:
-    sys.modules["phonenumbers"] = types.SimpleNamespace()
-if "pymysql" not in sys.modules:
-    sys.modules["pymysql"] = types.SimpleNamespace(
-        cursors=types.SimpleNamespace(DictCursor=object),
-        connect=lambda **_: None,
-    )
-if "dotenv" not in sys.modules:
-    sys.modules["dotenv"] = types.SimpleNamespace(load_dotenv=lambda *_: None)
-sys.modules.pop("canonical_event_client", None)
-client_spec = importlib.util.spec_from_loader(
-    "canonical_event_client",
-    SourceFileLoader(
+# Legacy worker imports need optional dependencies, but their test doubles must
+# not replace real packages for unrelated database certification tests.
+dependency_stubs = {
+    "phonenumbers": types.SimpleNamespace(),
+    "pymysql": types.SimpleNamespace(
+        cursors=types.SimpleNamespace(DictCursor=object), connect=lambda **_: None,
+    ),
+    "dotenv": types.SimpleNamespace(load_dotenv=lambda *_: None),
+}
+with patch.dict(sys.modules, dependency_stubs):
+    client_spec = importlib.util.spec_from_loader(
         "canonical_event_client",
-        str(ROOT / "scripts" / "canonical_event_client.py.reference"),
-    ),
-)
-client = importlib.util.module_from_spec(client_spec)
-client_spec.loader.exec_module(client)
-sys.modules["canonical_event_client"] = client
-worker_spec = importlib.util.spec_from_loader(
-    "production_worker",
-    SourceFileLoader(
-        "production_worker", str(ROOT / "scripts" / "vicidial_sync.py.candidate")
-    ),
-)
-worker = importlib.util.module_from_spec(worker_spec)
-worker_spec.loader.exec_module(worker)
+        SourceFileLoader(
+            "canonical_event_client",
+            str(ROOT / "scripts" / "canonical_event_client.py.reference"),
+        ),
+    )
+    client = importlib.util.module_from_spec(client_spec)
+    client_spec.loader.exec_module(client)
+    sys.modules["canonical_event_client"] = client
+    worker_spec = importlib.util.spec_from_loader(
+        "production_worker",
+        SourceFileLoader(
+            "production_worker", str(ROOT / "scripts" / "vicidial_sync.py.candidate")
+        ),
+    )
+    worker = importlib.util.module_from_spec(worker_spec)
+    worker_spec.loader.exec_module(worker)
 
 
 def source_row(source_id="200.1", end_epoch=2000, **changes):

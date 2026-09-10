@@ -8,9 +8,30 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 
+class StaleResourceVersion(ValueError):
+    """The caller must reconcile its version before submitting a new command."""
+
+
+class ResourceMutationInProgress(RuntimeError):
+    """A durable claim prevents overlapping writes to the same resource."""
+
+
+class IdempotencyConflict(ValueError):
+    """A completed command key cannot be reused with a different payload."""
+
+
+class MutationCompletionUncertain(RuntimeError):
+    """Persistence after a verified mutation requires operator reconciliation."""
+
+
+class ResourceSnapshotChanged(RuntimeError):
+    """Actual state cannot be paired with a version across a concurrent write."""
+
+
 class StateStore:
     def __init__(self, path: Path):
         path.parent.mkdir(parents=True, exist_ok=True)
+        self.path = path.resolve()
         self.db = sqlite3.connect(path, check_same_thread=False)
         self._transaction_lock = threading.RLock()
         self.db.row_factory = sqlite3.Row
@@ -49,6 +70,8 @@ class StateStore:
           business_unit TEXT NOT NULL, supervisor_subject TEXT NOT NULL);
         CREATE TABLE IF NOT EXISTS resource_versions(
           resource_key TEXT PRIMARY KEY, version INTEGER NOT NULL);
+        CREATE TABLE IF NOT EXISTS resource_epochs(
+          resource_key TEXT PRIMARY KEY, epoch INTEGER NOT NULL);
         CREATE TABLE IF NOT EXISTS resource_mutations(
           resource_key TEXT PRIMARY KEY, expected_version INTEGER NOT NULL,
           idempotency_key TEXT NOT NULL, created_at TEXT NOT NULL);
@@ -92,6 +115,21 @@ class StateStore:
         ).fetchone()
         return int(row["version"]) if row else 0
 
+    def resource_observation(self, resource_key: str) -> tuple[int, int, bool]:
+        # One SQLite statement observes all three fields from one committed
+        # snapshot, independent of transactions on the shared connection.
+        db = sqlite3.connect(self.path)
+        try:
+            version, epoch, pending = db.execute(
+                "SELECT COALESCE((SELECT version FROM resource_versions WHERE resource_key=?),0),"
+                "COALESCE((SELECT epoch FROM resource_epochs WHERE resource_key=?),0),"
+                "EXISTS(SELECT 1 FROM resource_mutations WHERE resource_key=?)",
+                (resource_key, resource_key, resource_key),
+            ).fetchone()
+            return int(version), int(epoch), bool(pending)
+        finally:
+            db.close()
+
     def claim_resource_version(
         self, resource_key: str, expected: int, idempotency_key: str
     ) -> None:
@@ -105,17 +143,21 @@ class StateStore:
             self.db.execute("BEGIN IMMEDIATE")
             current = self.resource_version(resource_key)
             if current != expected:
-                raise ValueError("expected version is stale")
+                raise StaleResourceVersion("expected version is stale")
             pending = self.db.execute(
                 "SELECT 1 FROM resource_mutations WHERE resource_key=?",
                 (resource_key,),
             ).fetchone()
             if pending:
-                raise RuntimeError("resource mutation is already in progress")
+                raise ResourceMutationInProgress("resource mutation is already in progress")
             self.db.execute(
                 "INSERT INTO resource_mutations VALUES(?,?,?,?)",
                 (resource_key, expected, idempotency_key,
                  datetime.now(timezone.utc).isoformat()),
+            )
+            self.db.execute(
+                "INSERT INTO resource_epochs VALUES(?,1) ON CONFLICT(resource_key) "
+                "DO UPDATE SET epoch=epoch+1", (resource_key,),
             )
             self.db.commit()
         except Exception:
@@ -172,6 +214,56 @@ class StateStore:
                 (resource_key, expected, idempotency_key),
             )
             self.db.commit()
+
+    def complete_command(
+        self, resource_key: str, expected: int, key: str, operation: str,
+        request_hash: str, result: dict, correlation_id: str, actor: str,
+        target: str,
+    ) -> dict:
+        """Commit the version, replay result and audit as one durable unit.
+
+        Use a dedicated connection so unrelated users of the shared connection
+        cannot accidentally commit part of this transaction.
+        """
+        completed = result | {"resource_version": expected + 1}
+        encoded = json.dumps(completed, sort_keys=True)
+        occurred_at = datetime.now(timezone.utc).isoformat()
+        db = sqlite3.connect(self.path)
+        try:
+            db.execute("BEGIN IMMEDIATE")
+            claim = db.execute(
+                "SELECT expected_version,idempotency_key FROM resource_mutations "
+                "WHERE resource_key=?", (resource_key,),
+            ).fetchone()
+            version = db.execute(
+                "SELECT version FROM resource_versions WHERE resource_key=?",
+                (resource_key,),
+            ).fetchone()
+            if claim != (expected, key) or (version[0] if version else 0) != expected:
+                raise RuntimeError("resource mutation claim was lost")
+            db.execute(
+                "INSERT INTO requests VALUES(?,?,?,?,?)",
+                (operation, key, request_hash, encoded, occurred_at),
+            )
+            db.execute(
+                "INSERT INTO resource_versions VALUES(?,?) "
+                "ON CONFLICT(resource_key) DO UPDATE SET version=excluded.version",
+                (resource_key, expected + 1),
+            )
+            db.execute(
+                "INSERT INTO audit(occurred_at,correlation_id,actor,operation,"
+                "target_hash,outcome,detail_hash) VALUES(?,?,?,?,?,?,?)",
+                (occurred_at, correlation_id, actor, operation, self.digest(target),
+                 "success", self.digest(completed)),
+            )
+            db.execute("DELETE FROM resource_mutations WHERE resource_key=?", (resource_key,))
+            db.commit()
+            return completed
+        except Exception:
+            db.rollback()
+            raise
+        finally:
+            db.close()
 
     def put_campaign_authority(
         self, campaign_id: str, tenant_id: str, business_unit: str,
@@ -284,7 +376,7 @@ class StateStore:
         if row is None:
             return None
         if row["request_hash"] != request_hash:
-            raise ValueError("idempotency conflict")
+            raise IdempotencyConflict("idempotency conflict")
         return json.loads(row["result"])
 
     def record(self, operation: str, key: str, request_hash: str, result: dict) -> None:

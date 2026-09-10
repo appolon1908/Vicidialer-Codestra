@@ -50,10 +50,31 @@ def _state_store_ready() -> bool:
         return False
     connection = None
     try:
-        connection = sqlite3.connect(path, timeout=1.0)
+        service = getattr(app.state, "adapter_service", None)
+        state = getattr(service, "state", None)
+        if getattr(state, "path", None) != path.resolve():
+            return False
+        connection = sqlite3.connect(path.resolve().as_uri() + "?mode=ro", uri=True, timeout=1.0)
         connection.execute("PRAGMA query_only=ON")
-        row = connection.execute("SELECT 1").fetchone()
-        return bool(row and row[0] == 1)
+        # SELECT 1 succeeds even for an empty or damaged SQLite file. Resolve
+        # the actual command/replay/ownership schema without reading payloads.
+        required_columns = {
+            "requests": "operation,idempotency_key,request_hash,result,created_at",
+            "audit": "sequence,occurred_at,correlation_id,actor,operation,target_hash,outcome,detail_hash",
+            "resource_versions": "resource_key,version",
+            "resource_epochs": "resource_key,epoch",
+            "resource_mutations": "resource_key,expected_version,idempotency_key,created_at",
+            "mappings": "kind,external_id,actual_id,payload_hash",
+            "campaign_authority": "campaign_id,tenant_id,business_unit,supervisor_subject",
+            "campaign_desired": "canonical_id,actual_id,desired_json,desired_hash",
+            "agent_desired": "user_id,desired_json,desired_hash,updated_at",
+            "snapshots": "snapshot_id,operation,target_hash,state_json,created_at",
+            "auth_nonces": "nonce,expires_at",
+            "auth_rate_events": "source,occurred_at",
+        }
+        for table, columns in required_columns.items():
+            connection.execute(f"SELECT {columns} FROM {table} LIMIT 0")
+        return True
     except Exception:
         return False
     finally:
