@@ -22,3 +22,12 @@ This evidence does not certify production MariaDB, live mTLS, Odoo/n8n delivery,
 backup restoration, release activation or a call canary. No runtime mutation or
 live call was performed. Final PR-head source and container checks are recorded
 in GitHub after the evidence-only commit.
+
+## Review follow-up
+
+Commit `e7c34f250aae4226a1aa417e9fe2dc1d7c63eb89` resolves review thread `PRRT_kwDOUFTyRM6hLqED`.
+Two new regressions failed before the fix and pass afterward: a local design
+error before any command intent may retry, including when another run has
+intents in the same ledger. The existing uncertain-dispatch protection remains.
+The updated HTTP/client suites passed 33 tests; changed files pass Ruff.
+See `review-fix.json`; final source/container CI verifies the full updated tree.

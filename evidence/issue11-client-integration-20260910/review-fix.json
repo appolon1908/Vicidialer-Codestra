@@ -1,0 +1,19 @@
+{
+  "after_fix": {
+    "command": "python -m pytest -q tests/test_synthetic_campaign_http.py tests/test_synthetic_campaign_lifecycle.py",
+    "passed": 33,
+    "seconds": 34.42
+  },
+  "base_sha": "1a80979976287074f82fdd21b78e9924740efc5f",
+  "before_fix": {
+    "command": "python -m pytest -q tests/test_synthetic_campaign_http.py -k local_failure_before_first_intent",
+    "deselected": 30,
+    "failed": 2
+  },
+  "explanation": "Retry a persisted design event only while this run has no command intents; unrelated run intents do not block local preparation retries. Existing uncertain/complete run intents still block remote resubmission.",
+  "production_changed": false,
+  "recorded_at": "2026-09-10T17:44:11.121442+00:00",
+  "review_thread": "PRRT_kwDOUFTyRM6hLqED",
+  "ruff": "passed",
+  "source_sha": "e7c34f250aae4226a1aa417e9fe2dc1d7c63eb89"
+}
