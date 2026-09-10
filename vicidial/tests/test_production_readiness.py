@@ -2,6 +2,8 @@ import importlib
 import json
 import sys
 
+import pytest
+
 
 def load_production_app(monkeypatch, tmp_path):
     state = tmp_path / "state.sqlite3"
@@ -32,6 +34,47 @@ def load_production_app(monkeypatch, tmp_path):
     for name in ("codestra_vicidial.production_app", "codestra_vicidial.app"):
         sys.modules.pop(name, None)
     return importlib.import_module("codestra_vicidial.production_app")
+
+
+def configure_release_profile(
+    monkeypatch, tmp_path, profile, environment="production-candidate"
+):
+    from codestra_vicidial.release import build_release_document
+
+    sha = "a" * 40
+    metadata = tmp_path / "BUILD_INFO.json"
+    metadata.write_text(json.dumps(build_release_document(
+        git_sha=sha, built_at="2026-09-10T00:00:00Z",
+        environment=environment,
+    )))
+    metadata.with_name("SOURCE.COMMIT").write_text(sha + "\n")
+    secret = tmp_path / "adapter-hmac"
+    secret.write_bytes(b"test-readiness-hmac-secret-32-bytes")
+    monkeypatch.setenv("CODESTRA_BUILD_INFO_FILE", str(metadata))
+    monkeypatch.setenv("CODESTRA_ADAPTER_HMAC_FILE", str(secret))
+    monkeypatch.setenv("CODESTRA_ADAPTER_DEPLOYMENT", profile)
+    monkeypatch.setenv("AUTHORIZED_PRIVATE_SOURCE_IP", "10.40.0.1")
+
+
+@pytest.mark.parametrize("profile,expected_status", [
+    ("staging-read-only", 200),
+    ("production-candidate", 503),
+])
+def test_memory_readiness_cannot_certify_production_candidate(
+    monkeypatch, tmp_path, profile, expected_status
+):
+    module = load_production_app(monkeypatch, tmp_path)
+    configure_release_profile(monkeypatch, tmp_path, profile)
+
+    status, body = module.build_readiness()
+
+    assert status == expected_status
+    assert body["backend"] == "memory"
+    assert body["release_verified"] is True
+    assert body["checks"]["repository"] is (expected_status == 200)
+    assert all(ok for name, ok in body["checks"].items() if name != "repository")
+    assert body["writes_enabled"] is False
+    assert body["production_dialing"] is False
 
 
 def test_development_readiness_is_real_and_healthy(monkeypatch, tmp_path):
@@ -93,8 +136,14 @@ def test_private_source_policy_is_required_outside_development(monkeypatch, tmp_
     monkeypatch.setenv("AUTHORIZED_PRIVATE_SOURCE_IP", "10.40.0.1")
     assert module._source_policy_ready("production-candidate") is True
 
+@pytest.mark.parametrize("profile,environment,expected_status", [
+    ("development-loopback", "production-candidate", 200),
+    ("production-candidate", "production-candidate", 200),
+    ("production-candidate", "staging-read-only", 503),
+    ("production-candidate", "production", 503),
+])
 def test_mysql_readiness_reconnects_and_probes_operational_repository(
-    monkeypatch, tmp_path
+    monkeypatch, tmp_path, profile, environment, expected_status
 ):
     module = load_production_app(monkeypatch, tmp_path)
     from codestra_vicidial.repository import MySQLRepository
@@ -132,6 +181,7 @@ def test_mysql_readiness_reconnects_and_probes_operational_repository(
         def cursor(self):
             return self.cursor_value
 
+    configure_release_profile(monkeypatch, tmp_path, profile, environment)
     connection = ReadyConnection()
     repository = MySQLRepository(connection)
     module.app.state.adapter_service.repository = repository
@@ -139,14 +189,16 @@ def test_mysql_readiness_reconnects_and_probes_operational_repository(
 
     status, body = module.build_readiness()
 
-    assert status == 200
+    assert status == expected_status
+    assert body["checks"]["release"] is (expected_status == 200)
     assert body["checks"]["repository"] is True
     assert body["backend"] == "mysql"
     assert connection.ping_calls == [True]
 
 
+@pytest.mark.parametrize("profile", ["development-loopback", "production-candidate"])
 def test_mysql_readiness_fails_when_operational_connection_cannot_reconnect(
-    monkeypatch, tmp_path
+    monkeypatch, tmp_path, profile
 ):
     module = load_production_app(monkeypatch, tmp_path)
     from codestra_vicidial.repository import MySQLRepository
@@ -155,6 +207,7 @@ def test_mysql_readiness_fails_when_operational_connection_cannot_reconnect(
         def ping(self, reconnect=False):
             raise RuntimeError("stale connection")
 
+    configure_release_profile(monkeypatch, tmp_path, profile)
     module.app.state.adapter_service.repository = MySQLRepository(DeadConnection())
     monkeypatch.setenv("CODESTRA_ADAPTER_BACKEND", "mysql")
 

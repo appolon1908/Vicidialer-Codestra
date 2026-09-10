@@ -1,0 +1,20 @@
+{
+  "archive_member_checksums": "PASS",
+  "archive_sha256": "c4dda634e4601b812c8aa51fc36b7e73b641ce15fd8200610ad4146a5fcbf9a2",
+  "archive_signature": "PASS",
+  "artifact_expiry": "2026-10-10T15:25:28Z",
+  "artifact_id": 10159591752,
+  "artifact_zip_sha256": "302ea48806af6b351ca5062b90620efe719a294ac3f15f19dd42d9a3d698b901",
+  "builder_sha": "f43aa44fa0082eb2bb15be9ec3950ddfd8bc72e1",
+  "file_count": 127,
+  "manifest_sha256": "bec68c9d4fbe922b8b31eb433a3c5174b76fd153aa21263f1159a2cbd83845b1",
+  "protected_source_rebuild_byte_match": true,
+  "provenance_binding": "PASS",
+  "provenance_signature": "PASS",
+  "run_attempt": 1,
+  "runtime_deployment_verified": false,
+  "source_sha": "f43aa44fa0082eb2bb15be9ec3950ddfd8bc72e1",
+  "status": "PASS",
+  "verified_at": "2026-09-10T15:35:42.416047+00:00",
+  "workflow_run_id": 34495432411
+}
