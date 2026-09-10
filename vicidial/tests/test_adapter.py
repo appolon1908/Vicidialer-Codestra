@@ -224,6 +224,7 @@ def test_route_contract_is_present(harness):
               for method in getattr(route, "methods", set())}
     required = {
         ("GET", "/health"), ("GET", "/ready"), ("GET", "/version"),
+        ("POST", "/v1/idempotency/lookup"),
         ("POST", "/v1/campaigns/validate"),
         ("POST", "/v1/campaigns/provision-disabled"),
         ("POST", "/v1/campaigns/disable"),
