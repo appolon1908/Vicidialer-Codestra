@@ -3,6 +3,7 @@ from __future__ import annotations
 import hashlib
 import hmac
 import json
+import os
 import ssl
 import threading
 import time
@@ -38,6 +39,32 @@ class AmbiguousDeliveryError(RuntimeError):
 
 class PermanentDeliveryError(RuntimeError):
     """The event is invalid or unauthorized and must not be retried blindly."""
+
+
+def _response_object(body: bytes, *, source: str) -> dict:
+    def unique_object(pairs):
+        value = {}
+        for key, item in pairs:
+            if key in value:
+                raise ValueError("duplicate JSON member")
+            value[key] = item
+        return value
+
+    def reject_constant(value):
+        raise ValueError("non-finite JSON number")
+
+    try:
+        value = json.loads(
+            body, object_pairs_hook=unique_object, parse_constant=reject_constant,
+        )
+        if not isinstance(value, dict):
+            raise ValueError("JSON object required")
+    except (UnicodeDecodeError, ValueError, RecursionError):
+        # Never include response contents or decoder excerpts in durable errors.
+        raise PermanentDeliveryError(
+            f"{source} response must be an unambiguous JSON object"
+        ) from None
+    return value
 
 
 @dataclass(frozen=True, slots=True)
@@ -168,34 +195,46 @@ class URLlibMTLSTransport:
             ) from exc
 
 
+def _parse_https_endpoint(value: str, *, label: str):
+    # Reject controls before urlsplit can silently remove them.
+    if not isinstance(value, str) or any(ord(c) < 32 or ord(c) == 127 for c in value):
+        raise GatewayConfigurationError(f"{label} must be a clean HTTPS endpoint")
+    cleaned = value.strip()
+    try:
+        parsed = urlsplit(cleaned)
+        port = parsed.port
+        if (
+            parsed.scheme != "https"
+            or not parsed.hostname
+            or parsed.username is not None
+            or parsed.password is not None
+            or any(c.isspace() for c in cleaned)
+            or "\\" in cleaned
+            or parsed.query
+            or parsed.fragment
+            or port == 0
+            or parsed.netloc.endswith(":")
+        ):
+            raise ValueError("invalid endpoint")
+    except ValueError:
+        raise GatewayConfigurationError(
+            f"{label} must be a clean HTTPS endpoint"
+        ) from None
+    return cleaned, parsed
+
+
 def clean_https_origin(value: str, *, label: str) -> str:
-    parsed = urlsplit(value.strip())
-    if (
-        parsed.scheme != "https"
-        or not parsed.hostname
-        or parsed.username is not None
-        or parsed.password is not None
-        or parsed.path not in {"", "/"}
-        or parsed.query
-        or parsed.fragment
-    ):
+    cleaned, parsed = _parse_https_endpoint(value, label=label)
+    if parsed.path not in {"", "/"}:
         raise GatewayConfigurationError(f"{label} must be a clean HTTPS origin")
-    return value.strip().rstrip("/")
+    return cleaned.rstrip("/")
 
 
 def clean_https_url(value: str, *, label: str) -> str:
-    parsed = urlsplit(value.strip())
-    if (
-        parsed.scheme != "https"
-        or not parsed.hostname
-        or parsed.username is not None
-        or parsed.password is not None
-        or not parsed.path.startswith("/")
-        or parsed.query
-        or parsed.fragment
-    ):
+    cleaned, parsed = _parse_https_endpoint(value, label=label)
+    if not parsed.path.startswith("/"):
         raise GatewayConfigurationError(f"{label} must be a clean HTTPS URL")
-    return value.strip()
+    return cleaned
 
 
 @dataclass(frozen=True, slots=True)
@@ -323,16 +362,7 @@ class ClientCredentialsTokenProvider:
             raise PermanentDeliveryError(
                 f"Keycloak token endpoint returned HTTP {response.status}"
             )
-        try:
-            value = json.loads(response.body)
-        except (UnicodeDecodeError, json.JSONDecodeError) as exc:
-            raise PermanentDeliveryError(
-                "Keycloak token response is not valid JSON"
-            ) from exc
-        if not isinstance(value, dict):
-            raise PermanentDeliveryError(
-                "Keycloak token response must be an object"
-            )
+        value = _response_object(response.body, source="Keycloak token")
         token_type = value.get("token_type")
         access_token = value.get("access_token")
         expires_in = value.get("expires_in")
@@ -340,9 +370,13 @@ class ClientCredentialsTokenProvider:
             raise PermanentDeliveryError(
                 "Keycloak token response must use Bearer token type"
             )
-        if not isinstance(access_token, str) or not access_token.strip():
+        if (
+            not isinstance(access_token, str)
+            or not access_token
+            or any(not 33 <= ord(char) <= 126 for char in access_token)
+        ):
             raise PermanentDeliveryError(
-                "Keycloak token response has no access_token"
+                "Keycloak token response has an invalid access_token"
             )
         if (
             not isinstance(expires_in, int)
@@ -353,7 +387,7 @@ class ClientCredentialsTokenProvider:
                 "Keycloak token lifetime must be between 30 and 600 seconds"
             )
         return AccessToken(
-            value=access_token.strip(),
+            value=access_token,
             expires_at=now + expires_in,
         )
 
@@ -520,16 +554,7 @@ class MiddlewareEventPublisher:
             raise PermanentDeliveryError(
                 f"Middleware rejected event with HTTP {response.status}"
             )
-        try:
-            value = json.loads(response.body)
-        except (UnicodeDecodeError, json.JSONDecodeError) as exc:
-            raise PermanentDeliveryError(
-                "Middleware response is not valid JSON"
-            ) from exc
-        if not isinstance(value, dict):
-            raise PermanentDeliveryError(
-                "Middleware response must be an object"
-            )
+        value = _response_object(response.body, source="Middleware")
         expected_status = "duplicate" if response.status == 200 else "accepted"
         if (
             value.get("event_id") != event_id

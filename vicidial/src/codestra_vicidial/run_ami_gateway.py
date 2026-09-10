@@ -9,6 +9,7 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Mapping
+from urllib.parse import urlsplit
 
 from .ami_gateway import (
     AMIClient,
@@ -25,6 +26,7 @@ from .middleware_events import (
     ClientCredentialsTokenProvider,
     EventDeliveryWorker,
     MiddlewareEventPublisher,
+    URLlibMTLSTransport,
     delivery_config_from_environment,
 )
 
@@ -440,9 +442,19 @@ def build_runtime(
     directory = AgentDirectory.from_file(config.agent_directory_file)
     store = LifecycleStore(config.state_database)
     delivery_config, transport = delivery_config_from_environment(values)
+    # Keycloak and Middleware may have distinct DNS identities. Preserve the
+    # configured trust roots and client identity, but bind each request path to
+    # its own configured hostname rather than applying the Middleware pin twice.
+    token_transport = URLlibMTLSTransport(
+        ca_file=transport.ca_file,
+        client_cert_file=transport.client_cert_file,
+        client_key_file=transport.client_key_file,
+        server_hostname=urlsplit(delivery_config.keycloak_token_url).hostname,
+        maximum_response_bytes=transport.maximum_response_bytes,
+    )
     token_provider = ClientCredentialsTokenProvider(
         config=delivery_config,
-        transport=transport,
+        transport=token_transport,
     )
     publisher = MiddlewareEventPublisher(
         config=delivery_config,
