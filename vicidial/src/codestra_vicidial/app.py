@@ -360,7 +360,12 @@ def create_app(
 
 
     @app.post("/v1/calls/originate")
-    async def external_originate_disabled(request: Request):
+    async def external_originate_disabled(request: Request, values=Depends(headers)):
+        key, identity, scopes, timestamp, nonce, signature, signature_version = values
+        await authorize(
+            request, "telephony:external-call", identity, scopes, timestamp, nonce,
+            signature, signature_version, key,
+        )
         raise HTTPException(503, "production dialing executor is not enabled")
 
     @app.exception_handler(InternalCallError)
