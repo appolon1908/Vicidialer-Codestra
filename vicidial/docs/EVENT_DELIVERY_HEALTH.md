@@ -14,7 +14,9 @@ The status includes these additive fields within schema version 1.0:
 | `dead_letter_events` | Retained events requiring operator reconciliation after permanent denial or exhausted retries. |
 | `delivery_status` | `dead_letter`, `retrying`, `pending`, or `idle`, in that precedence. |
 
-Each snapshot reads these counts together from SQLite. Delivered events are
+Each status publication reads these counts together from SQLite while holding
+the status writer lock, so an older AMI snapshot cannot overwrite a newer
+delivery-failure snapshot. Delivered events are
 excluded. Counts are refreshed during delivery cycles and AMI state updates;
 they survive a gateway restart because they derive from the durable outbox.
 No event payload, call identifier, credential, or remote error text is written

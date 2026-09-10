@@ -114,7 +114,10 @@ def test_dead_letter_takes_precedence_over_retrying(tmp_path):
 
 
 def test_runtime_delivery_loop_publishes_durable_failure_counts(outbox, tmp_path):
-    status = StatusWriter(tmp_path / "status.json", source_sha="a" * 40)
+    status = StatusWriter(
+        tmp_path / "status.json", source_sha="a" * 40,
+        delivery_health=outbox.delivery_health,
+    )
     runtime = GatewayRuntime(
         config=SimpleNamespace(delivery_idle_seconds=0.01),
         directory=None, store=outbox, ami_client=None,
@@ -138,3 +141,52 @@ def test_runtime_delivery_loop_publishes_durable_failure_counts(outbox, tmp_path
     assert value["status"] == "degraded"
     assert value["delivery_worker_running"] is False
     assert value["last_delivery_cycle_at"] is not None
+
+
+def test_status_publication_serializes_outbox_read_and_write(outbox, tmp_path):
+    from concurrent.futures import ThreadPoolExecutor
+    from threading import Event
+
+    first_snapshot = Event()
+    release_first = Event()
+    second_update = Event()
+    reads = []
+
+    def read_health():
+        health = outbox.delivery_health()
+        reads.append(health)
+        if len(reads) == 1:
+            first_snapshot.set()
+            assert release_first.wait(5)
+        return health
+
+    status = StatusWriter(
+        tmp_path / "status.json", source_sha="a" * 40,
+        delivery_health=read_health,
+    )
+
+    def delivery_update():
+        second_update.set()
+        status.update(delivery_worker_running=True)
+
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        ami = pool.submit(status.update, status="ready", ami_connected=True)
+        try:
+            assert first_snapshot.wait(5)
+            assert worker(outbox, PermanentDeliveryError("synthetic denial")).run_once()
+            delivery = pool.submit(delivery_update)
+            assert second_update.wait(5)
+            # The delivery thread cannot snapshot while an older publication
+            # owns the lock. Its newer durable snapshot must be published last.
+            assert len(reads) == 1
+        finally:
+            release_first.set()
+        ami.result(timeout=5)
+        delivery.result(timeout=5)
+
+    assert reads[0]["dead_letter_events"] == 0
+    assert reads[1]["dead_letter_events"] == 1
+    assert snapshot(status)["dead_letter_events"] == 1
+    assert snapshot(status)["status"] == "degraded"
+    status.update(status="ready", dead_letter_events=0, retrying_events=0)
+    assert snapshot(status)["status"] == "degraded"

@@ -166,12 +166,14 @@ def test_runtime_binds_token_and_event_transports_to_distinct_hosts(tmp_path, mo
     )
     monkeypatch.setattr(runtime.GatewayRuntimeConfig, "from_environment", lambda source: settings)
     monkeypatch.setattr(runtime.AgentDirectory, "from_file", lambda path: object())
-    monkeypatch.setattr(runtime, "LifecycleStore", lambda path: object())
     monkeypatch.setattr(runtime, "delivery_config_from_environment", lambda source: (config(), event_transport))
     monkeypatch.setattr(runtime, "AMIClient", lambda ami: object())
-    monkeypatch.setattr(runtime, "StatusWriter", lambda *args, **kwargs: object())
     monkeypatch.setattr(runtime, "GatewayRuntime", lambda **kwargs: SimpleNamespace(**kwargs))
     built = runtime.build_runtime({})
+    built.status.update(status="ready", pending_events=99)
+    health = json.loads(settings.status_file.read_text())
+    assert health["pending_events"] == 0
+    assert health["delivery_status"] == "idle"
     publisher = built.delivery_worker.publisher
     token_transport = publisher.token_provider.transport
     assert publisher.transport is event_transport
