@@ -11,6 +11,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 from codestra_vicidial.reconciliation import ReconciliationDenied, ReconciliationPolicy
 from codestra_vicidial.internal_calling import InternalCallError, InternalCallPolicy, validate_lifecycle_schema
 from codestra_vicidial.internal_call_transport import CallDenied, load_protected_json, valid_ami_header_value
+from codestra_vicidial.external_calling import ExternalCallError, ExternalCallPolicy
 from codestra_vicidial.release import load_release_info
 
 ALWAYS_FALSE_FLAGS = (
@@ -20,7 +21,6 @@ ALWAYS_FALSE_FLAGS = (
     "ENABLE_WARM_TRANSFER",
     "ENABLE_IVR_ROUTING",
     "ENABLE_IVR_CALLBACKS",
-    "ENABLE_PRODUCTION_DIALING",
     "ENABLE_SMS_DELIVERY",
     "ENABLE_EMAIL_DELIVERY",
     "ENABLE_EXTERNAL_DELIVERY",
@@ -63,6 +63,8 @@ if deployment != "production-internal-test":
     require_false("ENABLE_INTERNAL_TEST_CALLING")
 
 backend = os.environ.get("CODESTRA_ADAPTER_BACKEND", "memory")
+if deployment != "production-external-one-call":
+    require_false("ENABLE_PRODUCTION_DIALING")
 if deployment == "staging-read-only":
     if backend != "memory":
         raise SystemExit("staging deployment requires memory backend")
@@ -94,6 +96,42 @@ elif deployment == "production-internal-test":
         validate_lifecycle_schema(lifecycle)
     except InternalCallError as exc:
         raise SystemExit("authoritative AMI lifecycle database schema invalid") from exc
+    credential = Path(os.environ["CODESTRA_AMI_CREDENTIAL_FILE"])
+    try:
+        document = load_protected_json(credential)
+        if set(document) != {"host", "port", "username", "secret"}:
+            raise CallDenied("AMI credential schema invalid")
+        if document["host"] not in {"127.0.0.1", "localhost"}:
+            raise CallDenied("AMI must remain loopback-only")
+        if type(document["port"]) is not int or not 1 <= document["port"] <= 65535:
+            raise CallDenied("invalid AMI port")
+        if not all(valid_ami_header_value(document[key])
+                   for key in ("username", "secret")):
+            raise CallDenied("AMI identity is incomplete")
+    except (OSError, ValueError, TypeError, KeyError, CallDenied) as exc:
+        raise SystemExit("AMI credential is unavailable or invalid") from exc
+elif deployment == "production-external-one-call":
+    if backend != "memory":
+        raise SystemExit("external one-call profile requires isolated memory backend")
+    if os.environ.get("ENABLE_PRODUCTION_DIALING") != "true":
+        raise SystemExit("external one-call profile requires production dialing enabled")
+    for name in (
+        "ENABLE_VICIDIAL_WRITES", "ENABLE_PROVISIONING", "ENABLE_AGENT_PROVISIONING",
+        "ENABLE_AGENT_SYNC", "ENABLE_LEAD_PUBLICATION", "ENABLE_LIVE_CALL_CONTROL",
+        "ENABLE_WARM_TRANSFER", "ENABLE_IVR_ROUTING", "ENABLE_IVR_CALLBACKS",
+        "ENABLE_SMS_DELIVERY", "ENABLE_EMAIL_DELIVERY", "ENABLE_EXTERNAL_DELIVERY",
+        "ENABLE_AI_ACTIONS", "ENABLE_INTERNAL_TEST_CALLING",
+    ):
+        require_false(name)
+    if release_info is None or not isinstance(release_info.get("git_sha"), str):
+        raise SystemExit("verified release metadata required for external calling")
+    try:
+        ExternalCallPolicy.from_file(
+            Path(os.environ["CODESTRA_EXTERNAL_CALL_POLICY_FILE"]),
+            release_info["git_sha"],
+        )
+    except (KeyError, ExternalCallError) as exc:
+        raise SystemExit("external call policy invalid") from exc
     credential = Path(os.environ["CODESTRA_AMI_CREDENTIAL_FILE"])
     try:
         document = load_protected_json(credential)
