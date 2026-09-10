@@ -19,7 +19,7 @@ services:
         target: adapter-hmac
     environment:
       CODESTRA_ADAPTER_BACKEND: memory
-      CODESTRA_ADAPTER_DEPLOYMENT: production-candidate
+      CODESTRA_ADAPTER_DEPLOYMENT: staging-read-only
       CODESTRA_ADAPTER_HMAC_FILE: /run/secrets/adapter-hmac
       AUTHORIZED_PRIVATE_SOURCE_IP: 10.40.0.1
       ENABLE_VICIDIAL_WRITES: "false"
