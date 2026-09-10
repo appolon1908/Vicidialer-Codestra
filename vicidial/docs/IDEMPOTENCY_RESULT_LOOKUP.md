@@ -93,3 +93,9 @@ state recreation, historical versions, authority changes, uncertain completion,
 transaction isolation and malformed ledger records. Container and MariaDB
 release checks remain separate gates. This API change does not certify a
 Server B release or authorize activation of dialing.
+
+## Executable client
+
+The private client now exposes `lookup_command(operation, key, command)`.
+The synthetic lifecycle persists original bodies before dispatch for explicit
+recovery after restart. See [client integration and remaining bindings](ISSUE11_CLIENT_INTEGRATION.md).
