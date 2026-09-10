@@ -163,6 +163,12 @@ def test_compose_hardening_and_disabled_capabilities(name):
         assert service["image"].startswith("${VICIDIAL_ADAPTER_IMAGE:")
     else:
         assert "@${VICIDIAL_ADAPTER_IMAGE_DIGEST" in service["image"]
+    expected_profile, expected_backend = (
+        ("staging-read-only", "memory") if "shadow" in name
+        else ("production-candidate", "mysql")
+    )
+    assert service["environment"]["CODESTRA_ADAPTER_DEPLOYMENT"] == expected_profile
+    assert service["environment"]["CODESTRA_ADAPTER_BACKEND"] == expected_backend
     for flag in LIVE_FLAGS:
         assert service["environment"][flag] == "false"
     for flag in DEPRECATED_FLAGS:
@@ -240,7 +246,8 @@ def test_local_image_health_release_tuple_and_restart(tmp_path):
         "--read-only", "--user", "10001:10001", "--cap-drop", "all",
         "--security-opt", "no-new-privileges", "--tmpfs", "/tmp:rw,noexec,nosuid,nodev",
         "--tmpfs", "/run:rw,noexec,nosuid,nodev", "--volume",
-        f"{secret}:/run/secrets/adapter-hmac:ro", image,
+        f"{secret}:/run/secrets/adapter-hmac:ro",
+        "--env", "CODESTRA_ADAPTER_DEPLOYMENT=staging-read-only", image,
     ]
     try:
         subprocess.run(command, check=True, capture_output=True, text=True)
@@ -270,6 +277,8 @@ def test_local_image_health_release_tuple_and_restart(tmp_path):
         ready = get("/ready")
         assert version["verified"] is True and version["git_sha"]
         assert ready["status"] == "ready"
+        assert ready["deployment_profile"] == "staging-read-only"
+        assert ready["backend"] == "memory"
         assert ready["checks"]["release"] is True
         assert ready["checks"]["hmac"] is True
         assert ready["checks"]["state_store"] is True

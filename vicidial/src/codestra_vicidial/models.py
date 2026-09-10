@@ -3,7 +3,7 @@ from __future__ import annotations
 from datetime import datetime, timezone
 from typing import Annotated, Literal
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
+from pydantic import AwareDatetime, BaseModel, ConfigDict, Field, RootModel, field_validator, model_validator
 
 StrictText = Annotated[str, Field(min_length=1, max_length=255)]
 CanonicalCampaign = Annotated[
@@ -231,3 +231,69 @@ class CallbackLookup(StrictModel):
     recipient: str
     status: str
     callback_time: datetime
+
+
+class CommandLookupKey(StrictModel):
+    model_config = ConfigDict(extra="forbid", str_strip_whitespace=False)
+
+    idempotency_key: Annotated[str, Field(min_length=8, max_length=200)]
+
+
+class CampaignCommandLookup(CommandLookupKey):
+    operation: Literal["campaign.provision-disabled", "campaign.disable"]
+    command: CampaignCommand
+
+
+class AgentSyncLookup(CommandLookupKey):
+    operation: Literal["agent.sync"]
+    command: AgentCommand
+
+
+class AgentProvisionLookup(CommandLookupKey):
+    operation: Literal["agent.provision-disabled"]
+    command: ProvisionAgentCommand
+
+
+class AgentDisableLookup(CommandLookupKey):
+    operation: Literal["agent.disable"]
+    command: DisableAgentCommand
+
+
+class LeadCommandLookup(CommandLookupKey):
+    operation: Literal["lead.publish"]
+    command: LeadCommand
+
+
+class CallbackCommandLookup(CommandLookupKey):
+    operation: Literal["callback.create"]
+    command: CallbackCommand
+
+
+class TransferCommandLookup(CommandLookupKey):
+    operation: Literal["transfer-policy.sync"]
+    command: TransferPolicyCommand
+
+
+class CommandLookup(RootModel[Annotated[
+    CampaignCommandLookup | AgentSyncLookup | AgentProvisionLookup | AgentDisableLookup
+    | LeadCommandLookup | CallbackCommandLookup | TransferCommandLookup,
+    Field(discriminator="operation"),
+]]):
+    """Identify an exact prior command without applying it again."""
+
+
+class RecordedCommandResult(BaseModel):
+    """Preserve operation-specific fields and require a committed version."""
+
+    model_config = ConfigDict(extra="allow")
+    resource_version: Annotated[int, Field(ge=1, strict=True)]
+
+
+class CommandLookupResult(StrictModel):
+    model_config = ConfigDict(extra="forbid", str_strip_whitespace=False)
+
+    status: Literal["recorded"] = "recorded"
+    operation: str
+    idempotency_key: str
+    recorded_at: AwareDatetime
+    result: RecordedCommandResult

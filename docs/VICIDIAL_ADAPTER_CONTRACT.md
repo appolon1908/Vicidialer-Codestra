@@ -29,6 +29,8 @@ GET  /health
 GET  /ready
 GET  /version
 
+POST /v1/idempotency/lookup
+
 POST /v1/campaigns/validate
 POST /v1/campaigns/provision-disabled
 POST /v1/campaigns/disable
@@ -138,6 +140,17 @@ the external reference, and returns a typed response containing `external_id`,
 The status is current read-back, while the version is the committed adapter version.
 An unknown mapping returns 404; missing, conflicting or invalid actual state returns
 409 with `status=reconciliation_required` instead of stale mapping data.
+
+### Recovering a lost command response
+
+`POST /v1/idempotency/lookup` requires signed `telephony:read` authority and
+the original operation, idempotency key and complete typed command. It returns
+the historical committed result without dispatching another mutation. Every lookup
+outcome emits a redacted audit event through a separate transaction. Campaign
+authority is rechecked, and a changed original command returns 409. A 404 means
+no committed result is available; it does not prove non-execution or release a
+pending claim. See [the request and recovery contract](../vicidial/docs/IDEMPOTENCY_RESULT_LOOKUP.md)
+for authentication, response handling and supported operations.
 
 ### Consistent versioned read-back
 

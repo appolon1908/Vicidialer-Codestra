@@ -275,7 +275,11 @@ def test_version_ready_and_openapi_contract(
                     "x-codestra-required-scope"
                 ].startswith("telephony:")
 
-    assert len(protected) == 22
+    assert len(protected) == 23
+    assert ("post", "/v1/idempotency/lookup") in protected
+    assert schema["paths"]["/v1/idempotency/lookup"]["post"][
+        "x-codestra-required-scope"
+    ] == "telephony:read"
     assert ("get", "/v1/callbacks/by-external-id/{external_id}") in protected
     assert ("post", "/v1/calls/originate") in protected
     for public_path in ("/health", "/ready", "/version"):
@@ -331,6 +335,7 @@ def test_operational_document_validation() -> None:
             "status": "ready",
             "writes_enabled": False,
             "release_verified": True,
+            "deployment_profile": "staging-read-only",
         },
         version=version,
         expected_sha=SHA,
@@ -343,6 +348,7 @@ def test_operational_document_validation() -> None:
                 "status": "ready",
                 "writes_enabled": False,
                 "release_verified": True,
+                "deployment_profile": "staging-read-only",
             },
             version=version,
             expected_sha="b" * 40,

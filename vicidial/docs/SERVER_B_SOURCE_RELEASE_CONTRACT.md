@@ -1,15 +1,22 @@
 # Server B source-release contract
 
-Server B's existing restricted operator consumes a gzip tar rooted at the
-contents of `vicidial/`. It installs that Python project into a new
-`/opt/codestra/vicidial-restricted-adapter/releases/<source-sha>` directory,
-requires a release-local virtual environment with correctly bound entrypoints,
-atomically changes `current`, and restarts only
-`codestra-vicidial-restricted-adapter.service` after the administrator deployment
-gates pass. Reusing or copying a venv is not proof of this requirement: console
-scripts can retain a predecessor interpreter path. Failed validation must restore
-the effective previously running release and verify the restored process; the
-current symlink alone does not establish that rollback target.
+This contract requires a verified gzip tar rooted at the contents of
+`vicidial/`, a fresh release-local virtual environment, and an adapter-only
+activation/rollback transaction. It does not establish that the installed host
+operator implements those requirements.
+
+The installed operator inspected on 2026-09-10 had SHA-256
+`015fda29ada5eb11d71a6177876fdf102c7fe83932dda91772e09994c67501ee`.
+Its `deploy` action reported no mutation and its `restart-controlled` action
+covered three units. Those actions are not evidence of this contract's bounded
+release transition. Inspect the current operator again before integration.
+
+The source-controlled [prepared-release transaction](PREPARED_RELEASE_TRANSACTION.md)
+provides the adapter-only pointer switch, durable recovery journal, effective
+process/readiness checks and predecessor rollback. Administrator preparation of
+the final release directory and fresh venv remains a separate prerequisite.
+The transaction must pass protected review, publication and installation before
+it can be invoked on a host; this document does not authorize a deployment.
 
 The archive contains `pyproject.toml`, `src/`, `scripts/`, `config/`, `ops/`,
 dependency locks, tests and docs, plus `SOURCE_SHA`, `SHA256SUMS`, and
@@ -21,7 +28,7 @@ The protected workflow builds the payload from the exact protected source SHA,
 records the workflow SHA separately, and signs the archive with keyless
 Sigstore. Staging verifies the outer SHA-256, embedded source SHA, per-file
 checksums, manifest digest, signature identity, protected ancestry and rollback
-state before invoking the existing operator. Installed files are root-owned and
+state before invoking an approved installed transaction. Installed files are root-owned and
 not group/world writable; the service remains `codestra-adapter` with the
 existing root-managed environment and credentials.
 

@@ -133,7 +133,6 @@ def _repository_ready(profile: str) -> tuple[bool, str]:
         return profile in {
             "development-loopback",
             "staging-read-only",
-            "production-candidate",
             EXTERNAL_ONE_CALL_PROFILE,
         }, backend
     if backend == "mysql":
@@ -156,6 +155,8 @@ def _release_ready(profile: str) -> tuple[bool, str | None, dict]:
         return False, None, {}
     sha = release.get("git_sha") if isinstance(release, dict) else None
     if required and release.get("verified") is not True:
+        return False, str(sha) if sha else None, release
+    if profile == "production-candidate" and release.get("environment") != profile:
         return False, str(sha) if sha else None, release
     return True, str(sha) if sha else None, release
 
