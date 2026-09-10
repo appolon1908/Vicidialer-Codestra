@@ -254,15 +254,18 @@ def test_local_image_health_release_tuple_and_restart(tmp_path):
                 [engine, "exec", name, "python", "-c", probe % path], text=True)
             return json.loads(output)
 
-        for _ in range(40):
-            try:
-                if get("/health") == {"status": "live"}:
-                    break
-            except subprocess.CalledProcessError:
+        def wait_for_health():
+            for _ in range(40):
+                try:
+                    if get("/health") == {"status": "live"}:
+                        return
+                except subprocess.CalledProcessError:
+                    pass
                 time.sleep(0.25)
-        else:
             raise AssertionError(subprocess.check_output(
                 [engine, "logs", name], text=True, stderr=subprocess.STDOUT))
+
+        wait_for_health()
         version = get("/version")
         ready = get("/ready")
         assert version["verified"] is True and version["git_sha"]
@@ -275,7 +278,7 @@ def test_local_image_health_release_tuple_and_restart(tmp_path):
         assert ready["production_dialing"] is False
         assert ready["customer_traffic_authorized"] is False
         subprocess.run([engine, "restart", name], check=True, capture_output=True)
-        time.sleep(1)
+        wait_for_health()
         assert get("/version")["git_sha"] == version["git_sha"]
         assert get("/ready")["status"] == "ready"
     finally:
