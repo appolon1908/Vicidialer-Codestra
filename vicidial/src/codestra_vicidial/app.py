@@ -366,13 +366,13 @@ def create_app(
 
     @app.post("/v1/calls/originate")
     async def external_originate(request: Request, values=Depends(headers)):
-        if external_call_executor is None:
-            raise HTTPException(503, "production dialing executor is not enabled")
         key, identity, scopes, timestamp, nonce, signature, signature_version = values
         body = await authorize(
             request, "telephony:external-call", identity, scopes, timestamp, nonce,
             signature, signature_version, key,
         )
+        if external_call_executor is None:
+            raise HTTPException(503, "production dialing executor is not enabled")
         try:
             command = ExternalOriginateCommand.model_validate_json(body)
             if key != command.operation_id:
@@ -721,7 +721,7 @@ def app_from_environment() -> FastAPI:
             external_policy,
             Path(os.environ.get(
                 "CODESTRA_EXTERNAL_CALL_STATE",
-                "/var/lib/codestra-vicidial-restricted-adapter/external-calls.sqlite3",
+                "/var/lib/codestra-vicidial/external-calls.sqlite3",
             )),
             SocketAmiTransport(ami_credential_path),
             policy_provider=lambda: ExternalCallPolicy.from_file(
@@ -734,7 +734,7 @@ def app_from_environment() -> FastAPI:
             ),
             audit_path=Path(os.environ.get(
                 "CODESTRA_ADAPTER_STATE",
-                "/var/lib/codestra-vicidial-restricted-adapter/state.sqlite3",
+                "/var/lib/codestra-vicidial/state.sqlite3",
             )),
         )
 

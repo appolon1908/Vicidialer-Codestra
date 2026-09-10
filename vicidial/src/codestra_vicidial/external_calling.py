@@ -237,13 +237,13 @@ class ExternalCallExecutor:
         self.transport.originate_external(policy, command.operation_id, uniqueid)
         with closing(sqlite3.connect(self.state_path)) as db:
             db.execute(
-                "UPDATE external_calls SET state='accepted' "
+                "UPDATE external_calls SET state='submitted_unknown' "
                 "WHERE operation_id=? AND state='dispatch_unknown'",
                 (command.operation_id,),
             )
             db.commit()
         return {
-            "status": "accepted",
+            "status": "submitted_unknown",
             "operation_id": command.operation_id,
             "asterisk_uniqueid": uniqueid,
             "created_at": created,

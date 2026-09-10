@@ -198,25 +198,28 @@ class SocketAmiTransport:
             {"Context": policy.dialplan_context, "Extension": dial_extension},
             "ShowDialPlanComplete",
         )
-        if not rows:
-            raise CallDenied("external DIDWW dialplan route is unavailable")
-        observed = []
+        route = []
         for row in rows:
             if row.event != "ListDialplan":
-                continue
-            if row.get("Context") != policy.dialplan_context:
-                raise CallDenied("external route escaped approved context")
-            if row.get("Switch") or row.get("IncludeContext") or row.get("IgnorePattern"):
-                raise CallDenied("external route contains dynamic dialplan resolution")
-            observed.append((row.get("Application"), row.get("AppData")))
-        required = {
-            ("Set", f"CALLERID(num)={policy.caller_id}"),
-            ("Set", "OUTNUM=+${EXTEN:1}"),
-            ("Dial", f"SIP/${{OUTNUM}}@{policy.trunk},60,tTo"),
-            ("Hangup", ""),
-        }
-        if not required <= set(observed):
-            raise CallDenied("live external route differs from approved DIDWW contract")
+                raise CallDenied("external route contains unexpected AMI event")
+            if (
+                row.get("Context") != policy.dialplan_context
+                or row.get("Extension") != dial_extension
+                or row.get("Switch")
+                or row.get("IncludeContext")
+                or row.get("IgnorePattern")
+            ):
+                raise CallDenied("external route contains unapproved dialplan resolution")
+            route.append((row.get("Priority"), row.get("Application"), row.get("AppData")))
+        route.sort(key=lambda item: int(item[0]) if str(item[0]).isdigit() else -1)
+        expected = [
+            ("1", "Set", f"CALLERID(num)={policy.caller_id}"),
+            ("2", "Set", "OUTNUM=+${EXTEN:1}"),
+            ("3", "Dial", f"SIP/${{OUTNUM}}@{policy.trunk},60,tTo"),
+            ("4", "Hangup", ""),
+        ]
+        if route != expected:
+            raise CallDenied("live external route differs from exact approved DIDWW contract")
 
     def originate_external(self, policy, operation_id: str, uniqueid: str) -> None:
         if not re.fullmatch(r"codestra-pstn-[a-f0-9]{28}", uniqueid):
@@ -230,7 +233,7 @@ class SocketAmiTransport:
                 "Channel": f"Local/{dial_extension}@{policy.dialplan_context}/n",
                 "Application": "Wait",
                 "Data": str(policy.max_connected_seconds),
-                "Async": "true",
+                "Async": "false",
                 "ChannelId": uniqueid,
                 "CallerID": policy.caller_id,
                 "Variable": (
