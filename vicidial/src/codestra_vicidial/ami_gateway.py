@@ -1539,6 +1539,25 @@ class LifecycleStore:
                 ).fetchone()[0]
             )
 
+    def delivery_health(self) -> dict[str, int]:
+        """Return payload-free outbox counts from one durable snapshot."""
+        with self._connect() as conn:
+            row = conn.execute(
+                """
+                SELECT
+                    count(CASE WHEN status IN ('pending','retrying') THEN 1 END),
+                    count(CASE WHEN status='retrying' THEN 1 END),
+                    count(CASE WHEN status='dead_letter' THEN 1 END)
+                FROM event_outbox
+                WHERE status IN ('pending','retrying','dead_letter')
+                """
+            ).fetchone()
+        return {
+            "pending_events": int(row[0]),
+            "retrying_events": int(row[1]),
+            "dead_letter_events": int(row[2]),
+        }
+
     def mark_dead_letter(
         self,
         event_id: str,

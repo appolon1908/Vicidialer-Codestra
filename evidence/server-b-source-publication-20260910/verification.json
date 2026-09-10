@@ -1,0 +1,103 @@
+{
+  "source_sha": "8a3bb2f6977507fe850cd5d5ec4523f4b8880022",
+  "builder_sha": "8a3bb2f6977507fe850cd5d5ec4523f4b8880022",
+  "run_id": 34491694169,
+  "run_attempt": 1,
+  "artifact_id": 10158038140,
+  "artifact_expires_at": "2026-10-10T14:51:18Z",
+  "zip_sha256": "ecd9d380f9846a92d2a679a8e24dbb5671144fe292a353937e6f6cafe75f491d",
+  "archive_sha256": "4e05428e1e70e8d4703bcf15802778702069f9fb1f42d34a5cb52f8c93825ae7",
+  "manifest_sha256": "798b6864c0c158460dad2881121af03abda93d3401cd208cd56bcea87af24cd3",
+  "manifest": {
+    "archive_root": ".",
+    "artifact_type": "codestra-vicidial-server-b-source-release",
+    "builder_workflow_sha": "8a3bb2f6977507fe850cd5d5ec4523f4b8880022",
+    "checksums_sha256": "cd7e24a04bc51da28ebe356da9f0de1adc9cc45396b64c817bd1b98dedbca384",
+    "file_count": 125,
+    "installer_contract": "systemd-python-source-v1",
+    "schema_version": 1,
+    "source_repository": "appolon1908-hue/Vicidialer-Codestra",
+    "source_sha": "8a3bb2f6977507fe850cd5d5ec4523f4b8880022"
+  },
+  "checks": [
+    {
+      "name": "archive-members",
+      "argv": [
+        "python3",
+        "/srv/codestra/release-audits/vicidial-8a3bb2f-20260910/protected-source/vicidial/scripts/verify_source_release.py",
+        "--archive",
+        "/srv/codestra/release-audits/vicidial-8a3bb2f-20260910/codestra-vicidial-adapter-8a3bb2f6977507fe850cd5d5ec4523f4b8880022.tar.gz",
+        "--source-sha",
+        "8a3bb2f6977507fe850cd5d5ec4523f4b8880022",
+        "--builder-sha",
+        "8a3bb2f6977507fe850cd5d5ec4523f4b8880022"
+      ],
+      "started_at": "2026-09-10T14:53:17.493160+00:00",
+      "completed_at": "2026-09-10T14:53:17.543537+00:00",
+      "exit_code": 0,
+      "log_sha256": "76f75d4dc9b289a8196d0014ccd5818e9edce7312ffdffb10ebb4878e43cb4fe"
+    },
+    {
+      "name": "archive-signature",
+      "argv": [
+        "/usr/local/bin/cosign",
+        "verify-blob",
+        "--bundle",
+        "/srv/codestra/release-audits/vicidial-8a3bb2f-20260910/source-release.sigstore.json",
+        "--certificate-identity",
+        "https://github.com/appolon1908-hue/Vicidialer-Codestra/.github/workflows/publish-server-b-source-release.yml@refs/heads/main",
+        "--certificate-oidc-issuer",
+        "https://token.actions.githubusercontent.com",
+        "/srv/codestra/release-audits/vicidial-8a3bb2f-20260910/codestra-vicidial-adapter-8a3bb2f6977507fe850cd5d5ec4523f4b8880022.tar.gz"
+      ],
+      "started_at": "2026-09-10T14:53:17.543594+00:00",
+      "completed_at": "2026-09-10T14:53:17.960475+00:00",
+      "exit_code": 0,
+      "log_sha256": "5708e5c093dea4e0906006ee139a8ed5b67266d0a5495a0c3d91897dd5914af7"
+    },
+    {
+      "name": "provenance-signature",
+      "argv": [
+        "/usr/local/bin/cosign",
+        "verify-blob",
+        "--bundle",
+        "/srv/codestra/release-audits/vicidial-8a3bb2f-20260910/source-release-provenance.sigstore.json",
+        "--certificate-identity",
+        "https://github.com/appolon1908-hue/Vicidialer-Codestra/.github/workflows/publish-server-b-source-release.yml@refs/heads/main",
+        "--certificate-oidc-issuer",
+        "https://token.actions.githubusercontent.com",
+        "/srv/codestra/release-audits/vicidial-8a3bb2f-20260910/source-release-provenance.json"
+      ],
+      "started_at": "2026-09-10T14:53:17.960529+00:00",
+      "completed_at": "2026-09-10T14:53:18.354500+00:00",
+      "exit_code": 0,
+      "log_sha256": "5708e5c093dea4e0906006ee139a8ed5b67266d0a5495a0c3d91897dd5914af7"
+    },
+    {
+      "name": "rebuild",
+      "argv": [
+        "python3",
+        "/srv/codestra/release-audits/vicidial-8a3bb2f-20260910/protected-source/vicidial/scripts/build_source_release.py",
+        "--source-root",
+        "/srv/codestra/release-audits/vicidial-8a3bb2f-20260910/protected-source/vicidial",
+        "--source-sha",
+        "8a3bb2f6977507fe850cd5d5ec4523f4b8880022",
+        "--builder-sha",
+        "8a3bb2f6977507fe850cd5d5ec4523f4b8880022",
+        "--output",
+        "/srv/codestra/release-audits/vicidial-8a3bb2f-20260910/rebuilt.tar.gz",
+        "--metadata",
+        "/srv/codestra/release-audits/vicidial-8a3bb2f-20260910/rebuilt-metadata.json"
+      ],
+      "started_at": "2026-09-10T14:54:35.609982+00:00",
+      "completed_at": "2026-09-10T14:54:35.770263+00:00",
+      "exit_code": 0,
+      "log_sha256": "e62f2dc21996ac4a5f8348e9e6e7ce3558691722defd30dd19e467630a241855",
+      "matches_published_archive": true
+    }
+  ],
+  "provenance_bindings": "PASS",
+  "result": "PASS",
+  "completed_at": "2026-09-10T14:53:18.363868+00:00",
+  "deployment_performed": false
+}
