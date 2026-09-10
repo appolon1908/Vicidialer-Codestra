@@ -8,6 +8,7 @@
   "environment": "isolated Core worktree; synthetic transport/repository; real HTTP handlers and SQLite",
   "exit_code": 0,
   "live_mtls_verified": false,
+  "log_file": "pytest.txt",
   "log_sha256": "714aefeb61529193cb73fe7e0463b58e95aa9091dc9f28ba0b66dc89b05a5742",
   "passed": 860,
   "production_changed": false,

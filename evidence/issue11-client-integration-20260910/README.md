@@ -14,7 +14,8 @@ HTTPS and the telephony repository are simulated boundaries. The lost-response
 case commits one mutation, recreates the local intent store, disables writes,
 and recovers the exact result through lookup without another mutation.
 
-See `validation.json` for source, command, timestamps and log checksum, and
+See `validation.json` for source, command, timestamps and log checksum,
+[the full test result](pytest.txt), and
 [the integration map](../../vicidial/docs/ISSUE11_CLIENT_INTEGRATION.md) for
 current Middleware contract differences and runtime prerequisites.
 This evidence does not certify production MariaDB, live mTLS, Odoo/n8n delivery,
