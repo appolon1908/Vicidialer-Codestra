@@ -319,6 +319,15 @@ class LifecycleStore:
             )
             return cursor.rowcount == 1
 
+    def has_command_intents(self, key_prefix: str) -> bool:
+        """Distinguish a local preparation retry from an uncertain dispatch."""
+        with sqlite3.connect(self.path) as db:
+            return db.execute(
+                "SELECT 1 FROM command_intent "
+                "WHERE substr(command_key, 1, ?) = ? LIMIT 1",
+                (len(key_prefix), key_prefix),
+            ).fetchone() is not None
+
     def remember_command(
         self, operation: str, key: str, command: dict[str, Any]
     ) -> dict[str, Any]:
@@ -518,10 +527,10 @@ def run_synthetic_lifecycle(
         "odoo_campaign_id": request.odoo_campaign_id,
     }
     event_key = f"campaign.design.requested.v1:{request.integration_uuid}"
-    first_event = store.event_once(
+    store.event_once(
         event_key, "campaign.design.requested.v1", correlation_id, event_payload
     )
-    if not first_event:
+    if store.has_command_intents(f"staging:{request.integration_uuid}:1:"):
         raise LifecycleError("existing synthetic run requires receipt recovery and reconciliation")
     manifest = design_service.preview(request)
     store.approve(request.integration_uuid, supervisor_subject)
@@ -640,7 +649,7 @@ def run_synthetic_lifecycle(
         "state": "disabled"
     })
 
-    if not first_event or replay_event:
+    if replay_event:
         raise LifecycleError("design event was not exactly-once")
     if replay.get("idempotent_replay") is not True:
         raise LifecycleError("campaign retry was not idempotent")

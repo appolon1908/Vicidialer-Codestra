@@ -45,7 +45,7 @@ historical_result = receipt["result"]
 A missing result, denied request, conflict or unavailable audit does not prove
 non-execution. Preserve the unknown outcome and reconcile; do not issue another
 mutation, change the key, clear a resource claim or rerun the whole lifecycle.
-An existing synthetic run now stops before dispatching new remote commands.
+An existing synthetic run with a persisted command intent stops before new\nremote commands. Local preparation failures before any intent was stored may\nretry using the existing design event; no receipt recovery is needed yet.
 Read current actual state before constructing any subsequent versioned command.
 
 No automatic mutation retry is added. The result receipt is historical, and a

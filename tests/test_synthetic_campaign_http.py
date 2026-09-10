@@ -311,3 +311,39 @@ def test_concurrent_campaign_version_change_blocks_disable(tmp_path, signed_adap
     with pytest.raises(AdapterRequestError) as error:
         lifecycle(tmp_path, client)
     assert error.value.status_code == 409
+
+
+@pytest.mark.parametrize("unrelated_intent", [False, True])
+def test_local_failure_before_first_intent_can_retry_without_receipt(
+    tmp_path, signed_adapter, monkeypatch, unrelated_intent
+):
+    client, _service, requests, _connections, _connection_class = signed_adapter
+    store = LifecycleStore(str(tmp_path / "lifecycle.sqlite3"))
+    request = design_request()
+    design = CampaignDesignService(SQLiteDesignRepository(str(tmp_path / "design.sqlite3")))
+    original = design.preview
+    if unrelated_intent:
+        store.remember_command(
+            "campaign.provision-disabled",
+            "staging:00000000-0000-0000-0000-000000000000:1:provision-disabled",
+            {"synthetic": True},
+        )
+    def local_failure(_request):
+        raise RuntimeError("temporary local design-store failure")
+    monkeypatch.setattr(design, "preview", local_failure)
+    args = (design, store, client, request, "synthetic-predispatch-retry")
+    kwargs = {"tenant_id": "tenant-synthetic", "supervisor_subject": "supervisor-synthetic"}
+    with pytest.raises(RuntimeError, match="temporary local"):
+        run_synthetic_lifecycle(*args, **kwargs)
+    assert requests == []
+    assert store.counts()["outbox_event"] == 1
+
+    monkeypatch.setattr(design, "preview", original)
+    restarted = LifecycleStore(store.path)
+    result = run_synthetic_lifecycle(
+        design, restarted, client, request, "synthetic-predispatch-retry", **kwargs
+    )
+    assert result["status"] == "PASS"
+    assert result["design_event_count"] == 1
+    assert sum(item[1].endswith("/campaigns/provision-disabled") for item in requests) == 2
+    # One initial dispatch and one exact-key replay are the normal acceptance flow.
