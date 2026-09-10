@@ -8,6 +8,7 @@ from .design import (
     SQLiteDesignRepository,
 )
 from .lifecycle import (
+    AdapterRequestError,
     LifecycleError,
     LifecycleStore,
     PrivateAdapterClient,
@@ -16,14 +17,15 @@ from .lifecycle import (
 )
 
 __all__ = [
+    "AdapterRequestError",
     "CampaignDesignRequest",
     "CampaignDesignService",
     "DesignConflict",
     "DesignValidationError",
-    "SQLiteDesignRepository",
     "LifecycleError",
     "LifecycleStore",
     "PrivateAdapterClient",
     "PrivateAdapterConfig",
+    "SQLiteDesignRepository",
     "run_synthetic_lifecycle",
 ]

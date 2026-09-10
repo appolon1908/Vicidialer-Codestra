@@ -1,0 +1,20 @@
+{
+  "baseline_regression": "Real signed HTTP provisioning rejected with 422: missing tenant_id, business_unit, campaign_id, supervisor_subject, expected_version",
+  "baseline_sha": "573eab2c05ed5bbc7f119200466b83545cc2c2a5",
+  "calls_placed_by_this_task": 0,
+  "command": "python -m pytest -q vicidial/tests tests",
+  "completed_at": "2026-09-10T17:30:10.233250+00:00",
+  "downstream_delivery_verified": false,
+  "environment": "isolated Core worktree; synthetic transport/repository; real HTTP handlers and SQLite",
+  "exit_code": 0,
+  "live_mtls_verified": false,
+  "log_file": "pytest.txt",
+  "log_sha256": "714aefeb61529193cb73fe7e0463b58e95aa9091dc9f28ba0b66dc89b05a5742",
+  "passed": 860,
+  "production_changed": false,
+  "python": "3.12.11",
+  "skipped": 6,
+  "source_sha": "34bbdee11e1acd955229acaf1f399418474ce080",
+  "started_at": "2026-09-10T17:28:10.224144+00:00",
+  "subtests_passed": 75
+}
