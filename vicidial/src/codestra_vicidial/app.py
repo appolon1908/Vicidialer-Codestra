@@ -1,7 +1,10 @@
 from __future__ import annotations
 
+import json
+import logging
 import os
 import stat
+import uuid
 from collections.abc import Mapping
 from pathlib import Path
 
@@ -39,7 +42,7 @@ from .repository import CollisionError, MemoryRepository, MySQLRepository
 from .security import RequestAuthenticator
 from .service import AdapterService, FeatureFlags, ReadbackMismatch
 from .state import (
-    CommandRecordUnavailable, IdempotencyConflict, MutationCompletionUncertain, ResourceMutationInProgress,
+    CommandAuditUnavailable, CommandRecordUnavailable, IdempotencyConflict, MutationCompletionUncertain, ResourceMutationInProgress,
     ResourceSnapshotChanged, StaleResourceVersion, StateStore,
 )
 
@@ -247,6 +250,53 @@ def create_app(
     app.state.internal_call_executor = internal_call_executor
     app.state.external_call_executor = external_call_executor
 
+
+    @app.middleware("http")
+    async def audit_command_lookup(request: Request, call_next):
+        if request.url.path != "/v1/idempotency/lookup" or request.method != "POST":
+            return await call_next(request)
+        metadata = {
+            "correlation_id": "lookup-" + uuid.uuid4().hex,
+            "actor": "unauthenticated",
+            "target": {"route": "/v1/idempotency/lookup"},
+        }
+        request.state.lookup_audit = metadata
+        try:
+            response = await call_next(request)
+        except Exception:
+            # Never expose storage/validation exception text or a partial result.
+            response = JSONResponse(status_code=503, content={
+                "code": "command_result_unavailable", "status": "reconciliation_required",
+                "detail": "durable command result could not be verified",
+            })
+        outcome = {
+            200: "recorded", 403: "denied", 404: "not_recorded",
+            409: "conflict", 422: "invalid", 503: "unavailable",
+        }.get(response.status_code, "failed")
+        try:
+            service.state.audit_lookup(
+                metadata["correlation_id"], metadata["actor"],
+                metadata["target"], outcome, response.status_code,
+            )
+        except CommandAuditUnavailable:
+            # The service log retains a redacted failure event if the durable
+            # sink is unavailable. A successful lookup must never hide that loss.
+            logging.getLogger("codestra_vicidial.audit").error(
+                "lookup_audit_unavailable %s", json.dumps({
+                    "correlation_id": metadata["correlation_id"],
+                    "actor": metadata["actor"],
+                    "target_hash": service.state.digest(metadata["target"]),
+                    "outcome": outcome, "http_status": response.status_code,
+                    "durable": False,
+                }, sort_keys=True),
+            )
+            if response.status_code != 503:
+                return JSONResponse(status_code=503, content={
+                    "code": "lookup_audit_unavailable", "status": "reconciliation_required",
+                    "detail": "lookup audit could not be persisted",
+                })
+        return response
+
     @app.exception_handler(ValidationError)
     async def command_validation_handler(_request: Request, exc: ValidationError):
         return JSONResponse(status_code=422, content={"detail": [
@@ -399,7 +449,12 @@ def create_app(
     )
     async def command_lookup(request: Request, values=Depends(read_headers)):
         body = await authorize(request, "telephony:read", *values)
+        request.state.lookup_audit["actor"] = authenticator.identity
         query = CommandLookup.model_validate_json(body)
+        request.state.lookup_audit.update({
+            "correlation_id": query.root.command.context.correlation_id,
+            "target": {"operation": query.root.operation, "idempotency_key": query.root.idempotency_key},
+        })
         try:
             result = service.lookup_command(query)
         except PermissionError as exc:

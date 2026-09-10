@@ -145,7 +145,8 @@ An unknown mapping returns 404; missing, conflicting or invalid actual state ret
 
 `POST /v1/idempotency/lookup` requires signed `telephony:read` authority and
 the original operation, idempotency key and complete typed command. It returns
-the historical committed result without dispatching another mutation. Campaign
+the historical committed result without dispatching another mutation. Every lookup
+outcome emits a redacted audit event through a separate transaction. Campaign
 authority is rechecked, and a changed original command returns 409. A 404 means
 no committed result is available; it does not prove non-execution or release a
 pending claim. See [the request and recovery contract](../vicidial/docs/IDEMPOTENCY_RESULT_LOOKUP.md)

@@ -64,7 +64,7 @@ def query(payload=None, *, operation=OPERATION, key=KEY):
 
 def snapshot(state):
     return {table: [tuple(row) for row in state.db.execute(f"SELECT * FROM {table}")]
-            for table in ("requests", "audit", "resource_versions", "resource_mutations")}
+            for table in ("requests", "resource_versions", "resource_mutations")}
 
 
 def test_lost_response_recovers_durable_result_with_writes_disabled(api, monkeypatch):
@@ -211,7 +211,8 @@ def test_lookup_cannot_see_or_commit_another_connection_transaction(api):
     try:
         assert state.db.in_transaction
         response = signed_post(api, LOOKUP_PATH, query())
-        assert response.status_code == 404
+        assert response.status_code == 503
+        assert response.json()["code"] == "lookup_audit_unavailable"
         assert state.db.in_transaction
     finally:
         state.db.rollback()
@@ -368,3 +369,86 @@ def test_lookup_preserves_the_original_header_key_bytes(api):
     assert recovered.json()["idempotency_key"] == original_key
     trimmed = signed_post(api, LOOKUP_PATH, query(key=original_key.strip()))
     assert trimmed.status_code == 404
+
+
+@pytest.mark.parametrize(("scenario", "status", "outcome"), [
+    ("recorded", 200, "recorded"),
+    ("missing", 404, "not_recorded"),
+    ("conflict", 409, "conflict"),
+    ("denied_scope", 403, "denied"),
+    ("denied_authority", 403, "denied"),
+    ("invalid_body", 422, "invalid"),
+    ("missing_headers", 422, "invalid"),
+    ("unavailable", 503, "unavailable"),
+    ("unexpected_failure", 503, "unavailable"),
+])
+def test_every_lookup_outcome_has_one_durable_redacted_audit(api, scenario, status, outcome, monkeypatch):
+    from codestra_vicidial.state import CommandRecordUnavailable
+
+    payload = campaign_payload()
+    payload["campaign"]["name"] = "private-fixture-value"
+    if scenario in {"recorded", "conflict"}:
+        provision(api, payload)
+    if scenario == "conflict":
+        payload["context"]["expected_version"] = 1
+    elif scenario == "denied_authority":
+        payload["context"]["tenant_id"] = "other-tenant"
+    elif scenario in {"unavailable", "unexpected_failure"}:
+        def unavailable(*_args):
+            error = CommandRecordUnavailable if scenario == "unavailable" else RuntimeError
+            raise error("private-fixture-value")
+        monkeypatch.setattr(api[2].state, "lookup_command", unavailable)
+
+    if scenario == "missing_headers":
+        response = api[0].post(LOOKUP_PATH, content=b'{"private-fixture-value":')
+    elif scenario == "invalid_body":
+        response = signed_post(api, LOOKUP_PATH, b'{"private-fixture-value":')
+    else:
+        response = signed_post(api, LOOKUP_PATH, query(payload),
+                               scope="telephony:provision" if scenario == "denied_scope" else "telephony:read")
+    assert response.status_code == status
+    with sqlite3.connect(api[2].state.path) as db:
+        db.row_factory = sqlite3.Row
+        rows = db.execute("SELECT * FROM audit WHERE operation='idempotency.lookup'").fetchall()
+    assert len(rows) == 1
+    record = dict(rows[0])
+    assert record["outcome"] == outcome
+    assert record["detail_hash"] == api[2].state.digest({"http_status": status})
+    assert "private-fixture-value" not in json.dumps(record)
+    assert KEY not in json.dumps(record)
+    if scenario in {"denied_scope", "missing_headers"}:
+        assert record["actor"] == "unauthenticated"
+    else:
+        assert record["actor"] == api[1].identity
+    if scenario in {"denied_scope", "invalid_body", "missing_headers"}:
+        assert record["correlation_id"].startswith("lookup-")
+    else:
+        assert record["correlation_id"] == payload["context"]["correlation_id"]
+        assert record["target_hash"] == api[2].state.digest({
+            "operation": OPERATION, "idempotency_key": KEY,
+        })
+
+
+def test_audit_failure_withholds_result_and_emits_redacted_failure_event(api, monkeypatch, caplog):
+    from codestra_vicidial.state import CommandAuditUnavailable
+
+    payload = campaign_payload()
+    payload["campaign"]["name"] = "private-fixture-value"
+    provision(api, payload)
+    before = snapshot(api[2].state)
+
+    def unavailable(*_args):
+        raise CommandAuditUnavailable("private-fixture-value")
+
+    monkeypatch.setattr(api[2].state, "audit_lookup", unavailable)
+    response = signed_post(api, LOOKUP_PATH, query(payload))
+    assert response.status_code == 503
+    assert response.json()["code"] == "lookup_audit_unavailable"
+    assert "private-fixture-value" not in response.text
+    assert "lookup_audit_unavailable" in caplog.text
+    assert '"durable": false' in caplog.text
+    assert '"outcome": "recorded"' in caplog.text
+    assert payload["context"]["correlation_id"] in caplog.text
+    assert "private-fixture-value" not in caplog.text
+    assert KEY not in caplog.text
+    assert snapshot(api[2].state) == before

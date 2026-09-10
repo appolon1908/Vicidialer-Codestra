@@ -60,7 +60,7 @@ submitting a new mutation with the current resource version.
 | 404 | No committed result for this operation and key | Keep the outcome unknown and reconcile before any retry |
 | 409 | Key exists with a different normalized command | Recover the original body; do not substitute a new key |
 | 422 | Unsupported operation or invalid command | Correct the request contract |
-| 503 | Durable result could not be read or validated | Preserve the unknown outcome and reconcile |
+| 503 | Durable result or lookup audit could not be verified | Preserve the unknown outcome and reconcile |
 
 **A 404 does not prove that the mutation never executed.** The original command
 may still be in progress or may have changed telephony state before its durable
@@ -70,6 +70,20 @@ mutation/readback gates continue to block conflicting writes.
 The ledger is opened using a separate read-only connection. Uncommitted
 records are not visible, missing databases are not created, and malformed
 results return a redacted reconciliation error.
+
+## Lookup audit trail
+
+Every lookup outcome appends an `idempotency.lookup` audit event, including
+success, missing results, conflicts, denied authority and malformed requests.
+The event records correlation, authenticated service identity, outcome, and
+hashed target/status details. It never stores the command, recovered result,
+raw idempotency key or authentication headers. Requests that fail authentication
+use a generated correlation ID and an `unauthenticated` actor.
+
+Audit uses a separate write transaction so it cannot commit or release a pending
+mutation on the shared connection. If the audit sink is unavailable, the adapter
+emits a redacted service-log event and returns 503; it withholds an otherwise
+successful result. A missing database is not recreated for auditing.
 
 ## Verification boundary
 

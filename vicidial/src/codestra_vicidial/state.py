@@ -28,6 +28,10 @@ class CommandRecordUnavailable(RuntimeError):
     """A durable command record could not be read and validated."""
 
 
+class CommandAuditUnavailable(RuntimeError):
+    """A lookup audit event could not be persisted."""
+
+
 class ResourceSnapshotChanged(RuntimeError):
     """Actual state cannot be paired with a version across a concurrent write."""
 
@@ -406,6 +410,31 @@ class StateStore:
             raise
         except (sqlite3.Error, OSError, ValueError, TypeError) as exc:
             raise CommandRecordUnavailable("durable command result unavailable") from exc
+        finally:
+            if db is not None:
+                db.close()
+
+
+    def audit_lookup(
+        self, correlation_id: str, actor: str, target: object,
+        outcome: str, http_status: int,
+    ) -> None:
+        """Append a redacted event without committing a shared mutation."""
+        db = None
+        try:
+            db = sqlite3.connect(self.path.as_uri() + "?mode=rw", uri=True, timeout=2)
+            db.execute(
+                "INSERT INTO audit(occurred_at,correlation_id,actor,operation,"
+                "target_hash,outcome,detail_hash) VALUES(?,?,?,?,?,?,?)",
+                (
+                    datetime.now(timezone.utc).isoformat(), correlation_id, actor,
+                    "idempotency.lookup", self.digest(target), outcome,
+                    self.digest({"http_status": http_status}),
+                ),
+            )
+            db.commit()
+        except (sqlite3.Error, OSError, ValueError) as exc:
+            raise CommandAuditUnavailable("lookup audit unavailable") from exc
         finally:
             if db is not None:
                 db.close()
