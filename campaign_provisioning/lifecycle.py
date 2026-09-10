@@ -8,16 +8,17 @@ evidence.
 
 from __future__ import annotations
 
-from dataclasses import dataclass
-from datetime import datetime, timezone
 import hashlib
 import hmac
 import http.client
 import json
-from pathlib import Path
+import re
 import sqlite3
 import ssl
 import time
+from dataclasses import dataclass
+from datetime import datetime, timezone
+from pathlib import Path
 from typing import Any, Protocol
 
 from .design import CampaignDesignRequest, CampaignDesignService, canonical_json
@@ -31,10 +32,29 @@ def utc_now() -> str:
     return datetime.now(timezone.utc).isoformat()
 
 
+class AdapterRequestError(LifecycleError):
+    """A redacted transport/HTTP failure; no automatic mutation retry."""
+
+    def __init__(self, status_code: int | None = None):
+        self.status_code = status_code
+        super().__init__(
+            f"adapter request rejected with HTTP {status_code}"
+            if status_code is not None else "adapter response unavailable; reconciliation required"
+        )
+
+
+LOOKUP_OPERATIONS = frozenset({
+    "campaign.provision-disabled", "campaign.disable", "agent.sync",
+    "agent.provision-disabled", "agent.disable", "lead.publish",
+    "callback.create", "transfer-policy.sync",
+})
+
+
 class Adapter(Protocol):
     def provision_campaign(self, key: str, command: dict[str, Any]) -> dict[str, Any]: ...
     def campaign_actual(self, campaign_id: str) -> dict[str, Any]: ...
     def sync_agent(self, key: str, command: dict[str, Any]) -> dict[str, Any]: ...
+    def agent_actual(self, user_id: str) -> dict[str, Any]: ...
     def publish_lead(self, key: str, command: dict[str, Any]) -> dict[str, Any]: ...
     def sync_transfer_policy(self, key: str, command: dict[str, Any]) -> dict[str, Any]: ...
     def reconcile(self, key: str) -> dict[str, Any]: ...
@@ -74,6 +94,10 @@ class PrivateAdapterClient:
             or parsed.hostname != "edge.internal.codestra.agency"
             or parsed.port != 8443
             or parsed.path.rstrip("/") != "/restricted-vicidial"
+            or parsed.username is not None
+            or parsed.password is not None
+            or parsed.query
+            or parsed.fragment
         ):
             raise LifecycleError("approved private adapter endpoint required")
         self.host = parsed.hostname
@@ -95,9 +119,12 @@ class PrivateAdapterClient:
         body: dict[str, Any] | None = None,
         idempotency_key: str | None = None,
     ) -> dict[str, Any]:
-        encoded = (
-            canonical_json(body).encode() if body is not None else b""
-        )
+        try:
+            encoded = canonical_json(body).encode() if body is not None else b""
+        except (TypeError, ValueError):
+            raise LifecycleError("adapter command is not JSON serializable") from None
+        if len(encoded) > 65536:
+            raise LifecycleError("adapter request exceeded size limit")
         timestamp = int(time.time())
         nonce = hashlib.sha256(
             f"{timestamp}:{time.time_ns()}:{path}".encode()
@@ -120,20 +147,58 @@ class PrivateAdapterClient:
         connection = http.client.HTTPSConnection(
             self.host, self.port, context=self.context, timeout=8
         )
-        connection.request(
-            method, self.prefix + path, body=encoded, headers=headers
-        )
-        response = connection.getresponse()
-        payload = response.read(65537)
-        connection.close()
-        if len(payload) > 65536:
-            raise LifecycleError("adapter response exceeded size limit")
-        document = json.loads(payload or b"{}")
-        if not 200 <= response.status < 300:
-            raise LifecycleError(
-                f"adapter {method} {path} rejected with {response.status}: "
-                f"{document.get('detail', 'redacted error')}"
+        try:
+            connection.request(
+                method, self.prefix + path, body=encoded, headers=headers
             )
+            response = connection.getresponse()
+            payload = response.read(65537)
+        except (OSError, http.client.HTTPException):
+            raise AdapterRequestError() from None
+        finally:
+            connection.close()
+        if not 200 <= response.status < 300:
+            # Error bodies can contain identifiers or rejected command values.
+            raise AdapterRequestError(response.status)
+        if len(payload) > 65536:
+            raise AdapterRequestError()
+        try:
+            document = json.loads(payload)
+        except (ValueError, UnicodeError):
+            raise AdapterRequestError() from None
+        if not isinstance(document, dict):
+            raise AdapterRequestError()
+        return document
+
+    def lookup_command(
+        self, operation: str, key: str, command: dict[str, Any]
+    ) -> dict[str, Any]:
+        """Read a historical receipt; missing/uncertain results never trigger a write."""
+        if operation not in LOOKUP_OPERATIONS:
+            raise LifecycleError("unsupported command lookup operation")
+        if not isinstance(key, str) or not 8 <= len(key) <= 200:
+            raise LifecycleError("invalid original command key")
+        document = self._request(
+            "POST", "/v1/idempotency/lookup", scope="telephony:read",
+            body={"operation": operation, "idempotency_key": key, "command": command},
+        )
+        result = document.get("result")
+        try:
+            recorded = datetime.fromisoformat(
+                str(document.get("recorded_at", "")).replace("Z", "+00:00")
+            )
+        except ValueError:
+            raise AdapterRequestError() from None
+        if (
+            document.get("status") != "recorded"
+            or document.get("operation") != operation
+            or document.get("idempotency_key") != key
+            or recorded.tzinfo is None
+            or not isinstance(result, dict)
+            or type(result.get("resource_version")) is not int
+            or result["resource_version"] < 1
+        ):
+            raise AdapterRequestError()
         return document
 
     def provision_campaign(self, key: str, command: dict[str, Any]) -> dict[str, Any]:
@@ -149,6 +214,8 @@ class PrivateAdapterClient:
         )
 
     def campaign_actual(self, campaign_id: str) -> dict[str, Any]:
+        if not re.fullmatch(r"[A-Z0-9_]{2,8}", campaign_id):
+            raise LifecycleError("invalid campaign identity")
         return self._request(
             "GET", f"/v1/campaigns/{campaign_id}/actual-state",
             scope="telephony:read",
@@ -158,6 +225,13 @@ class PrivateAdapterClient:
         return self._request(
             "POST", "/v1/agents/sync", scope="telephony:agent-sync",
             body=command, idempotency_key=key,
+        )
+
+    def agent_actual(self, user_id: str) -> dict[str, Any]:
+        if not re.fullmatch(r"[A-Z]{3}[0-9]{4,12}", user_id):
+            raise LifecycleError("invalid synthetic agent identity")
+        return self._request(
+            "GET", f"/v1/agents/{user_id}/actual-state", scope="telephony:read",
         )
 
     def publish_lead(self, key: str, command: dict[str, Any]) -> dict[str, Any]:
@@ -202,6 +276,13 @@ class LifecycleStore:
                     correlation_id TEXT NOT NULL,
                     payload_hash TEXT NOT NULL
                 );
+                CREATE TABLE IF NOT EXISTS command_intent (
+                    operation TEXT NOT NULL,
+                    command_key TEXT NOT NULL,
+                    request_json TEXT NOT NULL,
+                    request_hash TEXT NOT NULL,
+                    PRIMARY KEY (operation, command_key)
+                );
                 CREATE TABLE IF NOT EXISTS approval (
                     integration_uuid TEXT PRIMARY KEY,
                     actor TEXT NOT NULL,
@@ -237,6 +318,53 @@ class LifecycleStore:
                 (key, event_type, correlation_id, digest),
             )
             return cursor.rowcount == 1
+
+    def has_command_intents(self, key_prefix: str) -> bool:
+        """Distinguish a local preparation retry from an uncertain dispatch."""
+        with sqlite3.connect(self.path) as db:
+            return db.execute(
+                "SELECT 1 FROM command_intent "
+                "WHERE substr(command_key, 1, ?) = ? LIMIT 1",
+                (len(key_prefix), key_prefix),
+            ).fetchone() is not None
+
+    def remember_command(
+        self, operation: str, key: str, command: dict[str, Any]
+    ) -> dict[str, Any]:
+        """Commit the original synthetic body before sending any mutation."""
+        encoded = canonical_json(command)
+        digest = hashlib.sha256(encoded.encode()).hexdigest()
+        with sqlite3.connect(self.path) as db:
+            db.execute(
+                "INSERT OR IGNORE INTO command_intent VALUES (?, ?, ?, ?)",
+                (operation, key, encoded, digest),
+            )
+            row = db.execute(
+                "SELECT request_json,request_hash FROM command_intent "
+                "WHERE operation=? AND command_key=?", (operation, key),
+            ).fetchone()
+            if row != (encoded, digest):
+                raise LifecycleError("original command key/body conflict")
+        return json.loads(encoded)
+
+    def original_command(self, operation: str, key: str) -> dict[str, Any]:
+        """Recover the exact body after a restart, without deciding its outcome."""
+        with sqlite3.connect(self.path) as db:
+            row = db.execute(
+                "SELECT request_json,request_hash FROM command_intent "
+                "WHERE operation=? AND command_key=?", (operation, key),
+            ).fetchone()
+        if row is None:
+            raise LifecycleError("original command missing; reconciliation required")
+        if hashlib.sha256(row[0].encode()).hexdigest() != row[1]:
+            raise LifecycleError("original command integrity check failed")
+        try:
+            command = json.loads(row[0])
+        except (ValueError, TypeError):
+            raise LifecycleError("original command is invalid") from None
+        if not isinstance(command, dict):
+            raise LifecycleError("original command is invalid")
+        return command
 
     def approve(self, integration_uuid: str, actor: str) -> None:
         with sqlite3.connect(self.path) as db:
@@ -278,13 +406,14 @@ class LifecycleStore:
                 table: int(db.execute(f"SELECT COUNT(*) FROM {table}").fetchone()[0])
                 for table in (
                     "outbox_event", "approval", "odoo_projection",
-                    "n8n_scope", "audit_event",
+                    "n8n_scope", "audit_event", "command_intent",
                 )
             }
 
 
 def campaign_command(
-    manifest: dict[str, Any], correlation_id: str
+    manifest: dict[str, Any], correlation_id: str, *,
+    tenant_id: str, supervisor_subject: str,
 ) -> dict[str, Any]:
     prefix = "TEST_E2E"
     campaign = manifest["vicidial"]
@@ -292,7 +421,12 @@ def campaign_command(
     return {
         "context": {
             "correlation_id": correlation_id,
-            "actor": "synthetic-supervisor",
+            "actor": supervisor_subject,
+            "tenant_id": tenant_id,
+            "business_unit": "TEST",
+            "campaign_id": campaign["actual_campaign_id"],
+            "supervisor_subject": supervisor_subject,
+            "expected_version": 0,
             "reason": "approved staging-only automatic campaign acceptance",
             "requested_at": utc_now(),
         },
@@ -353,6 +487,8 @@ def verify_actual(command: dict[str, Any], actual: dict[str, Any]) -> None:
     # dispositions. Group and script state is reported by the atomic
     # provisioning response on the memory adapter, so validate those here only
     # when the deployed adapter includes them in actual-state.
+    if "dispositions" not in actual:
+        raise LifecycleError("disposition read-back missing")
     for field in ("groups", "scripts", "dispositions"):
         if field not in actual:
             continue
@@ -373,40 +509,58 @@ def run_synthetic_lifecycle(
     adapter: Adapter,
     request: CampaignDesignRequest,
     correlation_id: str,
+    *,
+    tenant_id: str,
+    supervisor_subject: str,
 ) -> dict[str, Any]:
     if request.environment != "staging" or request.business_unit != "TEST":
         raise LifecycleError("synthetic lifecycle requires staging TEST identity")
+    request.validate()
+    if request.direction != "outbound":
+        raise LifecycleError("synthetic lifecycle requires the disabled outbound fixture")
+    if not re.fullmatch(r"[A-Za-z0-9._:-]{2,128}", tenant_id) or not re.fullmatch(
+        r"[A-Za-z0-9._:@-]{3,128}", supervisor_subject
+    ):
+        raise LifecycleError("explicit synthetic tenant and supervisor authority required")
     event_payload = {
         "integration_uuid": request.integration_uuid,
         "odoo_campaign_id": request.odoo_campaign_id,
     }
     event_key = f"campaign.design.requested.v1:{request.integration_uuid}"
-    first_event = store.event_once(
+    store.event_once(
         event_key, "campaign.design.requested.v1", correlation_id, event_payload
     )
+    if store.has_command_intents(f"staging:{request.integration_uuid}:1:"):
+        raise LifecycleError("existing synthetic run requires receipt recovery and reconciliation")
     manifest = design_service.preview(request)
-    store.approve(request.integration_uuid, "synthetic-supervisor")
+    store.approve(request.integration_uuid, supervisor_subject)
     store.audit(correlation_id, "campaign.approved.v1", {"revision": 1})
 
-    command = campaign_command(manifest, correlation_id)
+    command = campaign_command(
+        manifest, correlation_id, tenant_id=tenant_id,
+        supervisor_subject=supervisor_subject,
+    )
     provision_key = f"staging:{request.integration_uuid}:1:provision-disabled"
+    command = store.remember_command("campaign.provision-disabled", provision_key, command)
     provisioned = adapter.provision_campaign(provision_key, command)
     actual = adapter.campaign_actual(command["campaign"]["actual_id"])
     verify_actual(command, actual)
 
+    transfer_key = f"staging:{request.integration_uuid}:1:transfer-policy"
     transfer = adapter.sync_transfer_policy(
-        f"staging:{request.integration_uuid}:1:transfer-policy",
-        {
+        transfer_key,
+        store.remember_command("transfer-policy.sync", transfer_key, {
             "context": command["context"],
             "policy": {
                 "campaign_id": command["campaign"]["actual_id"],
                 "allowed_targets": command["campaign"]["transfer_targets"],
             },
-        },
+        }),
     )
+    agent_key = f"staging:{request.integration_uuid}:1:agent"
     agent = adapter.sync_agent(
-        f"staging:{request.integration_uuid}:1:agent",
-        {
+        agent_key,
+        store.remember_command("agent.sync", agent_key, {
             "context": command["context"],
             "agent": {
                 "user_id": "TST6101",
@@ -416,8 +570,23 @@ def run_synthetic_lifecycle(
                 "inbound_groups": ["TEST_E2E_INBOUND", "TEST_E2E_CLOSERS"],
                 "active": False,
             },
-        },
+        }),
     )
+    observed_agent = adapter.agent_actual("TST6101")
+    agent_actual = agent.get("actual", {})
+    if (
+        agent.get("status") != "disabled"
+        or observed_agent.get("user_id") != "TST6101"
+        or observed_agent.get("active") not in (False, "N")
+        or observed_agent.get("campaigns") != [command["campaign"]["actual_id"]]
+        or observed_agent.get("user_group") != "TEST_E2E_AGENT"
+        or sorted(observed_agent.get("inbound_groups", []))
+        != ["TEST_E2E_CLOSERS", "TEST_E2E_INBOUND"]
+        or type(observed_agent.get("resource_version")) is not int
+        or observed_agent["resource_version"] < 1
+        or agent_actual.get("user_id") != observed_agent.get("user_id")
+    ):
+        raise LifecycleError("agent campaign isolation read-back mismatch")
     lead_command = {
         "context": command["context"],
         "lead": {
@@ -431,6 +600,7 @@ def run_synthetic_lifecycle(
         },
     }
     lead_key = f"staging:{request.integration_uuid}:1:lead"
+    lead_command = store.remember_command("lead.publish", lead_key, lead_command)
     lead = adapter.publish_lead(lead_key, lead_command)
 
     store.project_n8n(manifest["n8n"]["scope"], request.integration_uuid)
@@ -450,11 +620,27 @@ def run_synthetic_lifecycle(
     reconciliation = adapter.reconcile(
         f"staging:{request.integration_uuid}:1:reconcile"
     )
-    rollback = adapter.disable_campaign(
-        f"staging:{request.integration_uuid}:1:rollback", command
-    )
+    # The disable is a new command, so bind it to current read-back, preserving
+    # the original provisioning body for exact-key replay or receipt recovery.
+    current = adapter.campaign_actual(command["campaign"]["actual_id"])
+    verify_actual(command, current)
+    version = current.get("resource_version")
+    if type(version) is not int or version < 1:
+        raise LifecycleError("managed campaign version missing from read-back")
+    rollback_command = {
+        **command, "context": {**command["context"], "expected_version": version},
+    }
+    rollback_key = f"staging:{request.integration_uuid}:1:rollback"
+    rollback_command = store.remember_command("campaign.disable", rollback_key, rollback_command)
+    rollback = adapter.disable_campaign(rollback_key, rollback_command)
     rolled_back = adapter.campaign_actual(command["campaign"]["actual_id"])
     verify_actual(command, rolled_back)
+    if (
+        rollback.get("status") != "disabled"
+        or rollback.get("resource_version") != version + 1
+        or rolled_back.get("resource_version") != version + 1
+    ):
+        raise LifecycleError("campaign disable version read-back mismatch")
     store.project_odoo(
         request.integration_uuid, "rolled_back_disabled",
         command["campaign"]["actual_id"], correlation_id,
@@ -463,7 +649,7 @@ def run_synthetic_lifecycle(
         "state": "disabled"
     })
 
-    if not first_event or replay_event:
+    if replay_event:
         raise LifecycleError("design event was not exactly-once")
     if replay.get("idempotent_replay") is not True:
         raise LifecycleError("campaign retry was not idempotent")
@@ -478,6 +664,8 @@ def run_synthetic_lifecycle(
 
     result = {
         "status": "PASS",
+        "verification_scope": "synthetic_adapter_lifecycle",
+        "downstream_projections": "local_staging_ledger_only",
         "correlation_id": correlation_id,
         "integration_uuid": request.integration_uuid,
         "manifest_sha256": hashlib.sha256(
@@ -520,6 +708,8 @@ def run_synthetic_lifecycle(
         "production_dialing": False,
         "audit_counts": store.counts(),
         "resource_counts": provisioned.get("resources", {}),
+        "campaign_resource_version": rolled_back["resource_version"],
+        "agent_resource_version": observed_agent["resource_version"],
     }
     result["evidence_sha256"] = hashlib.sha256(
         canonical_json(result).encode()

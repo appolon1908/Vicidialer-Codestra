@@ -27,6 +27,7 @@ class FakeAdapter:
                 "campaign_name": desired["name"],
                 "active": "N",
                 "dial_method": desired["dial_method"],
+                "resource_version": 1,
                 "lists": [
                     {**item, "active": "N"} for item in desired["lists"]
                 ],
@@ -56,6 +57,9 @@ class FakeAdapter:
             command["agent"]["user_id"], {**command["agent"], "active": "N"}
         )
         return {"status": "disabled", "actual": self.agents[command["agent"]["user_id"]]}
+
+    def agent_actual(self, user_id):
+        return {**self.agents[user_id], "resource_version": 1}
 
     def publish_lead(self, key, command):
         replay = key in self.lead_keys
@@ -88,7 +92,10 @@ class FakeAdapter:
     def disable_campaign(self, _key, command):
         actual = self.campaigns[command["campaign"]["actual_id"]]
         actual["active"] = "N"
-        return {"status": "disabled", "actual": actual}
+        assert command["context"]["expected_version"] == actual["resource_version"]
+        actual["resource_version"] += 1
+        return {"status": "disabled", "actual": actual,
+                "resource_version": actual["resource_version"]}
 
 
 def request():
@@ -129,6 +136,7 @@ def test_complete_synthetic_lifecycle_is_disabled_idempotent_and_reversible(tmp_
         FakeAdapter(),
         request(),
         "synthetic-e2e-test-correlation",
+        tenant_id="tenant-synthetic", supervisor_subject="supervisor-synthetic",
     )
 
     assert result["status"] == "PASS"
