@@ -8,17 +8,22 @@ from pathlib import Path
 from fastapi import Depends, FastAPI, Header, HTTPException, Request
 from fastapi.openapi.utils import get_openapi
 from fastapi.responses import JSONResponse
+from pydantic import ValidationError
 
 from . import __version__
 from .agent_provisioning import AgentProvisioningPolicy
 from .internal_calling import (
     InternalCallError, InternalCallExecutor, InternalCallPolicy, OriginateCommand,
 )
+from .external_calling import (
+    ExternalCallError, ExternalCallExecutor, ExternalCallPolicy, ExternalOriginateCommand,
+)
 from .internal_call_transport import SocketAmiTransport
 from .credential_authority import UnixCredentialAuthority
 from .models import (
     AgentCommand,
     CallbackCommand,
+    CallbackLookup,
     CampaignCommand,
     DisableAgentCommand,
     LeadCommand,
@@ -31,7 +36,10 @@ from .release import load_release_info
 from .repository import CollisionError, MemoryRepository, MySQLRepository
 from .security import RequestAuthenticator
 from .service import AdapterService, FeatureFlags, ReadbackMismatch
-from .state import StateStore
+from .state import (
+    IdempotencyConflict, MutationCompletionUncertain, ResourceMutationInProgress,
+    ResourceSnapshotChanged, StaleResourceVersion, StateStore,
+)
 
 _AUTHENTICATION_HEADERS = (
     "X-Service-Identity",
@@ -52,6 +60,7 @@ _PROTECTED_SCOPE_BY_ROUTE = {
     ("post", "/v1/agents/disable"): "telephony:agent-sync",
     ("get", "/v1/agents/{user_id}/actual-state"): "telephony:read",
     ("get", "/v1/agents/availability/{user_id}/{extension}"): "telephony:read",
+    ("post", "/v1/calls/originate"): "telephony:external-call",
     ("post", "/v1/calls/internal/originate"): "telephony:internal-call",
     ("get", "/v1/calls/internal/{operation_id}"): "telephony:internal-call-read",
     ("post", "/v1/calls/internal/{operation_id}/hangup"): "telephony:internal-call-hangup",
@@ -59,6 +68,7 @@ _PROTECTED_SCOPE_BY_ROUTE = {
     ("get", "/v1/leads/by-external-id/{external_id}"): "telephony:read",
     ("post", "/v1/callbacks/create"): "telephony:callback-write",
     ("get", "/v1/callbacks/{callback_id}"): "telephony:read",
+    ("get", "/v1/callbacks/by-external-id/{external_id}"): "telephony:read",
     (
         "post",
         "/v1/reconciliation/campaigns/provision-disabled",
@@ -66,6 +76,21 @@ _PROTECTED_SCOPE_BY_ROUTE = {
     ("post", "/v1/transfer-policies/sync"): "telephony:transfer-policy",
     ("post", "/v1/reconciliation/run"): "telephony:read",
     ("get", "/v1/reconciliation/{run_id}"): "telephony:read",
+}
+
+
+_COMMAND_MODEL_BY_ROUTE = {
+    "/v1/campaigns/validate": CampaignCommand,
+    "/v1/campaigns/provision-disabled": CampaignCommand,
+    "/v1/campaigns/disable": CampaignCommand,
+    "/v1/agents/sync": AgentCommand,
+    "/v1/agents/provision-disabled": ProvisionAgentCommand,
+    "/v1/agents/disable": DisableAgentCommand,
+    "/v1/leads/publish": LeadCommand,
+    "/v1/callbacks/create": CallbackCommand,
+    "/v1/transfer-policies/sync": TransferPolicyCommand,
+    "/v1/reconciliation/campaigns/provision-disabled": ReconciliationCampaignCommand,
+    "/v1/calls/internal/originate": OriginateCommand,
 }
 
 
@@ -124,6 +149,23 @@ def install_openapi_contract(app: FastAPI) -> None:
             },
         })
 
+        # Bodies are parsed only after signature verification. Publish their
+        # actual Pydantic schemas explicitly so generated clients see the same
+        # command contract without moving validation ahead of authentication.
+        schemas = components.setdefault("schemas", {})
+        for route_path, model in _COMMAND_MODEL_BY_ROUTE.items():
+            command_schema = model.model_json_schema(
+                ref_template="#/components/schemas/{model}"
+            )
+            schemas.update(command_schema.pop("$defs", {}))
+            schemas[model.__name__] = command_schema
+            schema["paths"][route_path]["post"]["requestBody"] = {
+                "required": True,
+                "content": {"application/json": {"schema": {
+                    "$ref": f"#/components/schemas/{model.__name__}"
+                }}},
+            }
+
         observed: set[tuple[str, str]] = set()
         for route_path, path_item in schema.get("paths", {}).items():
             if not route_path.startswith("/v1/"):
@@ -142,6 +184,18 @@ def install_openapi_contract(app: FastAPI) -> None:
                         "OpenAPI protected route has no scope contract: "
                         f"{key}"
                     )
+                operation["responses"]["403"] = {
+                    "description": "Authentication or operation authority denied"
+                }
+                operation["responses"]["409"] = {
+                    "description": "Resource collision, stale version, mutation in progress, or read-back mismatch"
+                }
+                operation["responses"]["503"] = {
+                    "description": "Command completion uncertain; reconciliation required before another write"
+                }
+                operation["responses"]["422"] = {
+                    "description": "Invalid request; submitted values are omitted from command validation errors"
+                }
                 operation["security"] = [{
                     "ServiceIdentity": [],
                     "RequestSignature": [],
@@ -173,6 +227,7 @@ def create_app(
     agent_provisioning_policy: AgentProvisioningPolicy | None = None,
     internal_call_executor: InternalCallExecutor | None = None,
     release_info: Mapping[str, object] | None = None,
+    external_call_executor: ExternalCallExecutor | None = None,
 ) -> FastAPI:
     release_document = dict(
         release_info
@@ -185,6 +240,47 @@ def create_app(
     )
     app.state.adapter_service = service
     app.state.internal_call_executor = internal_call_executor
+    app.state.external_call_executor = external_call_executor
+
+    @app.exception_handler(ValidationError)
+    async def command_validation_handler(_request: Request, exc: ValidationError):
+        return JSONResponse(status_code=422, content={"detail": [
+            {"loc": list(error["loc"]), "type": error["type"]}
+            for error in exc.errors(include_input=False, include_context=False)
+        ]})
+
+    @app.exception_handler(ResourceSnapshotChanged)
+    async def snapshot_handler(_request: Request, _exc: ResourceSnapshotChanged):
+        return JSONResponse(status_code=409, content={
+            "code": "resource_snapshot_changed",
+            "detail": "resource changed during read-back; retry the read",
+        })
+
+    @app.exception_handler(MutationCompletionUncertain)
+    async def completion_handler(_request: Request, _exc: MutationCompletionUncertain):
+        return JSONResponse(status_code=503, content={
+            "code": "mutation_completion_uncertain",
+            "status": "reconciliation_required",
+            "detail": "command completion requires reconciliation",
+        })
+
+    @app.exception_handler(IdempotencyConflict)
+    async def idempotency_handler(_request: Request, _exc: IdempotencyConflict):
+        return JSONResponse(status_code=409, content={
+            "code": "idempotency_conflict",
+            "detail": "idempotency key already used with a different command",
+        })
+
+    @app.exception_handler(StaleResourceVersion)
+    @app.exception_handler(ResourceMutationInProgress)
+    async def version_conflict_handler(_request: Request, exc: Exception):
+        code = (
+            "stale_resource_version" if isinstance(exc, StaleResourceVersion)
+            else "resource_mutation_in_progress"
+        )
+        return JSONResponse(status_code=409, content={
+            "code": code, "detail": str(exc),
+        })
 
     @app.exception_handler(CollisionError)
     async def collision_handler(_request: Request, exc: CollisionError):
@@ -255,6 +351,8 @@ def create_app(
             return handler(idempotency_key, command)
         except PermissionError as exc:
             raise HTTPException(status_code=403, detail=str(exc)) from exc
+        except (ValidationError, StaleResourceVersion, IdempotencyConflict, CollisionError):
+            raise
         except ValueError as exc:
             raise HTTPException(status_code=422, detail=str(exc)) from exc
 
@@ -285,12 +383,10 @@ def create_app(
 
     @app.post("/v1/campaigns/validate")
     async def campaign_validate(request: Request, values=Depends(headers)):
-        key, identity, scopes, timestamp, nonce, signature, signature_version = values
-        body = await authorize(
-            request, "telephony:read", identity, scopes, timestamp, nonce,
-            signature, signature_version, key,
+        return await mutation(
+            request, CampaignCommand, lambda _key, command: service.validate_campaign(command),
+            "telephony:read", *values,
         )
-        return service.validate_campaign(CampaignCommand.model_validate_json(body))
 
     @app.post("/v1/campaigns/provision-disabled")
     async def campaign_provision(request: Request, values=Depends(headers)):
@@ -308,8 +404,16 @@ def create_app(
     async def campaign_actual(request: Request, campaign_id: str,
                               values=Depends(read_headers)):
         await authorize(request, "telephony:read", *values)
-        actual = service.repository.campaign(campaign_id)
-        if not actual:
+        mapping = service.state.mapping_for_actual("campaign", campaign_id)
+        if mapping:
+            actual = service.versioned_readback(
+                f"campaign:{mapping['external_id']}",
+                lambda: service.repository.campaign(campaign_id),
+            )
+        else:
+            row = service.repository.campaign(campaign_id)
+            actual = row | {"resource_version": None} if row else None
+        if actual is None:
             raise HTTPException(404, "campaign missing")
         return actual
 
@@ -333,6 +437,8 @@ def create_app(
             return service.provision_agent(key, command)
         except PermissionError as exc:
             raise HTTPException(status_code=403, detail=str(exc)) from exc
+        except (ValidationError, StaleResourceVersion, IdempotencyConflict, CollisionError):
+            raise
         except ValueError as exc:
             raise HTTPException(status_code=422, detail=str(exc)) from exc
 
@@ -344,8 +450,10 @@ def create_app(
     @app.get("/v1/agents/{user_id}/actual-state")
     async def agent_actual(request: Request, user_id: str, values=Depends(read_headers)):
         await authorize(request, "telephony:read", *values)
-        actual = service.repository.agent(user_id)
-        if not actual:
+        actual = service.versioned_readback(
+            f"agent:{user_id}", lambda: service.repository.agent(user_id),
+        )
+        if actual is None:
             raise HTTPException(404, "agent missing")
         return actual
 
@@ -356,6 +464,28 @@ def create_app(
         if user_id != "appolon" or extension != "6901":
             raise HTTPException(403, "availability query outside approved scope")
         return service.agent_availability(user_id, extension)
+
+
+    @app.post("/v1/calls/originate")
+    async def external_originate(request: Request, values=Depends(headers)):
+        key, identity, scopes, timestamp, nonce, signature, signature_version = values
+        body = await authorize(
+            request, "telephony:external-call", identity, scopes, timestamp, nonce,
+            signature, signature_version, key,
+        )
+        if external_call_executor is None:
+            raise HTTPException(503, "production dialing executor is not enabled")
+        try:
+            command = ExternalOriginateCommand.model_validate_json(body)
+            if key != command.operation_id:
+                raise ValueError("idempotency key must equal operation_id")
+            return external_call_executor.originate(command, actor=identity)
+        except PermissionError as exc:
+            raise HTTPException(403, str(exc)) from exc
+        except ValueError as exc:
+            raise HTTPException(422, "invalid external call command") from exc
+        except ExternalCallError as exc:
+            raise HTTPException(503, str(exc)) from exc
 
     @app.exception_handler(InternalCallError)
     async def internal_call_error(_request: Request, _exc: InternalCallError):
@@ -424,12 +554,24 @@ def create_app(
         mapping = service.state.mapping("lead", external_id)
         if not mapping:
             raise HTTPException(404, "lead missing")
-        return {"external_id": external_id, "lead_id": mapping["actual_id"]}
+        return {
+            "external_id": external_id, "lead_id": mapping["actual_id"],
+            "resource_version": service.state.resource_version(f"lead:{external_id}"),
+        }
 
     @app.post("/v1/callbacks/create")
     async def callback_create(request: Request, values=Depends(headers)):
         return await mutation(request, CallbackCommand, service.create_callback,
                               "telephony:callback-write", *values)
+
+    @app.get("/v1/callbacks/by-external-id/{external_id}", response_model=CallbackLookup)
+    async def callback_lookup(request: Request, external_id: str,
+                              values=Depends(read_headers)):
+        await authorize(request, "telephony:read", *values)
+        result = service.callback_by_external_id(external_id)
+        if result is None:
+            raise HTTPException(404, "callback mapping missing")
+        return result
 
     @app.get("/v1/callbacks/{callback_id}")
     async def callback_actual(request: Request, callback_id: int,
@@ -455,6 +597,8 @@ def create_app(
             return service.provision_campaign(key, command)
         except PermissionError as exc:
             raise HTTPException(status_code=403, detail=str(exc)) from exc
+        except (ValidationError, StaleResourceVersion, IdempotencyConflict, CollisionError):
+            raise
         except ValueError as exc:
             raise HTTPException(status_code=422, detail=str(exc)) from exc
 
@@ -507,7 +651,7 @@ def app_from_environment() -> FastAPI:
         ),
         callback_writes=os.environ.get("ENABLE_IVR_CALLBACKS") == "true",
         transfer_policy_sync=os.environ.get("ENABLE_WARM_TRANSFER") == "true",
-        production_dialing=False,
+        production_dialing=os.environ.get("ENABLE_PRODUCTION_DIALING") == "true",
     )
     backend_name = os.environ.get("CODESTRA_ADAPTER_BACKEND", "memory")
     if backend_name == "mysql":
@@ -600,6 +744,11 @@ def app_from_environment() -> FastAPI:
         required=(
             os.environ.get("CODESTRA_RELEASE_METADATA_REQUIRED", "false").lower()
             == "true"
+            or deployment in {
+                "production-reconciliation",
+                "production-internal-test",
+                "production-external-one-call",
+            }
         )
     )
     policy = None
@@ -659,6 +808,52 @@ def app_from_environment() -> FastAPI:
             enabled=lambda: os.environ.get("ENABLE_INTERNAL_TEST_CALLING", "false") == "true",
             audit_path=Path(os.environ.get("CODESTRA_ADAPTER_STATE", "/var/lib/codestra-vicidial/state.sqlite3")),
         )
+    external_executor = None
+    external_gate = os.environ.get("ENABLE_PRODUCTION_DIALING", "false")
+    if external_gate not in {"true", "false"}:
+        raise RuntimeError("invalid production dialing gate")
+    external_profile = deployment == "production-external-one-call"
+    if not external_profile and external_gate != "false":
+        raise RuntimeError("external dialing requires production-external-one-call profile")
+    if external_profile:
+        if external_gate != "true":
+            raise RuntimeError("external one-call profile requires explicit dialing gate")
+        if backend_name != "memory":
+            raise RuntimeError("external one-call profile requires isolated memory backend")
+        if any(os.environ.get(name, "false") != "false" for name in (
+            "ENABLE_VICIDIAL_WRITES", "ENABLE_PROVISIONING", "ENABLE_AGENT_PROVISIONING",
+            "ENABLE_AGENT_SYNC", "ENABLE_LEAD_PUBLICATION", "ENABLE_LIVE_CALL_CONTROL",
+            "ENABLE_WARM_TRANSFER", "ENABLE_IVR_ROUTING", "ENABLE_IVR_CALLBACKS",
+            "ENABLE_SMS_DELIVERY", "ENABLE_EMAIL_DELIVERY", "ENABLE_EXTERNAL_DELIVERY",
+            "ENABLE_AI_ACTIONS", "ENABLE_INTERNAL_TEST_CALLING")):
+            raise RuntimeError("external one-call profile requires unrelated writes disabled")
+        release_sha = release_info.get("git_sha")
+        if release_info.get("verified") is not True or not isinstance(release_sha, str):
+            raise RuntimeError("verified release metadata required for external calling")
+        external_policy_path = Path(os.environ["CODESTRA_EXTERNAL_CALL_POLICY_FILE"])
+        external_policy = ExternalCallPolicy.from_file(external_policy_path, release_sha)
+        ami_credential_path = Path(os.environ["CODESTRA_AMI_CREDENTIAL_FILE"])
+        external_executor = ExternalCallExecutor(
+            external_policy,
+            Path(os.environ.get(
+                "CODESTRA_EXTERNAL_CALL_STATE",
+                "/var/lib/codestra-vicidial/external-calls.sqlite3",
+            )),
+            SocketAmiTransport(ami_credential_path),
+            policy_provider=lambda: ExternalCallPolicy.from_file(
+                external_policy_path, release_sha
+            ),
+            enabled=lambda: (
+                os.environ.get("CODESTRA_ADAPTER_DEPLOYMENT")
+                == "production-external-one-call"
+                and os.environ.get("ENABLE_PRODUCTION_DIALING") == "true"
+            ),
+            audit_path=Path(os.environ.get(
+                "CODESTRA_ADAPTER_STATE",
+                "/var/lib/codestra-vicidial/state.sqlite3",
+            )),
+        )
+
     return create_app(
         service,
         auth,
@@ -666,6 +861,7 @@ def app_from_environment() -> FastAPI:
         agent_policy,
         internal_executor,
         release_info=release_info,
+        external_call_executor=external_executor,
     )
 
 

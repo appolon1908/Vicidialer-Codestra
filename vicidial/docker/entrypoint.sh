@@ -36,7 +36,7 @@ fi
 
 for flag in ENABLE_PROVISIONING ENABLE_AGENT_SYNC \
   ENABLE_LEAD_PUBLICATION ENABLE_LIVE_CALL_CONTROL ENABLE_WARM_TRANSFER \
-  ENABLE_IVR_ROUTING ENABLE_IVR_CALLBACKS ENABLE_PRODUCTION_DIALING \
+  ENABLE_IVR_ROUTING ENABLE_IVR_CALLBACKS \
   ENABLE_SMS_DELIVERY ENABLE_EMAIL_DELIVERY ENABLE_EXTERNAL_DELIVERY ENABLE_AI_ACTIONS
 do
   eval "value=\${$flag:-false}"
@@ -45,6 +45,25 @@ do
     exit 78
   }
 done
+
+case "${ENABLE_PRODUCTION_DIALING:-false}" in
+  false) ;;
+  true) [ "$profile" = production-external-one-call ] || {
+    echo "refusing to start: ENABLE_PRODUCTION_DIALING requires production-external-one-call" >&2
+    exit 78
+  } ;;
+  *) exit 78 ;;
+esac
+if [ "$profile" = production-external-one-call ]; then
+  [ "${ENABLE_PRODUCTION_DIALING:-false}" = true ] || {
+    echo "refusing to start: external one-call profile requires ENABLE_PRODUCTION_DIALING=true" >&2
+    exit 78
+  }
+  test -r "${CODESTRA_EXTERNAL_CALL_POLICY_FILE:-}" || {
+    echo "external call policy is not readable" >&2
+    exit 78
+  }
+fi
 
 # Stale aliases are rejected rather than silently becoming ineffective safety
 # controls. They may be removed from external deployment tooling only after all
