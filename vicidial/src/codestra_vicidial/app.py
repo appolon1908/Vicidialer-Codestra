@@ -25,6 +25,8 @@ from .models import (
     CallbackCommand,
     CallbackLookup,
     CampaignCommand,
+    CommandLookup,
+    CommandLookupResult,
     DisableAgentCommand,
     LeadCommand,
     ProvisionAgentCommand,
@@ -37,7 +39,7 @@ from .repository import CollisionError, MemoryRepository, MySQLRepository
 from .security import RequestAuthenticator
 from .service import AdapterService, FeatureFlags, ReadbackMismatch
 from .state import (
-    IdempotencyConflict, MutationCompletionUncertain, ResourceMutationInProgress,
+    CommandRecordUnavailable, IdempotencyConflict, MutationCompletionUncertain, ResourceMutationInProgress,
     ResourceSnapshotChanged, StaleResourceVersion, StateStore,
 )
 
@@ -51,6 +53,7 @@ _AUTHENTICATION_HEADERS = (
 )
 
 _PROTECTED_SCOPE_BY_ROUTE = {
+    ("post", "/v1/idempotency/lookup"): "telephony:read",
     ("post", "/v1/campaigns/validate"): "telephony:read",
     ("post", "/v1/campaigns/provision-disabled"): "telephony:provision",
     ("post", "/v1/campaigns/disable"): "telephony:provision",
@@ -80,6 +83,8 @@ _PROTECTED_SCOPE_BY_ROUTE = {
 
 
 _COMMAND_MODEL_BY_ROUTE = {
+    "/v1/idempotency/lookup": CommandLookup,
+    "/v1/calls/originate": ExternalOriginateCommand,
     "/v1/campaigns/validate": CampaignCommand,
     "/v1/campaigns/provision-disabled": CampaignCommand,
     "/v1/campaigns/disable": CampaignCommand,
@@ -282,6 +287,13 @@ def create_app(
             "code": code, "detail": str(exc),
         })
 
+    @app.exception_handler(CommandRecordUnavailable)
+    async def command_record_handler(_request: Request, _exc: CommandRecordUnavailable):
+        return JSONResponse(status_code=503, content={
+            "code": "command_result_unavailable", "status": "reconciliation_required",
+            "detail": "durable command result could not be verified",
+        })
+
     @app.exception_handler(CollisionError)
     async def collision_handler(_request: Request, exc: CollisionError):
         return JSONResponse(status_code=409, content={"detail": str(exc)})
@@ -380,6 +392,24 @@ def create_app(
         signature_version: str = Header(..., alias="X-Signature-Version"),
     ):
         return identity, scopes, timestamp, nonce, signature, signature_version
+
+    @app.post(
+        "/v1/idempotency/lookup", response_model=CommandLookupResult,
+        responses={404: {"description": "No committed result; execution may still require reconciliation"}},
+    )
+    async def command_lookup(request: Request, values=Depends(read_headers)):
+        body = await authorize(request, "telephony:read", *values)
+        query = CommandLookup.model_validate_json(body)
+        try:
+            result = service.lookup_command(query)
+        except PermissionError as exc:
+            raise HTTPException(403, "command campaign authority denied") from exc
+        if result is None:
+            return JSONResponse(status_code=404, content={
+                "code": "command_result_not_found", "status": "not_recorded",
+                "detail": "no committed result; execution may still require reconciliation",
+            })
+        return result
 
     @app.post("/v1/campaigns/validate")
     async def campaign_validate(request: Request, values=Depends(headers)):
