@@ -61,6 +61,7 @@ def validate_documents(
     expected_writes = deployment_profile == "production-reconciliation"
     if deployment_profile not in {
         "staging-read-only", "production-reconciliation", "production-internal-test",
+        "production-external-one-call",
     }:
         raise ValueError("unsupported deployment profile")
     if ready.get("writes_enabled") is not expected_writes:
@@ -72,6 +73,11 @@ def validate_documents(
             raise ValueError("/ready internal calling contract failed")
         if ready.get("checks", {}).get("internal_call_policy") is not True:
             raise ValueError("/ready internal call policy is not verified")
+    if deployment_profile == "production-external-one-call":
+        if ready.get("production_dialing") is not True:
+            raise ValueError("/ready external dialing contract failed")
+        if ready.get("checks", {}).get("external_call_policy") is not True:
+            raise ValueError("/ready external call policy is not verified")
     if ready.get("release_verified") is not True:
         raise ValueError(
             "/ready reports unverified release metadata"
