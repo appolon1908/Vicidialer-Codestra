@@ -198,28 +198,43 @@ class SocketAmiTransport:
             {"Context": policy.dialplan_context, "Extension": dial_extension},
             "ShowDialPlanComplete",
         )
-        route = []
-        for row in rows:
-            if row.event != "ListDialplan":
-                raise CallDenied("external route contains unexpected AMI event")
-            if (
-                row.get("Context") != policy.dialplan_context
-                or row.get("Extension") != dial_extension
-                or row.get("Switch")
-                or row.get("IncludeContext")
-                or row.get("IgnorePattern")
-            ):
-                raise CallDenied("external route contains unapproved dialplan resolution")
-            route.append((row.get("Priority"), row.get("Application"), row.get("AppData")))
-        route.sort(key=lambda item: int(item[0]) if str(item[0]).isdigit() else -1)
-        expected = [
+        expected_route = [
             ("1", "Set", f"CALLERID(num)={policy.caller_id}"),
             ("2", "Set", "OUTNUM=+${EXTEN:1}"),
             ("3", "Dial", f"SIP/${{OUTNUM}}@{policy.trunk},60,tTo"),
             ("4", "Hangup", ""),
         ]
-        if route != expected:
-            raise CallDenied("live external route differs from exact approved DIDWW contract")
+        # Asterisk ShowDialPlan resolves a dialed number to matching pattern
+        # extensions rather than echoing the literal number. For NANP calls,
+        # both the specific NANP pattern and the generic international fallback
+        # are returned. Require the exact expected pattern set and require every
+        # matching route to be byte-for-byte equivalent to the governed route.
+        nanp = bool(re.fullmatch(r"81[2-9][0-9]{2}[2-9][0-9]{6}", dial_extension))
+        expected_patterns = {"_8X."}
+        if nanp:
+            expected_patterns.add("_81NXXNXXXXXX")
+        routes: dict[str, list[tuple[str, str, str]]] = {}
+        for row in rows:
+            if row.event != "ListDialplan":
+                raise CallDenied("external route contains unexpected AMI event")
+            extension = row.get("Extension")
+            if (
+                row.get("Context") != policy.dialplan_context
+                or extension not in expected_patterns
+                or row.get("Switch")
+                or row.get("IncludeContext")
+                or row.get("IgnorePattern")
+            ):
+                raise CallDenied("external route contains unapproved dialplan resolution")
+            routes.setdefault(extension, []).append(
+                (row.get("Priority"), row.get("Application"), row.get("AppData"))
+            )
+        if set(routes) != expected_patterns:
+            raise CallDenied("external route pattern set differs from approved DIDWW contract")
+        for route in routes.values():
+            route.sort(key=lambda item: int(item[0]) if str(item[0]).isdigit() else -1)
+            if route != expected_route:
+                raise CallDenied("live external route differs from exact approved DIDWW contract")
 
     def originate_external(self, policy, operation_id: str, uniqueid: str) -> None:
         if not re.fullmatch(r"codestra-pstn-[a-f0-9]{28}", uniqueid):
