@@ -1,0 +1,66 @@
+{
+  "schema_version": 1,
+  "scope": "Issue 11 command-result lookup source validation; no runtime certification",
+  "recorded_at": "2026-09-10T15:52:04.964355+00:00",
+  "tested_source_sha": "8e2f539159b0de239f2c07809e005abff7f2e654",
+  "python_base": "python:3.11.16-alpine@sha256:6857d2dae63e052057f2db389a7061188ac9a92a3fa8d402bde68f36df6fada1",
+  "runs": [
+    {
+      "source_sha": "8e2f539159b0de239f2c07809e005abff7f2e654",
+      "test_image_id": "sha256:0a0bfd1149064fa309e8c3ef4ef4892ca09564838ef6320c8449ddc40def0d94",
+      "started_at": "2026-09-10T15:47:19.314370+00:00",
+      "finished_at": "2026-09-10T15:49:47.722736+00:00",
+      "environment": "Server A disposable Python 3.11 container; synthetic repositories and real temporary SQLite; network disabled; Docker CLI and Git metadata available",
+      "command": "PYTHONPATH=vicidial/src python -m pytest -q -ra vicidial/tests tests",
+      "exit_code": 1,
+      "junit_outcomes": {
+        "passed": 703,
+        "failed": 3,
+        "skipped": 6
+      },
+      "junit_sha256": "5c38538e0ada3bf8b9adf41a08b18faacc70dc076c31d24b1b8305a4c73b7192"
+    },
+    {
+      "source_sha": "8e2f539159b0de239f2c07809e005abff7f2e654",
+      "test_image_id": "sha256:81a69ca9ab5ffb0f96d1930b2206fb5f19ad9b70ba65c52b92e26f5979c6ea80",
+      "started_at": "2026-09-10T15:51:08.757160+00:00",
+      "finished_at": "2026-09-10T15:51:19.959363+00:00",
+      "environment": "Server A disposable Python 3.11 container; network disabled; Git metadata, Docker CLI, GNU coreutils, Python system path and prefetched build wheels available",
+      "command": "PYTHONPATH=vicidial/src python -m pytest -q -ra vicidial/tests/test_source_release_artifact.py",
+      "exit_code": 0,
+      "junit_outcomes": {
+        "passed": 11,
+        "failed": 0,
+        "skipped": 0
+      },
+      "junit_sha256": "5bd89544a19ba89ba271f934602284b04fc65a28d34ff2a7e0b177927021d923"
+    }
+  ],
+  "resolution": "The full run passed 703 tests and 75 subtests, skipped six fixture-dependent tests, and failed three source-artifact tests because the test container lacked GNU checksum tools, /usr/bin/python3, and build-dependency downloads. All 11 source-artifact tests then passed with those prerequisites supplied; the test code was unchanged.",
+  "latest_distinct_junit_outcomes": {
+    "passed": 706,
+    "failed": 0,
+    "skipped": 6
+  },
+  "limits": [
+    "Five MariaDB fixture tests and one production-image runtime test require the separate CI fixtures.",
+    "Synthetic repository and temporary SQLite validation does not certify deployment, MySQL operational state, or live calls on Server B."
+  ],
+  "audit_review_fix": {
+    "source_sha": "071dda4ffdde3496f81eda5a04fe78745bc3ade7",
+    "review_thread": "PRRT_kwDOUFTyRM6hJd8t",
+    "test_image_id": "sha256:81a69ca9ab5ffb0f96d1930b2206fb5f19ad9b70ba65c52b92e26f5979c6ea80",
+    "started_at": "2026-09-10T16:02:43.194553+00:00",
+    "finished_at": "2026-09-10T16:03:33.905725+00:00",
+    "command": "PYTHONPATH=vicidial/src python -m pytest -q -ra vicidial/tests/test_command_lookup.py vicidial/tests/test_api_integration_contract.py vicidial/tests/test_adapter.py vicidial/tests/test_r3_phase2.py",
+    "passed": 162,
+    "failed": 0,
+    "junit_sha256": "575ab87f2da9b603c79ae24bf9ab9dea45835a1bdb9bd83bb23033849ec8c1de",
+    "identity_note": "The tested worktree source was committed unchanged after this run. Exact-head CI repeats the complete suite.",
+    "coverage": [
+      "Durable redacted audit for success, missing results, conflicts, scope and authority denial, malformed bodies/headers and unavailable state.",
+      "Audit sink failure withholds a successful result, emits a redacted service-log event and returns 503.",
+      "Separate audit transaction cannot commit a pending shared command or release a resource claim."
+    ]
+  }
+}

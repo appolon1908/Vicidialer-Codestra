@@ -11,6 +11,8 @@ from .models import (
     CallbackCommand,
     CallbackLookup,
     CampaignCommand,
+    CommandLookup,
+    CommandLookupResult,
     DisableAgentCommand,
     LeadCommand,
     ProvisionAgentCommand,
@@ -23,7 +25,7 @@ from .repository import (
     normalize_allowed_campaigns,
 )
 from .state import (
-    MutationCompletionUncertain, ResourceMutationInProgress, ResourceSnapshotChanged,
+    CommandRecordUnavailable, MutationCompletionUncertain, ResourceMutationInProgress, ResourceSnapshotChanged,
     StaleResourceVersion, StateStore,
 )
 from .credential_authority import CredentialAuthorityUnavailable
@@ -103,6 +105,21 @@ class AdapterService:
             self.state.audit(context.correlation_id, context.actor, operation, target,
                              "rejected", {"error_type": type(exc).__name__})
             raise
+
+    def lookup_command(self, request: CommandLookup) -> CommandLookupResult | None:
+        query = request.root
+        self._require_campaign_scope(query.command, query.command.context.campaign_id)
+        request_hash = self.state.digest(query.command.model_dump(mode="json"))
+        record = self.state.lookup_command(query.operation, query.idempotency_key, request_hash)
+        if record is None:
+            return None
+        try:
+            return CommandLookupResult.model_validate({
+                "operation": query.operation, "idempotency_key": query.idempotency_key,
+                **record,
+            })
+        except ValidationError as exc:
+            raise CommandRecordUnavailable("durable command result unavailable") from exc
 
     def versioned_readback(self, resource_key: str, reader) -> dict | None:
         before = self.state.resource_observation(resource_key)
