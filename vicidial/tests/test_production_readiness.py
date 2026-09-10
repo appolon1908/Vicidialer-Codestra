@@ -36,14 +36,16 @@ def load_production_app(monkeypatch, tmp_path):
     return importlib.import_module("codestra_vicidial.production_app")
 
 
-def configure_release_profile(monkeypatch, tmp_path, profile):
+def configure_release_profile(
+    monkeypatch, tmp_path, profile, environment="production-candidate"
+):
     from codestra_vicidial.release import build_release_document
 
     sha = "a" * 40
     metadata = tmp_path / "BUILD_INFO.json"
     metadata.write_text(json.dumps(build_release_document(
         git_sha=sha, built_at="2026-09-10T00:00:00Z",
-        environment="production-candidate",
+        environment=environment,
     )))
     metadata.with_name("SOURCE.COMMIT").write_text(sha + "\n")
     secret = tmp_path / "adapter-hmac"
@@ -134,9 +136,14 @@ def test_private_source_policy_is_required_outside_development(monkeypatch, tmp_
     monkeypatch.setenv("AUTHORIZED_PRIVATE_SOURCE_IP", "10.40.0.1")
     assert module._source_policy_ready("production-candidate") is True
 
-@pytest.mark.parametrize("profile", ["development-loopback", "production-candidate"])
+@pytest.mark.parametrize("profile,environment,expected_status", [
+    ("development-loopback", "production-candidate", 200),
+    ("production-candidate", "production-candidate", 200),
+    ("production-candidate", "staging-read-only", 503),
+    ("production-candidate", "production", 503),
+])
 def test_mysql_readiness_reconnects_and_probes_operational_repository(
-    monkeypatch, tmp_path, profile
+    monkeypatch, tmp_path, profile, environment, expected_status
 ):
     module = load_production_app(monkeypatch, tmp_path)
     from codestra_vicidial.repository import MySQLRepository
@@ -174,7 +181,7 @@ def test_mysql_readiness_reconnects_and_probes_operational_repository(
         def cursor(self):
             return self.cursor_value
 
-    configure_release_profile(monkeypatch, tmp_path, profile)
+    configure_release_profile(monkeypatch, tmp_path, profile, environment)
     connection = ReadyConnection()
     repository = MySQLRepository(connection)
     module.app.state.adapter_service.repository = repository
@@ -182,7 +189,8 @@ def test_mysql_readiness_reconnects_and_probes_operational_repository(
 
     status, body = module.build_readiness()
 
-    assert status == 200
+    assert status == expected_status
+    assert body["checks"]["release"] is (expected_status == 200)
     assert body["checks"]["repository"] is True
     assert body["backend"] == "mysql"
     assert connection.ping_calls == [True]
