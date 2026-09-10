@@ -34,6 +34,17 @@ def test_readonly_production_candidate_is_accepted_without_mutation():
     assert ready == before
 
 
+@pytest.mark.parametrize("environment", ["staging-read-only", "development", None, True])
+def test_candidate_requires_the_production_build_environment(environment):
+    version = verified_release()
+    version["environment"] = environment
+    with pytest.raises(ValueError, match="release environment mismatch"):
+        _operational_module().validate_documents(
+            health={"status": "live"}, ready=candidate(), version=version,
+            expected_sha=SHA, deployment_profile="production-candidate",
+        )
+
+
 @pytest.mark.parametrize("field,value", [
     ("status", "not_ready"), ("deployment_profile", None),
     ("deployment_profile", "production-external-one-call"),

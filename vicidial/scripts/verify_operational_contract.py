@@ -68,6 +68,8 @@ def validate_documents(
     if ready.get("writes_enabled") is not expected_writes:
         raise ValueError("/ready writes contract failed")
     if deployment_profile == "production-candidate":
+        if version.get("environment") != "production-candidate":
+            raise ValueError("/version candidate release environment mismatch")
         if ready.get("backend") != "mysql":
             raise ValueError("/ready candidate requires mysql backend")
         if ready.get("release_sha") != expected_sha:

@@ -6,7 +6,8 @@ the same read-only production profile as `validate_runtime.py` and
 `production_app.build_readiness()`.
 
 `production-candidate` is now accepted only with a ready MySQL backend, matching
-release SHA, verified release metadata, and all dependency checks explicitly
+release SHA, a `production-candidate` build environment, verified release
+metadata, and all dependency checks explicitly
 true. Writes, internal calling, production dialing, customer traffic, and
 reconciliation authorization must be explicitly false. The verifier requires
 the response's actual deployment profile; it no longer substitutes the expected
