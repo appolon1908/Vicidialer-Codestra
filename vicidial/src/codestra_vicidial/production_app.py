@@ -133,7 +133,6 @@ def _repository_ready(profile: str) -> tuple[bool, str]:
         return profile in {
             "development-loopback",
             "staging-read-only",
-            "production-candidate",
             EXTERNAL_ONE_CALL_PROFILE,
         }, backend
     if backend == "mysql":
