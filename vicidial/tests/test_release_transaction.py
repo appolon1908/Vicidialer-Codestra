@@ -25,6 +25,7 @@ class FakeAdapter:
         self.cwd = base / "releases" / OLD
         self.env = {"CODESTRA_ADAPTER_DEPLOYMENT": "staging-read-only", "CODESTRA_ADAPTER_BACKEND": "memory"}
         self.restarts = []
+        self.probes = []
         self.fail_candidate = False
         self.fail_previous = False
         self.busy = False
@@ -40,8 +41,8 @@ class FakeAdapter:
         if self.busy:
             raise tx.TransitionError("Asterisk is not verified idle")
 
-    def probe_python(self, _release):
-        return None
+    def probe_python(self, release):
+        self.probes.append(release)
 
     def restart(self):
         target = (self.base / "current").resolve()
@@ -325,3 +326,117 @@ def test_recovery_rejects_malformed_plan_even_when_expiry_may_be_old(deployment,
     plan[field] = value
     with pytest.raises(tx.TransitionError):
         tx.validate_plan(plan, expired_ok=True)
+
+@pytest.mark.parametrize("relative", [
+    "src/codestra_vicidial/__pycache__/module.pyc",
+    "src/codestra_vicidial/legacy.pyc", "scripts/legacy.pyo",
+    ".venv/lib/__pycache__/dependency.pyc",
+])
+def test_excluded_bytecode_is_rejected_before_candidate_interpreter_runs(deployment, relative):
+    transaction, system, _plan = deployment
+    root = transaction.base / "releases" / NEW
+    cache = root / relative
+    cache.parent.mkdir(parents=True, exist_ok=True)
+    cache.write_bytes(b"synthetic cache marker; never executed")
+    with pytest.raises(tx.TransitionError, match="unmanifested cache or bytecode"):
+        transaction.execute("activate")
+    assert root not in system.probes
+    assert system.restarts == []
+    assert transaction.current().name == OLD
+
+
+def test_controller_does_not_create_excluded_bytecode_in_its_own_release(tmp_path):
+    for name in ("release_transaction.py", "generate_installed_manifest.py", "verify_release_tuple.py"):
+        shutil.copyfile(SCRIPTS / name, tmp_path / name)
+    subprocess.run(
+        [sys.executable, str(tmp_path / "release_transaction.py"), "--help"],
+        text=True, capture_output=True, check=True,
+    )
+    assert not list(tmp_path.rglob("__pycache__"))
+
+
+@pytest.mark.parametrize("states", [("yes",), ("",), ("unknown",), ("no", "yes")])
+def test_unloaded_unit_configuration_blocks_before_switch(deployment, monkeypatch, states):
+    transaction, system, _plan = deployment
+    boundary = tx.SystemAdapter()
+    loaded_states = iter(states)
+    unit = system.unit_bytes().decode()
+
+    def systemctl(*command, **_kwargs):
+        assert command[:2] in {
+            ("/usr/bin/systemctl", "show"), ("/usr/bin/systemctl", "cat")
+        }
+        assert tx.UNIT in command
+        return next(loaded_states) if command[1] == "show" else unit
+
+    monkeypatch.setattr(boundary, "run", systemctl)
+    monkeypatch.setattr(system, "unit_bytes", boundary.unit_bytes)
+    with pytest.raises(tx.TransitionError, match="not loaded by systemd"):
+        transaction.execute("activate")
+    assert system.restarts == []
+    assert transaction.current().name == OLD
+    assert transaction.journal() is None
+
+
+def test_loaded_unit_configuration_allows_readonly_preflight(deployment, monkeypatch):
+    transaction, system, _plan = deployment
+    boundary = tx.SystemAdapter()
+    unit = system.unit_bytes().decode()
+    monkeypatch.setattr(boundary, "run", lambda *args, **_kwargs: "no" if args[1] == "show" else unit)
+    monkeypatch.setattr(system, "unit_bytes", boundary.unit_bytes)
+    assert transaction.execute("preflight")["status"] == "prepared"
+    assert system.restarts == []
+
+
+def test_completed_audit_records_survive_the_next_transaction(deployment):
+    transaction, _system, plan = deployment
+    transaction.execute("activate")
+    transaction.execute("rollback")
+    directory = transaction.state / "audit"
+    before = {path: path.read_bytes() for path in directory.glob("*.json")}
+    records = [json.loads(raw) for raw in before.values()]
+    assert {"committed", "rolled_back"} <= {record["phase"] for record in records}
+    original_id = records[0]["transaction_id"]
+    assert all(record["transaction_id"] == original_id for record in records)
+    assert all(path.stat().st_mode & 0o077 == 0 for path in before)
+    assert directory.stat().st_mode & 0o077 == 0
+
+    plan["authorization_reference"] = "CHG-RELEASE-SECOND-20260910"
+    write_document(transaction.control / "plan.json", plan)
+    transaction.execute("activate")
+    assert transaction.journal()["transaction_id"] != original_id
+    assert all(path.read_bytes() == raw for path, raw in before.items())
+    assert len(list(directory.glob("*.json"))) > len(before)
+
+
+def test_audit_failure_before_intent_blocks_pointer_and_restart(deployment, monkeypatch):
+    transaction, system, _plan = deployment
+
+    def unavailable(_record):
+        raise OSError("synthetic audit storage failure")
+
+    monkeypatch.setattr(transaction, "audit", unavailable)
+    with pytest.raises(OSError, match="audit storage failure"):
+        transaction.execute("activate")
+    assert transaction.current().name == OLD
+    assert system.restarts == []
+    assert transaction.journal() is None
+
+
+def test_completion_audit_failure_rolls_back_without_claiming_commit(deployment, monkeypatch):
+    transaction, system, _plan = deployment
+    audit = transaction.audit
+
+    def fail_completion(record):
+        if record["phase"] == "committed":
+            raise OSError("synthetic completion audit failure")
+        audit(record)
+
+    monkeypatch.setattr(transaction, "audit", fail_completion)
+    with pytest.raises(tx.TransitionError, match="predecessor restored and verified"):
+        transaction.execute("activate")
+    assert transaction.current().name == OLD
+    assert system.restarts == [NEW, OLD]
+    records = [json.loads(path.read_bytes()) for path in (transaction.state / "audit").glob("*.json")]
+    assert "committed" not in {record["phase"] for record in records}
+    assert transaction.journal()["phase"] == "rolled_back"

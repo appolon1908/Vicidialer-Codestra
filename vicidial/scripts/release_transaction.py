@@ -15,6 +15,7 @@ import pwd
 import re
 import stat
 import subprocess
+import sys
 import tempfile
 import time
 import uuid
@@ -23,7 +24,14 @@ from datetime import datetime, timezone
 from pathlib import Path
 from urllib.request import HTTPRedirectHandler, build_opener
 
-from generate_installed_manifest import build
+# A root-run controller must not create excluded bytecode in its own release.
+sys.dont_write_bytecode = True
+
+from generate_installed_manifest import (
+    EXCLUDED_PARTS,
+    EXCLUDED_SUFFIXES,
+    build,
+)
 from verify_release_tuple import verify as verify_tuple
 
 UNIT = "codestra-vicidial-restricted-adapter.service"
@@ -113,7 +121,17 @@ class SystemAdapter:
             raise TransitionError("bounded adapter command failed") from exc
 
     def unit_bytes(self) -> bytes:
-        return self.run("/usr/bin/systemctl", "cat", UNIT).encode()
+        def require_loaded_configuration() -> None:
+            state = self.run(
+                "/usr/bin/systemctl", "show", UNIT, "--property=NeedDaemonReload", "--value"
+            ).strip()
+            if state != "no":
+                raise TransitionError("adapter unit configuration is not loaded by systemd")
+
+        require_loaded_configuration()
+        content = self.run("/usr/bin/systemctl", "cat", UNIT).encode()
+        require_loaded_configuration()
+        return content
 
     def restart(self) -> None:
         self.run("/usr/bin/systemctl", "restart", UNIT, timeout=60)
@@ -245,6 +263,9 @@ class Transaction:
         root = releases / source
         self.trusted(root, directory=True)
         for path in root.rglob("*"):
+            relative = path.relative_to(root)
+            if any(part in EXCLUDED_PARTS for part in relative.parts) or path.suffix in EXCLUDED_SUFFIXES:
+                raise TransitionError("prepared release contains unmanifested cache or bytecode")
             if path.is_symlink():
                 if path.lstat().st_uid != self.owner:
                     raise TransitionError("prepared release symlink ownership is unsafe")
@@ -317,7 +338,34 @@ class Transaction:
                     raise
                 time.sleep(1)
 
+    def audit(self, record: dict) -> None:
+        """Publish an immutable state event before advancing the recovery journal."""
+        directory = self.state / "audit"
+        directory.mkdir(mode=0o700, exist_ok=True)
+        self.trusted(directory, directory=True)
+        if directory.stat().st_mode & 0o077:
+            raise TransitionError("release audit directory is not private")
+        raw = canonical(record)
+        destination = directory / (sha256(raw) + ".json")
+        with tempfile.NamedTemporaryFile(dir=directory, prefix=".event-", delete=False) as stream:
+            temporary = Path(stream.name)
+            stream.write(raw)
+            stream.flush()
+            os.fsync(stream.fileno())
+        try:
+            try:
+                # Atomic publication with no overwrite, including on an idempotent retry.
+                os.link(temporary, destination)
+            except FileExistsError:
+                if self.trusted(destination) != raw:
+                    raise TransitionError("release audit event collision")
+            self.sync_directory(directory)
+        finally:
+            temporary.unlink(missing_ok=True)
+
     def save(self, record: dict) -> None:
+        record["updated_at"] = datetime.now(timezone.utc).isoformat()
+        self.audit(record)
         with tempfile.NamedTemporaryFile(dir=self.state, prefix=".journal-", delete=False) as stream:
             temporary = Path(stream.name)
             stream.write(canonical(record))
@@ -387,6 +435,7 @@ class Transaction:
         self.switch(previous)
         self.system.restart()
         self.observe(previous)
+        self.configuration(plan)
         record["phase"] = "rolled_back"
         self.save(record)
 
@@ -419,7 +468,8 @@ class Transaction:
                 return {"status": "prepared", "source_sha": candidate.name, "previous_sha": previous.name}
             if action != "activate":
                 raise TransitionError("unsupported release action")
-            record = {"schema_version": 1, "plan": plan, "phase": "switching",
+            record = {"schema_version": 1, "transaction_id": uuid.uuid4().hex,
+                      "plan": plan, "phase": "switching",
                       "started_at": datetime.now(timezone.utc).isoformat()}
             self.save(record)
             try:
@@ -429,6 +479,7 @@ class Transaction:
                 self.configuration(plan)
                 self.system.restart()
                 self.observe(candidate)
+                self.configuration(plan)
                 record["phase"] = "committed"
                 self.save(record)
             except Exception as exc:

@@ -44,12 +44,16 @@ The code uses these fixed locations:
 | `/etc/codestra/vicidial-release/verified-backup.json` | Independent recovery verification |
 | `/etc/codestra/vicidial-restricted-adapter.env` | Existing root-managed environment |
 | `/var/lib/codestra-vicidial-release/journal.json` | Durable transaction and recovery intent |
+| `/var/lib/codestra-vicidial-release/audit/*.json` | Retained immutable transaction state events |
 
 Authority, release files and their containing directories must be root-owned and
 not group/world writable. State is created with mode 0700; journal and lock files
 use mode 0600. Release symlinks must stay inside their own release. The controller
 checks file ownership before calculating the canonical installed manifest, then
 checks `SOURCE.COMMIT`, `BUILD_INFO.json`, manifest source and directory identity.
+Excluded cache directories and `.pyc`/`.pyo` files are rejected before executing
+any prepared interpreter. Prepare dependencies without bytecode compilation; the
+controller disables bytecode generation for its own imports as well.
 It probes the prepared interpreter as the service UID/GID with a minimal
 environment and verifies its prefix, source import path and Python version.
 
@@ -83,14 +87,23 @@ restore procedure must not create or modify a database on the live host.
 
 ## Transaction and recovery behavior
 
-An exclusive, nonblocking file lock serializes actions. Preflight verifies both
+An exclusive, nonblocking file lock serializes actions. Preflight rejects a
+systemd unit with pending or unknown reload state, so on-disk
+unit digests cannot authorize a stale manager configuration. It verifies both
 prepared releases, authority, configuration, effective predecessor, readiness and
 Asterisk inactivity. It does not change the pointer or restart a service.
 
 Activation fsyncs recovery intent before atomically replacing the pointer,
 rechecks configuration, restarts the one adapter unit and verifies process plus
-HTTP read-back. Only then does it record commitment. Repeating the same committed
+HTTP read-back. It rechecks configuration after runtime read-back. Only then
+does it record commitment. Repeating the same committed
 plan verifies the release and runtime without restarting again.
+
+Each state change first publishes a root-private, fsynced audit event with its
+transaction ID, authorization, timestamp and outcome, then replaces the recovery
+journal. Audit files are created atomically without overwriting or deleting prior
+events. Audit storage failure blocks initial mutation or causes recovery after a
+candidate start. Starting a later transaction preserves earlier completion records.
 
 A failed activation attempts to restore and verify the retained predecessor.
 It still exits unsuccessfully when that recovery succeeds. Failed recovery
