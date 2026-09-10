@@ -56,16 +56,38 @@ def validate_documents(
         raise ValueError("/health contract failed")
     if ready.get("status") != "ready":
         raise ValueError("/ready status contract failed")
-    if ready.get("deployment_profile", deployment_profile) != deployment_profile:
+    if ready.get("deployment_profile") != deployment_profile:
         raise ValueError("/ready deployment profile mismatch")
     expected_writes = deployment_profile == "production-reconciliation"
     if deployment_profile not in {
-        "staging-read-only", "production-reconciliation", "production-internal-test",
+        "staging-read-only", "production-candidate",
+        "production-reconciliation", "production-internal-test",
         "production-external-one-call",
     }:
         raise ValueError("unsupported deployment profile")
     if ready.get("writes_enabled") is not expected_writes:
         raise ValueError("/ready writes contract failed")
+    if deployment_profile == "production-candidate":
+        if version.get("environment") != "production-candidate":
+            raise ValueError("/version candidate release environment mismatch")
+        if ready.get("backend") != "mysql":
+            raise ValueError("/ready candidate requires mysql backend")
+        if ready.get("release_sha") != expected_sha:
+            raise ValueError("/ready SHA mismatch")
+        for field in (
+            "internal_test_calling", "production_dialing",
+            "customer_traffic_authorized", "reconciliation_policy_verified",
+        ):
+            if ready.get(field) is not False:
+                raise ValueError(f"/ready candidate {field} must be false")
+        checks = ready.get("checks")
+        if not isinstance(checks, dict) or not all(
+            checks.get(name) is True for name in (
+                "release", "hmac", "source_policy", "state_store",
+                "repository", "kill_switches",
+            )
+        ) or any(value is not True for value in checks.values()):
+            raise ValueError("/ready candidate checks are incomplete or failing")
     if expected_writes and ready.get("reconciliation_policy_verified") is not True:
         raise ValueError("/ready reconciliation policy is not verified")
     if deployment_profile == "production-internal-test":
