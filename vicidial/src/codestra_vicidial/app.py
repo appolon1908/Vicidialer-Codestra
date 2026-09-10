@@ -52,6 +52,7 @@ _PROTECTED_SCOPE_BY_ROUTE = {
     ("post", "/v1/agents/disable"): "telephony:agent-sync",
     ("get", "/v1/agents/{user_id}/actual-state"): "telephony:read",
     ("get", "/v1/agents/availability/{user_id}/{extension}"): "telephony:read",
+    ("post", "/v1/calls/originate"): "telephony:external-call",
     ("post", "/v1/calls/internal/originate"): "telephony:internal-call",
     ("get", "/v1/calls/internal/{operation_id}"): "telephony:internal-call-read",
     ("post", "/v1/calls/internal/{operation_id}/hangup"): "telephony:internal-call-hangup",
@@ -356,6 +357,11 @@ def create_app(
         if user_id != "appolon" or extension != "6901":
             raise HTTPException(403, "availability query outside approved scope")
         return service.agent_availability(user_id, extension)
+
+
+    @app.post("/v1/calls/originate")
+    async def external_originate_disabled(request: Request):
+        raise HTTPException(503, "production dialing executor is not enabled")
 
     @app.exception_handler(InternalCallError)
     async def internal_call_error(_request: Request, _exc: InternalCallError):
