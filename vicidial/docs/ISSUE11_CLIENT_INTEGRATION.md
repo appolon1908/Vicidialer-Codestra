@@ -89,7 +89,10 @@ Publication alone does not verify the installed release or satisfy recovery gate
 The reviewed prepared-release controller is merged, but its governed installation,
 release-local dependency preparation, configuration/state compatibility and
 independently verified backup/off-host/isolated-restore reports must be established
-before its activation transaction. Configuration/event reconciliation and the
+before its activation transaction. At 2026-09-10T17:29:03Z, the fixed
+`plan.json`, `verified-release.json` and `verified-backup.json` files were absent
+under `/etc/codestra/vicidial-release/`; the installed operator still matched
+the previously observed no-op source hash. Configuration/event reconciliation and the
 governed call canary with durable CDR/disposition/duration/hangup read-back remain
 issue #11 runtime gates. This code change does not change services, grants,
 outbox eligibility, event delivery, production dialing or live call quotas.
