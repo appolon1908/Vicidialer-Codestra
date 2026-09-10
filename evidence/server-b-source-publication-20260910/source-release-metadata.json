@@ -1,0 +1,13 @@
+{
+  "archive_root": ".",
+  "archive_sha256": "4e05428e1e70e8d4703bcf15802778702069f9fb1f42d34a5cb52f8c93825ae7",
+  "artifact_type": "codestra-vicidial-server-b-source-release",
+  "builder_workflow_sha": "8a3bb2f6977507fe850cd5d5ec4523f4b8880022",
+  "checksums_sha256": "cd7e24a04bc51da28ebe356da9f0de1adc9cc45396b64c817bd1b98dedbca384",
+  "file_count": 125,
+  "installer_contract": "systemd-python-source-v1",
+  "manifest_sha256": "798b6864c0c158460dad2881121af03abda93d3401cd208cd56bcea87af24cd3",
+  "schema_version": 1,
+  "source_repository": "appolon1908-hue/Vicidialer-Codestra",
+  "source_sha": "8a3bb2f6977507fe850cd5d5ec4523f4b8880022"
+}
