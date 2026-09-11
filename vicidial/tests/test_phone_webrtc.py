@@ -14,6 +14,7 @@ from codestra_vicidial.phone_webrtc import (
     ExtensionReservationCommand,
     PhoneAdapterService,
     WebRTCCredentialCommand,
+    WebRTCRevokeCommand,
     WebRTCSessionAlreadyActive,
     _safe_phone,
 )
@@ -205,10 +206,7 @@ def test_revoke_invalidates_issued_session(tmp_path):
     )
 
     result = service.revoke_webrtc(
-        service_command := __import__(
-            "codestra_vicidial.phone_webrtc",
-            fromlist=["WebRTCRevokeCommand"],
-        ).WebRTCRevokeCommand(
+        WebRTCRevokeCommand(
             context=_context(),
             employee_id=SYNTHETIC_EMPLOYEE,
             user_id=SYNTHETIC_USER,
