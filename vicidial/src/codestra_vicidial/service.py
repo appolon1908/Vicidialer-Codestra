@@ -49,6 +49,8 @@ class FeatureFlags:
     callback_writes: bool = False
     transfer_policy_sync: bool = False
     production_dialing: bool = False
+    extension_reservation: bool = False
+    webrtc_session_issuance: bool = False
 
 
 class AdapterService:
