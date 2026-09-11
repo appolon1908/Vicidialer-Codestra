@@ -41,6 +41,7 @@ from .release import load_release_info
 from .repository import CollisionError, MemoryRepository, MySQLRepository
 from .security import RequestAuthenticator
 from .service import AdapterService, FeatureFlags, ReadbackMismatch
+from .credential_authority import CredentialAuthorityUnavailable
 from .phone_webrtc import (
     CredentialResponseNotReplayable,
     ExtensionAdoptionCommand,
@@ -401,6 +402,19 @@ def create_app(
                 "code": "WEBRTC_CREDENTIAL_REPLAY_REQUIRED",
                 "status": "reconciliation_required",
                 "detail": "the one-time credential response cannot be replayed",
+            },
+        )
+
+    @app.exception_handler(CredentialAuthorityUnavailable)
+    async def credential_authority_handler(
+        _request: Request, _exc: CredentialAuthorityUnavailable
+    ):
+        return JSONResponse(
+            status_code=503,
+            content={
+                "code": "WEBRTC_CREDENTIAL_AUTHORITY_UNAVAILABLE",
+                "status": "reconciliation_required",
+                "detail": "ephemeral credential authority is unavailable",
             },
         )
 
