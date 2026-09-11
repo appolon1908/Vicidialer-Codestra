@@ -1,0 +1,239 @@
+{
+  "api_prefix": "/v1",
+  "contract_version": 1,
+  "routes": [
+    {
+      "idempotency": "not_applicable",
+      "method": "GET",
+      "mutation": false,
+      "operation": null,
+      "path": "/v1/agents/availability/{user_id}/{extension}",
+      "request_model": null,
+      "required_scope": "telephony:read"
+    },
+    {
+      "idempotency": "not_applicable",
+      "method": "GET",
+      "mutation": false,
+      "operation": null,
+      "path": "/v1/agents/{user_id}/actual-state",
+      "request_model": null,
+      "required_scope": "telephony:read"
+    },
+    {
+      "idempotency": "not_applicable",
+      "method": "GET",
+      "mutation": false,
+      "operation": null,
+      "path": "/v1/callbacks/by-external-id/{external_id}",
+      "request_model": null,
+      "required_scope": "telephony:read"
+    },
+    {
+      "idempotency": "not_applicable",
+      "method": "GET",
+      "mutation": false,
+      "operation": null,
+      "path": "/v1/callbacks/{callback_id}",
+      "request_model": null,
+      "required_scope": "telephony:read"
+    },
+    {
+      "idempotency": "not_applicable",
+      "method": "GET",
+      "mutation": false,
+      "operation": null,
+      "path": "/v1/calls/internal/{operation_id}",
+      "request_model": null,
+      "required_scope": "telephony:internal-call-read"
+    },
+    {
+      "idempotency": "not_applicable",
+      "method": "GET",
+      "mutation": false,
+      "operation": null,
+      "path": "/v1/campaigns/{campaign_id}/actual-state",
+      "request_model": null,
+      "required_scope": "telephony:read"
+    },
+    {
+      "idempotency": "not_applicable",
+      "method": "GET",
+      "mutation": false,
+      "operation": null,
+      "path": "/v1/leads/by-external-id/{external_id}",
+      "request_model": null,
+      "required_scope": "telephony:read"
+    },
+    {
+      "idempotency": "not_applicable",
+      "method": "GET",
+      "mutation": false,
+      "operation": null,
+      "path": "/v1/reconciliation/{run_id}",
+      "request_model": null,
+      "required_scope": "telephony:read"
+    },
+    {
+      "idempotency": "header_required",
+      "method": "POST",
+      "mutation": true,
+      "operation": "agent.disable",
+      "path": "/v1/agents/disable",
+      "request_model": "DisableAgentCommand",
+      "required_scope": "telephony:agent-sync"
+    },
+    {
+      "idempotency": "header_required",
+      "method": "POST",
+      "mutation": true,
+      "operation": "agent.provision-disabled",
+      "path": "/v1/agents/provision-disabled",
+      "request_model": "ProvisionAgentCommand",
+      "required_scope": "telephony:agent-provision"
+    },
+    {
+      "idempotency": "header_required",
+      "method": "POST",
+      "mutation": true,
+      "operation": "agent.sync",
+      "path": "/v1/agents/sync",
+      "request_model": "AgentCommand",
+      "required_scope": "telephony:agent-sync"
+    },
+    {
+      "idempotency": "header_required",
+      "method": "POST",
+      "mutation": true,
+      "operation": "callback.create",
+      "path": "/v1/callbacks/create",
+      "request_model": "CallbackCommand",
+      "required_scope": "telephony:callback-write"
+    },
+    {
+      "idempotency": "header_required",
+      "method": "POST",
+      "mutation": true,
+      "operation": "call.internal.originate",
+      "path": "/v1/calls/internal/originate",
+      "request_model": "OriginateCommand",
+      "required_scope": "telephony:internal-call"
+    },
+    {
+      "idempotency": "header_required",
+      "method": "POST",
+      "mutation": true,
+      "operation": "call.internal.hangup",
+      "path": "/v1/calls/internal/{operation_id}/hangup",
+      "request_model": null,
+      "required_scope": "telephony:internal-call-hangup"
+    },
+    {
+      "idempotency": "header_required",
+      "method": "POST",
+      "mutation": true,
+      "operation": "call.external.originate",
+      "path": "/v1/calls/originate",
+      "request_model": "ExternalOriginateCommand",
+      "required_scope": "telephony:external-call"
+    },
+    {
+      "idempotency": "header_required",
+      "method": "POST",
+      "mutation": true,
+      "operation": "campaign.disable",
+      "path": "/v1/campaigns/disable",
+      "request_model": "CampaignCommand",
+      "required_scope": "telephony:provision"
+    },
+    {
+      "idempotency": "header_required",
+      "method": "POST",
+      "mutation": true,
+      "operation": "campaign.provision-disabled",
+      "path": "/v1/campaigns/provision-disabled",
+      "request_model": "CampaignCommand",
+      "required_scope": "telephony:provision"
+    },
+    {
+      "idempotency": "header_required",
+      "method": "POST",
+      "mutation": false,
+      "operation": "campaign.validate",
+      "path": "/v1/campaigns/validate",
+      "request_model": "CampaignCommand",
+      "required_scope": "telephony:read"
+    },
+    {
+      "idempotency": "body_key",
+      "method": "POST",
+      "mutation": false,
+      "operation": "idempotency.lookup",
+      "path": "/v1/idempotency/lookup",
+      "request_model": "CommandLookup",
+      "required_scope": "telephony:read"
+    },
+    {
+      "idempotency": "header_required",
+      "method": "POST",
+      "mutation": true,
+      "operation": "lead.publish",
+      "path": "/v1/leads/publish",
+      "request_model": "LeadCommand",
+      "required_scope": "telephony:lead-publish"
+    },
+    {
+      "idempotency": "header_required",
+      "method": "POST",
+      "mutation": true,
+      "operation": "reconciliation.campaign.provision-disabled",
+      "path": "/v1/reconciliation/campaigns/provision-disabled",
+      "request_model": "ReconciliationCampaignCommand",
+      "required_scope": "telephony:reconcile"
+    },
+    {
+      "idempotency": "header_required",
+      "method": "POST",
+      "mutation": false,
+      "operation": "reconciliation.run",
+      "path": "/v1/reconciliation/run",
+      "request_model": null,
+      "required_scope": "telephony:read"
+    },
+    {
+      "idempotency": "header_required",
+      "method": "POST",
+      "mutation": true,
+      "operation": "transfer-policy.sync",
+      "path": "/v1/transfer-policies/sync",
+      "request_model": "TransferPolicyCommand",
+      "required_scope": "telephony:transfer-policy"
+    }
+  ],
+  "safety": {
+    "default_mutations": "disabled",
+    "forbidden_caller_inputs": [
+      "arbitrary_sql",
+      "shell",
+      "dialplan",
+      "trunk",
+      "url",
+      "credential"
+    ],
+    "uncertain_mutation": "reconciliation_required"
+  },
+  "transport": {
+    "protocol": "https",
+    "required_headers": [
+      "X-Service-Identity",
+      "X-Service-Scopes",
+      "X-Request-Timestamp",
+      "X-Request-Nonce",
+      "X-Request-Signature",
+      "X-Signature-Version"
+    ],
+    "service_identity": "codestra-middleware",
+    "signature": "HMAC-SHA256 v2",
+    "tls": "mTLS through the separately approved private route"
+  }
+}
