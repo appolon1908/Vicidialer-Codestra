@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import io
 import json
+from datetime import datetime, timedelta, timezone
 
 import pytest
 from codestra_vicidial.app import create_app
@@ -219,6 +220,24 @@ def test_agent_readback_mismatch_prevents_success_projection(tmp_path, signed_ad
         lifecycle(tmp_path, client, store=store)
     assert store.counts()["odoo_projection"] == 0
     assert store.counts()["n8n_scope"] == 0
+
+
+def test_lookup_rejects_future_dated_receipt(signed_adapter, monkeypatch):
+    from campaign_provisioning import AdapterRequestError
+
+    client, *_rest = signed_adapter
+    document = {
+        "status": "recorded",
+        "operation": "campaign.disable",
+        "idempotency_key": "future-receipt-key",
+        "recorded_at": (
+            datetime.now(timezone.utc) + timedelta(minutes=2)
+        ).isoformat(),
+        "result": {"resource_version": 1},
+    }
+    monkeypatch.setattr(client, "_request", lambda *_args, **_kwargs: document)
+    with pytest.raises(AdapterRequestError):
+        client.lookup_command("campaign.disable", "future-receipt-key", {})
 
 
 @pytest.mark.parametrize("change", [

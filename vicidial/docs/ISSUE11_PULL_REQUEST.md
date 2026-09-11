@@ -11,6 +11,26 @@ The protected `main` branch contains the restricted VICIdial adapter, campaign a
 
 The adapter remains private and allowlisted. Callers cannot provide arbitrary SQL, shell, dialplan, trunk, URL, or credential input. Production dialing and telephony administration remain disabled.
 
+## Machine-readable binding
+
+`vicidial/config/restricted-adapter-contract.json` is generated from the live
+route, scope and request-model maps in `codestra_vicidial.app`. It is the
+reviewed binding input for Middleware/Odoo clients: every protected route has
+one explicit method, scope, request model and idempotency policy. The generator
+refuses an unmapped POST route or a mutating non-POST route, and the regression
+suite fails if the committed manifest drifts from the implementation.
+
+Generate it with:
+
+```text
+python vicidial/scripts/export_adapter_contract.py
+```
+
+The client now also rejects durable receipts whose `recorded_at` is missing a
+usable timezone or is more than 60 seconds in the future. This prevents a
+malformed or clock-skewed lookup response from being treated as proof of a
+committed mutation.
+
 ## Acceptance checklist
 
 - [x] Campaign-scoped agent and user-group isolation is enforced in the adapter.

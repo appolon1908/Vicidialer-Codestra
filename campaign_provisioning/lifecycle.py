@@ -17,7 +17,7 @@ import sqlite3
 import ssl
 import time
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Protocol
 
@@ -48,6 +48,7 @@ LOOKUP_OPERATIONS = frozenset({
     "agent.provision-disabled", "agent.disable", "lead.publish",
     "callback.create", "transfer-policy.sync",
 })
+RECEIPT_MAX_CLOCK_SKEW_SECONDS = 60
 
 
 class Adapter(Protocol):
@@ -105,6 +106,8 @@ class PrivateAdapterClient:
         self.prefix = parsed.path.rstrip("/")
         self.identity = config.identity
         self.key = Path(config.hmac_file).read_bytes().strip()
+        if len(self.key) < 32:
+            raise LifecycleError("adapter HMAC key must contain at least 32 bytes")
         self.context = ssl.create_default_context(cafile=config.ca_file)
         self.context.load_cert_chain(
             config.client_cert_file, config.client_key_file
@@ -189,11 +192,17 @@ class PrivateAdapterClient:
             )
         except ValueError:
             raise AdapterRequestError() from None
+        now = datetime.now(timezone.utc).replace(microsecond=0)
+        if (
+            recorded.tzinfo is None
+            or recorded.utcoffset() is None
+            or recorded > now + timedelta(seconds=RECEIPT_MAX_CLOCK_SKEW_SECONDS)
+        ):
+            raise AdapterRequestError()
         if (
             document.get("status") != "recorded"
             or document.get("operation") != operation
             or document.get("idempotency_key") != key
-            or recorded.tzinfo is None
             or not isinstance(result, dict)
             or type(result.get("resource_version")) is not int
             or result["resource_version"] < 1
