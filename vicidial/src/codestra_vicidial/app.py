@@ -41,6 +41,15 @@ from .release import load_release_info
 from .repository import CollisionError, MemoryRepository, MySQLRepository
 from .security import RequestAuthenticator
 from .service import AdapterService, FeatureFlags, ReadbackMismatch
+from .phone_webrtc import (
+    CredentialResponseNotReplayable,
+    ExtensionAdoptionCommand,
+    ExtensionReservationCommand,
+    PhoneAdapterService,
+    WebRTCCredentialCommand,
+    WebRTCRevokeCommand,
+    WebRTCSessionAlreadyActive,
+)
 from .state import (
     CommandAuditUnavailable, CommandRecordUnavailable, IdempotencyConflict, MutationCompletionUncertain, ResourceMutationInProgress,
     ResourceSnapshotChanged, StaleResourceVersion, StateStore,
@@ -66,6 +75,11 @@ _PROTECTED_SCOPE_BY_ROUTE = {
     ("post", "/v1/agents/disable"): "telephony:agent-sync",
     ("get", "/v1/agents/{user_id}/actual-state"): "telephony:read",
     ("get", "/v1/agents/availability/{user_id}/{extension}"): "telephony:read",
+    ("post", "/v1/extensions/reserve"): "telephony:extension-reserve",
+    ("post", "/v1/extensions/adopt"): "telephony:extension-adopt",
+    ("get", "/v1/extensions/{extension}/actual-state"): "telephony:read",
+    ("post", "/v1/webrtc/credentials"): "telephony:webrtc-provision",
+    ("post", "/v1/webrtc/revoke"): "telephony:webrtc-revoke",
     ("post", "/v1/calls/originate"): "telephony:external-call",
     ("post", "/v1/calls/internal/originate"): "telephony:internal-call",
     ("get", "/v1/calls/internal/{operation_id}"): "telephony:internal-call-read",
@@ -94,6 +108,10 @@ _COMMAND_MODEL_BY_ROUTE = {
     "/v1/agents/sync": AgentCommand,
     "/v1/agents/provision-disabled": ProvisionAgentCommand,
     "/v1/agents/disable": DisableAgentCommand,
+    "/v1/extensions/reserve": ExtensionReservationCommand,
+    "/v1/extensions/adopt": ExtensionAdoptionCommand,
+    "/v1/webrtc/credentials": WebRTCCredentialCommand,
+    "/v1/webrtc/revoke": WebRTCRevokeCommand,
     "/v1/leads/publish": LeadCommand,
     "/v1/callbacks/create": CallbackCommand,
     "/v1/transfer-policies/sync": TransferPolicyCommand,
@@ -236,6 +254,7 @@ def create_app(
     internal_call_executor: InternalCallExecutor | None = None,
     release_info: Mapping[str, object] | None = None,
     external_call_executor: ExternalCallExecutor | None = None,
+    phone_adapter: PhoneAdapterService | None = None,
 ) -> FastAPI:
     release_document = dict(
         release_info
@@ -249,6 +268,7 @@ def create_app(
     app.state.adapter_service = service
     app.state.internal_call_executor = internal_call_executor
     app.state.external_call_executor = external_call_executor
+    app.state.phone_adapter = phone_adapter
 
 
     @app.middleware("http")
@@ -359,6 +379,31 @@ def create_app(
             },
         )
 
+    @app.exception_handler(WebRTCSessionAlreadyActive)
+    async def active_webrtc_handler(
+        _request: Request, _exc: WebRTCSessionAlreadyActive
+    ):
+        return JSONResponse(
+            status_code=409,
+            content={
+                "code": "WEBRTC_SESSION_ALREADY_ACTIVE",
+                "detail": "the agent already has an active WebRTC session",
+            },
+        )
+
+    @app.exception_handler(CredentialResponseNotReplayable)
+    async def credential_replay_handler(
+        _request: Request, _exc: CredentialResponseNotReplayable
+    ):
+        return JSONResponse(
+            status_code=503,
+            content={
+                "code": "WEBRTC_CREDENTIAL_REPLAY_REQUIRED",
+                "status": "reconciliation_required",
+                "detail": "the one-time credential response cannot be replayed",
+            },
+        )
+
     @app.get("/health")
     def health():
         return {"status": "live"}
@@ -414,6 +459,12 @@ def create_app(
                 "lead_publication": bool(service.flags.lead_publication),
                 "callback_writes": bool(service.flags.callback_writes),
                 "transfer_policy_sync": bool(service.flags.transfer_policy_sync),
+                "extension_reservation": bool(
+                    getattr(service.flags, "extension_reservation", False)
+                ),
+                "webrtc_session_issuance": bool(
+                    getattr(service.flags, "webrtc_session_issuance", False)
+                ),
             },
             "routes": routes,
         }
@@ -571,6 +622,71 @@ def create_app(
     async def agent_disable(request: Request, values=Depends(headers)):
         return await mutation(request, DisableAgentCommand, service.disable_agent,
                               "telephony:agent-sync", *values)
+
+    @app.post("/v1/extensions/reserve")
+    async def extension_reserve(request: Request, values=Depends(headers)):
+        if phone_adapter is None:
+            raise HTTPException(503, "phone adapter is unavailable")
+        return await mutation(
+            request,
+            ExtensionReservationCommand,
+            lambda key, command: phone_adapter.reserve_extension(key, command),
+            "telephony:extension-reserve",
+            *values,
+        )
+
+    @app.post("/v1/extensions/adopt")
+    async def extension_adopt(request: Request, values=Depends(headers)):
+        if phone_adapter is None:
+            raise HTTPException(503, "phone adapter is unavailable")
+        return await mutation(
+            request,
+            ExtensionAdoptionCommand,
+            lambda key, command: phone_adapter.adopt_extension(key, command),
+            "telephony:extension-adopt",
+            *values,
+        )
+
+    @app.get("/v1/extensions/{extension}/actual-state")
+    async def extension_actual(
+        request: Request,
+        extension: str,
+        user_id: str,
+        campaign_id: str,
+        values=Depends(read_headers),
+    ):
+        if phone_adapter is None:
+            raise HTTPException(503, "phone adapter is unavailable")
+        await authorize(request, "telephony:read", *values)
+        if not extension.isdecimal() or not 6100 <= int(extension) <= 9999:
+            raise HTTPException(422, "extension is invalid")
+        return phone_adapter.readback(
+            extension, user_id=user_id, campaign_id=campaign_id
+        )
+
+    @app.post("/v1/webrtc/credentials")
+    async def webrtc_credentials(request: Request, values=Depends(headers)):
+        if phone_adapter is None:
+            raise HTTPException(503, "phone adapter is unavailable")
+        return await mutation(
+            request,
+            WebRTCCredentialCommand,
+            lambda key, command: phone_adapter.issue_webrtc(key, command),
+            "telephony:webrtc-provision",
+            *values,
+        )
+
+    @app.post("/v1/webrtc/revoke")
+    async def webrtc_revoke(request: Request, values=Depends(headers)):
+        if phone_adapter is None:
+            raise HTTPException(503, "phone adapter is unavailable")
+        return await mutation(
+            request,
+            WebRTCRevokeCommand,
+            lambda _key, command: phone_adapter.revoke_webrtc(command),
+            "telephony:webrtc-revoke",
+            *values,
+        )
 
     @app.get("/v1/agents/{user_id}/actual-state")
     async def agent_actual(request: Request, user_id: str, values=Depends(read_headers)):
@@ -777,7 +893,18 @@ def app_from_environment() -> FastAPI:
         callback_writes=os.environ.get("ENABLE_IVR_CALLBACKS") == "true",
         transfer_policy_sync=os.environ.get("ENABLE_WARM_TRANSFER") == "true",
         production_dialing=os.environ.get("ENABLE_PRODUCTION_DIALING") == "true",
+        extension_reservation=os.environ.get("ENABLE_EXTENSION_RESERVATION") == "true",
+        webrtc_session_issuance=os.environ.get("ENABLE_WEBRTC_SESSION_ISSUANCE") == "true",
     )
+    if (
+        (flags.extension_reservation or flags.webrtc_session_issuance)
+        and deployment not in {"development-loopback", "staging-webrtc"}
+    ):
+        raise RuntimeError(
+            "V1 phone lifecycle requires the isolated staging-webrtc profile"
+        )
+    if flags.webrtc_session_issuance and not flags.agent_sync:
+        raise RuntimeError("WebRTC issuance requires agent synchronization")
     backend_name = os.environ.get("CODESTRA_ADAPTER_BACKEND", "memory")
     if backend_name == "mysql":
         import pymysql
@@ -822,6 +949,12 @@ def app_from_environment() -> FastAPI:
         ):
             raise RuntimeError("approved secret authority unavailable or unauthorized")
         credential_authority = UnixCredentialAuthority(authority_path)
+    phone_adapter = PhoneAdapterService(
+        repository,
+        state,
+        flags,
+        credential_authority,
+    )
     service = AdapterService(
         repository,
         state,
@@ -987,6 +1120,7 @@ def app_from_environment() -> FastAPI:
         internal_executor,
         release_info=release_info,
         external_call_executor=external_executor,
+        phone_adapter=phone_adapter,
     )
 
 
