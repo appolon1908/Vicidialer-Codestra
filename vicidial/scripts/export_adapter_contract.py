@@ -54,6 +54,19 @@ _OPERATION_BY_ROUTE = {
 
 
 def build_contract() -> dict[str, Any]:
+    protected_paths = {path for _method, path in _PROTECTED_SCOPE_BY_ROUTE}
+    unknown_mutations = _MUTATING_ROUTES - protected_paths
+    if unknown_mutations:
+        raise RuntimeError(
+            "mutation map contains routes without a protected scope: "
+            + ", ".join(sorted(unknown_mutations))
+        )
+    unknown_operations = set(_OPERATION_BY_ROUTE) - protected_paths
+    if unknown_operations:
+        raise RuntimeError(
+            "operation map contains routes without a protected scope: "
+            + ", ".join(sorted(unknown_operations))
+        )
     routes = []
     for method, path in sorted(_PROTECTED_SCOPE_BY_ROUTE):
         method_upper = method.upper()
