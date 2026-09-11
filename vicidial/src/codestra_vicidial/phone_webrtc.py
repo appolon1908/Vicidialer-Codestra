@@ -86,6 +86,13 @@ class ExtensionAdoptionCommand(StrictModel):
     environment: Literal["STAGING"] = "STAGING"
 
 
+class ExtensionReadbackCommand(StrictModel):
+    context: RequestContext
+    user_id: str = Field(min_length=7, max_length=15, pattern=_AGENT_USER)
+    extension: str = Field(pattern=_EXTENSION)
+    environment: Literal["STAGING"] = "STAGING"
+
+
 class WebRTCCredentialCommand(StrictModel):
     context: RequestContext
     employee_id: str = Field(min_length=2, max_length=128, pattern=r"^[A-Za-z0-9._:-]+$")
