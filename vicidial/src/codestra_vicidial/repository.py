@@ -82,6 +82,8 @@ class Repository(Protocol):
     def disable_campaign(self, actual_id: str) -> None: ...
     def agent(self, user_id: str) -> dict | None: ...
     def agent_availability(self, user_id: str, extension: str) -> dict: ...
+    def phone(self, extension: str) -> dict | None: ...
+    def phone_rows(self, start: int, end: int) -> list[dict]: ...
     def sync_agent_disabled(self, spec: AgentSpec) -> dict: ...
     def provision_agent_disabled(self, spec: AgentSpec, credential: str) -> dict: ...
     def disable_agent(self, user_id: str) -> dict: ...
@@ -321,6 +323,20 @@ class MemoryRepository:
             "user_identifier": user_id if user_id in self.agents else None,
             "phone_identifier": extension if extension in self.phones else None,
         }
+
+    def phone(self, extension: str) -> dict | None:
+        row = self.phones.get(str(extension)) or self.phones.get(extension)
+        return deepcopy(row) if row is not None else None
+
+    def phone_rows(self, start: int, end: int) -> list[dict]:
+        return sorted(
+            (
+                deepcopy(row)
+                for key, row in self.phones.items()
+                if start <= int(str(row.get("extension", key))) <= end
+            ),
+            key=lambda row: int(str(row.get("extension", 0))),
+        )
 
     def sync_agent_disabled(self, spec: AgentSpec) -> dict:
         desired = spec.model_dump(mode="json") | {"active": False}
@@ -877,6 +893,21 @@ class MySQLRepository:
             "user_identifier": user and user["user"],
             "phone_identifier": phone and phone["extension"],
         }
+
+    def phone(self, extension: str) -> dict | None:
+        return self._one(
+            "SELECT extension,dialplan_number,login,status,active,phone_type,"
+            "fullname,company,protocol,local_gmt FROM phones WHERE extension=%s",
+            (extension,),
+        )
+
+    def phone_rows(self, start: int, end: int) -> list[dict]:
+        return self._all(
+            "SELECT extension,dialplan_number,login,status,active,phone_type,"
+            "fullname,company,protocol,local_gmt FROM phones "
+            "WHERE extension BETWEEN %s AND %s ORDER BY extension",
+            (start, end),
+        )
 
     def _agent_disable_view(self, user_id: str) -> dict | None:
         """Read only fields needed to prove disablement, without parsing legacy ACLs."""
