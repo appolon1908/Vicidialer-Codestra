@@ -1,0 +1,36 @@
+{
+  "schema_version": "vicidial-capabilities.v1",
+  "service": "codestra-vicidial-adapter",
+  "health": {
+    "GET /health": "liveness only",
+    "GET /ready": "readiness and safety flags",
+    "GET /version": "release identity",
+    "GET /capabilities": "scoped routes and external-effect gates"
+  },
+  "security": {
+    "mutations_require": [
+      "mTLS private route",
+      "X-Service-Identity",
+      "X-Service-Scopes",
+      "X-Request-Timestamp",
+      "X-Request-Nonce",
+      "X-Request-Signature",
+      "X-Signature-Version",
+      "Idempotency-Key"
+    ],
+    "signature": "HMAC-SHA256 v2",
+    "default_external_effects": {
+      "production_dialing": false,
+      "telephony_admin_write": false,
+      "provider_credentials_exposed": false
+    }
+  },
+  "readback": [
+    "campaign actual state",
+    "agent actual state and availability",
+    "call operation state",
+    "lead and callback state",
+    "reconciliation result"
+  ],
+  "uncertain_mutation": "reconciliation_required"
+}

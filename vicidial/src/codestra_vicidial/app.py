@@ -379,6 +379,46 @@ def create_app(
     def version():
         return dict(release_document)
 
+    @app.get("/capabilities")
+    def capabilities():
+        """Publish the bounded adapter surface without revealing credentials.
+
+        This endpoint is intentionally read-only. It lets Middleware and
+        deployment probes discover the exact route scopes and current safety
+        gates before submitting a command.
+        """
+        routes = [
+            {
+                "method": method.upper(),
+                "path": path,
+                "scope": scope,
+                "mutation": method.lower() == "post",
+            }
+            for (method, path), scope in sorted(_PROTECTED_SCOPE_BY_ROUTE.items())
+        ]
+        return {
+            "schema_version": "vicidial-capabilities.v1",
+            "service": "codestra-vicidial-adapter",
+            "adapter_version": __version__,
+            "contract_version": 1,
+            "external_effects": {
+                "production_dialing": bool(service.flags.production_dialing),
+                "telephony_admin_write": False,
+                "provider_credentials_exposed": False,
+            },
+            "feature_flags": {
+                "writes": bool(service.flags.writes),
+                "provisioning": bool(service.flags.provisioning),
+                "agent_sync": bool(service.flags.agent_sync),
+                "agent_provisioning": bool(service.flags.agent_provisioning),
+                "lead_publication": bool(service.flags.lead_publication),
+                "callback_writes": bool(service.flags.callback_writes),
+                "transfer_policy_sync": bool(service.flags.transfer_policy_sync),
+            },
+            "routes": routes,
+        }
+
+
     async def authorize(
         request: Request, required_scope: str, identity: str, scopes: str,
         timestamp: int, nonce: str, signature: str, signature_version: str,
