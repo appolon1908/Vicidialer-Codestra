@@ -126,7 +126,7 @@ class ReconciliationCampaignCommand(CampaignCommand):
 
 
 class AgentSpec(StrictModel):
-    user_id: Annotated[str, Field(pattern=r"^[A-Z]{3}[0-9]{4,12}$")]
+    user_id: Annotated[str, Field(pattern=r"^[A-Za-z]{3}[0-9]{4,12}$")]
     full_name: Annotated[str, Field(min_length=2, max_length=50)]
     user_group: ResourceCode
     campaigns: list[ActualCampaign] = Field(min_length=1, max_length=1)
