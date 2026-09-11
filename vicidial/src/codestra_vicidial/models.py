@@ -164,7 +164,7 @@ class ProvisionAgentCommand(AgentCommand):
 
 class DisableAgentCommand(StrictModel):
     context: RequestContext
-    user_id: Annotated[str, Field(pattern=r"^[A-Z]{3}[0-9]{4,12}$")]
+    user_id: Annotated[str, Field(pattern=r"^[A-Za-z]{3}[0-9]{4,12}$")]
 
 
 class LeadSpec(StrictModel):
