@@ -45,6 +45,7 @@ from .credential_authority import CredentialAuthorityUnavailable
 from .phone_webrtc import (
     CredentialResponseNotReplayable,
     ExtensionAdoptionCommand,
+    ExtensionReadbackCommand,
     ExtensionReservationCommand,
     PhoneAdapterService,
     WebRTCCredentialCommand,
@@ -78,6 +79,7 @@ _PROTECTED_SCOPE_BY_ROUTE = {
     ("get", "/v1/agents/availability/{user_id}/{extension}"): "telephony:read",
     ("post", "/v1/extensions/reserve"): "telephony:extension-reserve",
     ("post", "/v1/extensions/adopt"): "telephony:extension-adopt",
+    ("post", "/v1/extensions/readback"): "telephony:read",
     ("get", "/v1/extensions/{extension}/actual-state"): "telephony:read",
     ("post", "/v1/webrtc/credentials"): "telephony:webrtc-provision",
     ("post", "/v1/webrtc/revoke"): "telephony:webrtc-revoke",
@@ -111,6 +113,7 @@ _COMMAND_MODEL_BY_ROUTE = {
     "/v1/agents/disable": DisableAgentCommand,
     "/v1/extensions/reserve": ExtensionReservationCommand,
     "/v1/extensions/adopt": ExtensionAdoptionCommand,
+    "/v1/extensions/readback": ExtensionReadbackCommand,
     "/v1/webrtc/credentials": WebRTCCredentialCommand,
     "/v1/webrtc/revoke": WebRTCRevokeCommand,
     "/v1/leads/publish": LeadCommand,
@@ -658,6 +661,22 @@ def create_app(
             ExtensionAdoptionCommand,
             lambda key, command: phone_adapter.adopt_extension(key, command),
             "telephony:extension-adopt",
+            *values,
+        )
+
+    @app.post("/v1/extensions/readback")
+    async def extension_readback(request: Request, values=Depends(headers)):
+        if phone_adapter is None:
+            raise HTTPException(503, "phone adapter is unavailable")
+        return await mutation(
+            request,
+            ExtensionReadbackCommand,
+            lambda _key, command: phone_adapter.readback(
+                command.extension,
+                user_id=command.user_id,
+                campaign_id=command.context.campaign_id,
+            ),
+            "telephony:read",
             *values,
         )
 
