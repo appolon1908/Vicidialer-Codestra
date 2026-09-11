@@ -21,11 +21,14 @@ class UnixCredentialAuthority:
     def __init__(self, path: Path):
         self.path = path
 
-    def issue(self, *, username: str, extension: str, idempotency_key: str) -> IssuedCredential:
+    def issue(
+        self, *, username: str, extension: str, idempotency_key: str,
+        operation: str = "vicidial-bootstrap",
+    ) -> IssuedCredential:
         if not self.path.is_socket():
             raise CredentialAuthorityUnavailable("approved secret authority unavailable")
         request = json.dumps({
-            "operation": "vicidial-bootstrap",
+            "operation": operation,
             "username": username,
             "extension": extension,
             "idempotency_key": idempotency_key,

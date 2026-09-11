@@ -8,6 +8,19 @@ from typing import Any, Protocol
 
 from .models import AgentSpec, CallbackSpec, CampaignSpec, LeadSpec
 
+EXTENSION_POOL_RANGES: dict[str, tuple[int, int]] = {
+    "transportation": (6100, 6199),
+    "moneybee": (6200, 6299),
+    "web_ai": (6300, 6399),
+    "senior_products": (6400, 6499),
+    "student_repayment": (6500, 6599),
+    "supervisor_qa": (6900, 6999),
+}
+# Extensions bound by adoption (never returned by pool allocation, even
+# though they fall inside a pool's numeric range) - e.g. 6101, the
+# permanent staging bootstrap for cod00016/COD.2026.00016/TEST_SYN.
+ADOPTED_RESERVED_EXTENSIONS: frozenset[str] = frozenset({"6101"})
+
 
 class CollisionError(ValueError):
     pass
@@ -85,6 +98,11 @@ class Repository(Protocol):
     def sync_agent_disabled(self, spec: AgentSpec) -> dict: ...
     def provision_agent_disabled(self, spec: AgentSpec, credential: str) -> dict: ...
     def disable_agent(self, user_id: str) -> dict: ...
+    def taken_extensions(self) -> frozenset[str]: ...
+    def bind_phone(self, user_id: str, extension: str, credential: str) -> dict: ...
+    def link_existing_phone(self, user_id: str, extension: str) -> dict: ...
+    def phone(self, user_id: str) -> dict | None: ...
+    def clear_phone_credential(self, user_id: str) -> dict: ...
     def lead_by_external_id(self, external_id: str) -> dict | None: ...
     def lead(self, lead_id: int) -> dict | None: ...
     def publish_lead(self, spec: LeadSpec) -> dict: ...
@@ -351,7 +369,63 @@ class MemoryRepository:
         if user_id not in self.agents:
             raise ValueError("agent missing")
         self.agents[user_id]["active"] = False
+        # Atomic with the agent disable, not a second call a caller could
+        # forget: deactivate the bound phone row in the same operation
+        # (Mission 6 "disable_agent must be atomic and immediate"). WebRTC
+        # session/credential invalidation is a separate concern tracked in
+        # StateStore (see AdapterService.revoke_webrtc), which the caller
+        # (service.disable_agent) invokes in the same request.
+        for phone in self.phones.values():
+            if phone.get("user_id") == user_id:
+                phone["active"] = False
         return deepcopy(self.agents[user_id])
+
+    def taken_extensions(self) -> frozenset[str]:
+        return frozenset(self.phones.keys())
+
+    def phone(self, user_id: str) -> dict | None:
+        for phone in self.phones.values():
+            if phone.get("user_id") == user_id:
+                return deepcopy(phone)
+        return None
+
+    def bind_phone(self, user_id: str, extension: str, credential: str) -> dict:
+        if user_id not in self.agents:
+            raise ValueError("agent missing")
+        existing = self.phones.get(extension)
+        if existing is not None and existing.get("user_id") != user_id:
+            raise CollisionError("extension identifier already exists")
+        record = {
+            "extension": extension, "user_id": user_id, "active": True,
+            "pass": credential,
+        }
+        self.phones[extension] = record
+        self.agents[user_id]["extension"] = extension
+        return deepcopy(record)
+
+    def clear_phone_credential(self, user_id: str) -> dict:
+        phone = self.phone(user_id)
+        if phone is None:
+            raise ValueError("phone assignment missing")
+        record = self.phones[phone["extension"]]
+        record.pop("pass", None)
+        return deepcopy(record)
+
+    def link_existing_phone(self, user_id: str, extension: str) -> dict:
+        """Adopt an already-present phone row without touching its
+        credential - unlike bind_phone, which always (re)issues one.
+        Used for extension adoption (e.g. 6101), which must never rotate a
+        SIP secret real hardware/softphones may currently depend on."""
+        if user_id not in self.agents:
+            raise ValueError("agent missing")
+        existing = self.phones.get(extension)
+        if existing is None:
+            raise ValueError("phone does not exist yet - use bind_phone to create it")
+        if existing.get("user_id") not in (None, user_id):
+            raise CollisionError("extension already bound to a different user")
+        existing["user_id"] = user_id
+        self.agents[user_id]["extension"] = extension
+        return deepcopy(existing)
 
     def lead_by_external_id(self, external_id: str) -> dict | None:
         return next((deepcopy(row) for row in self.leads.values()
@@ -1006,9 +1080,124 @@ class MySQLRepository:
     def disable_agent(self, user_id: str) -> dict:
         if not self._agent_disable_view(user_id):
             raise ValueError("agent missing")
-        self._execute("UPDATE vicidial_users SET active='N' WHERE user=%s", (user_id,))
-        self.db.commit()
+        try:
+            self._execute("UPDATE vicidial_users SET active='N' WHERE user=%s", (user_id,))
+            # Atomic with the agent disable: deactivate the bound phone row
+            # in the same transaction (Mission 6 "disable_agent must be
+            # atomic and immediate"). WebRTC session/credential
+            # invalidation lives in StateStore, not this table - see
+            # AdapterService.disable_agent, which calls revoke_webrtc in
+            # the same request.
+            self._execute(
+                "UPDATE phones p JOIN vicidial_users u ON u.phone_login=p.login "
+                "SET p.active='N' WHERE u.user=%s", (user_id,),
+            )
+            self.db.commit()
+        except Exception:
+            self.db.rollback()
+            raise
         return self._agent_disable_view(user_id) or {}
+
+    def taken_extensions(self) -> frozenset[str]:
+        return frozenset(str(row["extension"]) for row in self._all("SELECT extension FROM phones"))
+
+    def phone(self, user_id: str) -> dict | None:
+        return self._one(
+            "SELECT p.extension,p.active,p.dialplan_number,p.login "
+            "FROM phones p JOIN vicidial_users u ON u.phone_login=p.login "
+            "WHERE u.user=%s",
+            (user_id,),
+        )
+
+    def bind_phone(self, user_id: str, extension: str, credential: str) -> dict:
+        """Bind an extension to an already-synced agent using only the
+        phones/vicidial_users columns this codebase has already
+        demonstrated (extension, dialplan_number, voicemail_id, server_ip,
+        login, pass, status, active, phone_type, fullname, company,
+        protocol, local_gmt; vicidial_users.phone_login). WebRTC-specific
+        state (single-use credential reference, expiry, one-active-session
+        enforcement) is intentionally NOT written here - see
+        AdapterService.provision_webrtc/revoke_webrtc, which use
+        StateStore instead of inventing unverified phones-table or
+        Asterisk PJSIP realtime (ps_aors/ps_endpoints/ps_auths) columns
+        against a live production schema this codebase has never queried.
+        """
+        self._require_transactional_agent_tables()
+        agent = self._one("SELECT user,full_name FROM vicidial_users WHERE user=%s", (user_id,))
+        if agent is None:
+            raise ValueError("agent missing")
+        try:
+            existing_phone = self._one(
+                "SELECT extension,login FROM phones WHERE extension=%s", (extension,),
+            )
+            if existing_phone is None:
+                self._execute(
+                    "INSERT INTO phones "
+                    "(extension,dialplan_number,voicemail_id,server_ip,login,pass,status,active,"
+                    "phone_type,fullname,company,protocol,local_gmt) "
+                    "VALUES (%s,%s,%s,'127.0.0.1',%s,%s,'ACTIVE','Y','SIP',%s,'Appolon','SIP','-4.00')",
+                    (extension, extension, extension, extension, credential, agent["full_name"]),
+                )
+            elif existing_phone["login"] != extension:
+                raise CollisionError("extension identifier already exists")
+            else:
+                self._execute(
+                    "UPDATE phones SET pass=%s,active='Y' WHERE extension=%s",
+                    (credential, extension),
+                )
+            self._execute(
+                "UPDATE vicidial_users SET phone_login=%s WHERE user=%s",
+                (extension, user_id),
+            )
+            self.db.commit()
+        except Exception:
+            self.db.rollback()
+            raise
+        actual = self.phone(user_id)
+        if actual is None or actual.get("active") != "Y":
+            raise RuntimeError("phone bind read-back failed")
+        return actual
+
+    def clear_phone_credential(self, user_id: str) -> dict:
+        phone = self.phone(user_id)
+        if phone is None:
+            raise ValueError("phone assignment missing")
+        try:
+            self._execute(
+                "UPDATE phones SET pass='' WHERE extension=%s", (phone["extension"],),
+            )
+            self.db.commit()
+        except Exception:
+            self.db.rollback()
+            raise
+        return self.phone(user_id) or {}
+
+    def link_existing_phone(self, user_id: str, extension: str) -> dict:
+        """Adopt an already-present phones row (e.g. the permanent 6101
+        staging bootstrap) without ever writing its ``pass`` column -
+        unlike bind_phone, which always (re)issues a credential. Real
+        hardware/softphones may already be registered with this row's
+        existing SIP secret; rotating it here would be a live outage, not
+        a provisioning step."""
+        agent = self._one("SELECT user FROM vicidial_users WHERE user=%s", (user_id,))
+        if agent is None:
+            raise ValueError("agent missing")
+        existing = self._one("SELECT extension,login FROM phones WHERE extension=%s", (extension,))
+        if existing is None:
+            raise ValueError("phone does not exist yet - use bind_phone to create it")
+        try:
+            self._execute(
+                "UPDATE vicidial_users SET phone_login=%s WHERE user=%s",
+                (extension, user_id),
+            )
+            self.db.commit()
+        except Exception:
+            self.db.rollback()
+            raise
+        actual = self.phone(user_id)
+        if actual is None:
+            raise RuntimeError("phone adoption link read-back failed")
+        return actual
 
     def lead_by_external_id(self, external_id: str) -> dict | None:
         return self._one(

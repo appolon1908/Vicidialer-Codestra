@@ -162,6 +162,78 @@ class ProvisionAgentCommand(AgentCommand):
     backup_reference: Annotated[str, Field(pattern=r"^[A-Za-z0-9._:/-]{8,255}$")]
 
 
+ExtensionPool = Literal[
+    "transportation", "moneybee", "web_ai", "senior_products",
+    "student_repayment", "supervisor_qa",
+]
+ExtensionNumber = Annotated[str, Field(pattern=r"^[0-9]{4}$")]
+
+
+class ExtensionReserveSpec(StrictModel):
+    """Allocate the next free extension from a named pool.
+
+    The pool identifier is deliberately NOT derived from ``business_unit``/
+    ``campaign_id`` here - this codebase's business-unit codes (MOY, COD,
+    SCP, MBL, RLP, FTP, TRX, CAL, TEST) have no confirmed one-to-one mapping
+    onto the six named campaign-type pools from the platform spec
+    (Transportation, MoneyBee, Web/AI, Senior Products, Student Repayment,
+    Supervisor/QA). Guessing that mapping wrong would misallocate real
+    extensions across campaigns, so the caller (Middleware) must state the
+    pool explicitly until a human confirms the mapping.
+    """
+
+    user_id: Annotated[str, Field(pattern=r"^[A-Z]{3}[0-9]{4,12}$")]
+    pool: ExtensionPool
+    webrtc_enabled: Literal[True, False] = False
+    incoming_allowed: Literal[True, False] = True
+    outgoing_allowed: Literal[True, False] = True
+
+
+class ExtensionReserveCommand(StrictModel):
+    context: RequestContext
+    reservation: ExtensionReserveSpec
+
+
+class ExtensionAdoptSpec(StrictModel):
+    """Bind one already-existing extension to a platform user without ever
+    touching pool allocation - e.g. the permanent 6101/cod00016/TEST_SYN
+    staging bootstrap. Distinct type from ``ExtensionReserveSpec`` on
+    purpose: an adopt request that accidentally reused reservation logic
+    could silently consume a pool slot or reallocate a reserved number.
+    """
+
+    user_id: Annotated[str, Field(pattern=r"^[A-Z]{3}[0-9]{4,12}$")]
+    extension: ExtensionNumber
+    webrtc_enabled: Literal[True, False] = False
+    incoming_allowed: Literal[True, False] = True
+    outgoing_allowed: Literal[True, False] = True
+    adopt_existing_sha256: Annotated[str, Field(pattern=r"^[a-f0-9]{64}$")] | None = None
+
+
+class ExtensionAdoptCommand(StrictModel):
+    context: RequestContext
+    adoption: ExtensionAdoptSpec
+
+
+class WebrtcProvisionSpec(StrictModel):
+    user_id: Annotated[str, Field(pattern=r"^[A-Z]{3}[0-9]{4,12}$")]
+
+
+class WebrtcProvisionCommand(StrictModel):
+    context: RequestContext
+    webrtc: WebrtcProvisionSpec
+
+
+class WebrtcRotateCommand(StrictModel):
+    context: RequestContext
+    user_id: Annotated[str, Field(pattern=r"^[A-Z]{3}[0-9]{4,12}$")]
+
+
+class WebrtcRevokeCommand(StrictModel):
+    context: RequestContext
+    user_id: Annotated[str, Field(pattern=r"^[A-Z]{3}[0-9]{4,12}$")]
+
+
 class DisableAgentCommand(StrictModel):
     context: RequestContext
     user_id: Annotated[str, Field(pattern=r"^[A-Z]{3}[0-9]{4,12}$")]

@@ -31,16 +31,21 @@ from .models import (
     CommandLookup,
     CommandLookupResult,
     DisableAgentCommand,
+    ExtensionAdoptCommand,
+    ExtensionReserveCommand,
     LeadCommand,
     ProvisionAgentCommand,
     ReconciliationCampaignCommand,
     TransferPolicyCommand,
+    WebrtcProvisionCommand,
+    WebrtcRevokeCommand,
+    WebrtcRotateCommand,
 )
 from .reconciliation import ReconciliationPolicy
 from .release import load_release_info
 from .repository import CollisionError, MemoryRepository, MySQLRepository
 from .security import RequestAuthenticator
-from .service import AdapterService, FeatureFlags, ReadbackMismatch
+from .service import AdapterService, FeatureFlags, ReadbackMismatch, WebrtcSessionActive
 from .state import (
     CommandAuditUnavailable, CommandRecordUnavailable, IdempotencyConflict, MutationCompletionUncertain, ResourceMutationInProgress,
     ResourceSnapshotChanged, StaleResourceVersion, StateStore,
@@ -66,6 +71,12 @@ _PROTECTED_SCOPE_BY_ROUTE = {
     ("post", "/v1/agents/disable"): "telephony:agent-sync",
     ("get", "/v1/agents/{user_id}/actual-state"): "telephony:read",
     ("get", "/v1/agents/availability/{user_id}/{extension}"): "telephony:read",
+    ("post", "/v1/extensions/reserve"): "telephony:extension-provision",
+    ("post", "/v1/extensions/adopt"): "telephony:extension-provision",
+    ("get", "/v1/extensions/{user_id}/actual-state"): "telephony:read",
+    ("post", "/v1/webrtc/provision"): "telephony:webrtc-provision",
+    ("post", "/v1/webrtc/rotate"): "telephony:webrtc-provision",
+    ("post", "/v1/webrtc/revoke"): "telephony:webrtc-provision",
     ("post", "/v1/calls/originate"): "telephony:external-call",
     ("post", "/v1/calls/internal/originate"): "telephony:internal-call",
     ("get", "/v1/calls/internal/{operation_id}"): "telephony:internal-call-read",
@@ -94,6 +105,11 @@ _COMMAND_MODEL_BY_ROUTE = {
     "/v1/agents/sync": AgentCommand,
     "/v1/agents/provision-disabled": ProvisionAgentCommand,
     "/v1/agents/disable": DisableAgentCommand,
+    "/v1/extensions/reserve": ExtensionReserveCommand,
+    "/v1/extensions/adopt": ExtensionAdoptCommand,
+    "/v1/webrtc/provision": WebrtcProvisionCommand,
+    "/v1/webrtc/rotate": WebrtcRotateCommand,
+    "/v1/webrtc/revoke": WebrtcRevokeCommand,
     "/v1/leads/publish": LeadCommand,
     "/v1/callbacks/create": CallbackCommand,
     "/v1/transfer-policies/sync": TransferPolicyCommand,
@@ -359,6 +375,12 @@ def create_app(
             },
         )
 
+    @app.exception_handler(WebrtcSessionActive)
+    async def webrtc_session_active_handler(_request: Request, exc: WebrtcSessionActive):
+        return JSONResponse(status_code=409, content={
+            "code": "WEBRTC_SESSION_ALREADY_ACTIVE", "detail": str(exc),
+        })
+
     @app.get("/health")
     def health():
         return {"status": "live"}
@@ -414,6 +436,8 @@ def create_app(
                 "lead_publication": bool(service.flags.lead_publication),
                 "callback_writes": bool(service.flags.callback_writes),
                 "transfer_policy_sync": bool(service.flags.transfer_policy_sync),
+                "extension_provisioning": bool(service.flags.extension_provisioning),
+                "webrtc_provisioning": bool(service.flags.webrtc_provisioning),
             },
             "routes": routes,
         }
@@ -589,6 +613,41 @@ def create_app(
         if user_id != "appolon" or extension != "6901":
             raise HTTPException(403, "availability query outside approved scope")
         return service.agent_availability(user_id, extension)
+
+    @app.post("/v1/extensions/reserve")
+    async def extension_reserve(request: Request, values=Depends(headers)):
+        return await mutation(request, ExtensionReserveCommand, service.reserve_extension,
+                              "telephony:extension-provision", *values)
+
+    @app.post("/v1/extensions/adopt")
+    async def extension_adopt(request: Request, values=Depends(headers)):
+        return await mutation(request, ExtensionAdoptCommand, service.adopt_extension,
+                              "telephony:extension-provision", *values)
+
+    @app.get("/v1/extensions/{user_id}/actual-state")
+    async def extension_actual(request: Request, user_id: str, values=Depends(read_headers)):
+        await authorize(request, "telephony:read", *values)
+        actual = service.versioned_readback(
+            f"extension:{user_id}", lambda: service.repository.phone(user_id),
+        )
+        if actual is None:
+            raise HTTPException(404, "phone assignment missing")
+        return actual
+
+    @app.post("/v1/webrtc/provision")
+    async def webrtc_provision(request: Request, values=Depends(headers)):
+        return await mutation(request, WebrtcProvisionCommand, service.provision_webrtc,
+                              "telephony:webrtc-provision", *values)
+
+    @app.post("/v1/webrtc/rotate")
+    async def webrtc_rotate(request: Request, values=Depends(headers)):
+        return await mutation(request, WebrtcRotateCommand, service.rotate_webrtc_secret,
+                              "telephony:webrtc-provision", *values)
+
+    @app.post("/v1/webrtc/revoke")
+    async def webrtc_revoke(request: Request, values=Depends(headers)):
+        return await mutation(request, WebrtcRevokeCommand, service.revoke_webrtc,
+                              "telephony:webrtc-provision", *values)
 
 
     @app.post("/v1/calls/originate")
@@ -777,6 +836,8 @@ def app_from_environment() -> FastAPI:
         callback_writes=os.environ.get("ENABLE_IVR_CALLBACKS") == "true",
         transfer_policy_sync=os.environ.get("ENABLE_WARM_TRANSFER") == "true",
         production_dialing=os.environ.get("ENABLE_PRODUCTION_DIALING") == "true",
+        extension_provisioning=os.environ.get("ENABLE_EXTENSION_PROVISIONING") == "true",
+        webrtc_provisioning=os.environ.get("ENABLE_WEBRTC_PROVISIONING") == "true",
     )
     backend_name = os.environ.get("CODESTRA_ADAPTER_BACKEND", "memory")
     if backend_name == "mysql":
@@ -809,7 +870,7 @@ def app_from_environment() -> FastAPI:
     )
 
     credential_authority = None
-    if flags.agent_provisioning:
+    if flags.agent_provisioning or flags.extension_provisioning or flags.webrtc_provisioning:
         authority_path = Path(os.environ.get(
             "CODESTRA_SECRET_AUTHORITY_SOCKET", "/run/secrets/authority.sock"
         ))

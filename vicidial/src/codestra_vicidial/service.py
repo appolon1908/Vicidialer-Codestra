@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import uuid
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 from pydantic import ValidationError
 
@@ -14,11 +14,18 @@ from .models import (
     CommandLookup,
     CommandLookupResult,
     DisableAgentCommand,
+    ExtensionAdoptCommand,
+    ExtensionReserveCommand,
     LeadCommand,
     ProvisionAgentCommand,
     TransferPolicyCommand,
+    WebrtcProvisionCommand,
+    WebrtcRevokeCommand,
+    WebrtcRotateCommand,
 )
 from .repository import (
+    EXTENSION_POOL_RANGES,
+    ADOPTED_RESERVED_EXTENSIONS,
     CollisionError,
     Repository,
     callback_payload_hash,
@@ -38,6 +45,10 @@ class ReadbackMismatch(RuntimeError):
         self.results = results
 
 
+class WebrtcSessionActive(RuntimeError):
+    """Maps to HTTP 409 WEBRTC_SESSION_ALREADY_ACTIVE at the API layer."""
+
+
 @dataclass(frozen=True)
 class FeatureFlags:
     writes: bool = False
@@ -49,6 +60,8 @@ class FeatureFlags:
     callback_writes: bool = False
     transfer_policy_sync: bool = False
     production_dialing: bool = False
+    extension_provisioning: bool = False
+    webrtc_provisioning: bool = False
 
 
 class AdapterService:
@@ -624,12 +637,177 @@ class AdapterService:
         self._require_campaign_scope(command, campaigns[0])
 
         def apply() -> dict:
+            # Atomic and immediate (Mission 6): the phone row is
+            # deactivated by repository.disable_agent itself; here we also
+            # invalidate any WebRTC session/credential in the same
+            # request, before read-back, so a disabled agent can never be
+            # left with a live registration ticket.
+            self.state.clear_webrtc_session(command.user_id)
             actual = self.repository.disable_agent(command.user_id)
             if actual.get("active") not in (False, "N"):
                 raise RuntimeError("agent disable read-back failed")
             return {"status": "disabled", "actual": actual}
 
         return self._execute("agent.disable", key, command, command.user_id, apply)
+
+    def reserve_extension(self, key: str, command: ExtensionReserveCommand) -> dict:
+        """Mission 6 reserve_extension: allocate the next free number from
+        one named pool. Never returns an ADOPTED_RESERVED_EXTENSIONS
+        member (e.g. 6101), even though some fall inside a pool's numeric
+        range - those are bound exclusively through adopt_extension."""
+        self._require(self.flags.extension_provisioning, "extension provisioning")
+        if self.credential_authority is None:
+            raise CredentialAuthorityUnavailable("approved secret authority unavailable")
+        reservation = command.reservation
+        self._require_campaign_scope(command, command.context.campaign_id)
+
+        def apply() -> dict:
+            low, high = EXTENSION_POOL_RANGES[reservation.pool]
+            taken = self.repository.taken_extensions() | ADOPTED_RESERVED_EXTENSIONS
+            extension = next(
+                (str(n) for n in range(low, high + 1) if str(n) not in taken), None,
+            )
+            if extension is None:
+                raise CollisionError(f"no free extension in pool {reservation.pool}")
+            issued = self.credential_authority.issue(
+                username=reservation.user_id, extension=extension, idempotency_key=key,
+            )
+            actual = self.repository.bind_phone(reservation.user_id, extension, issued.value)
+            if actual.get("extension") != extension or actual.get("active") not in (True, "Y"):
+                raise RuntimeError("extension reservation read-back failed")
+            sanitized = {k: v for k, v in actual.items()
+                        if k not in {"pass", "password", "credential"}}
+            return {"status": "reserved", "pool": reservation.pool, "actual": sanitized}
+
+        return self._execute(
+            "extension.reserve", key, command, reservation.user_id, apply)
+
+    def adopt_extension(self, key: str, command: ExtensionAdoptCommand) -> dict:
+        """Mission 6 adopt_extension: bind an already-existing extension
+        (e.g. 6101/cod00016/TEST_SYN) WITHOUT ever consuming a pool slot.
+
+        Deliberately distinct code path from reserve_extension, not a
+        shared function with a flag: if the phone row already exists, this
+        only links ownership (repository.link_existing_phone) and never
+        rewrites its credential, because a live hardware/softphone may
+        already be registered with that secret. Only a genuinely new
+        extension (no existing phones row) gets a freshly issued one, via
+        bind_phone - the same path reserve_extension uses.
+        """
+        self._require(self.flags.extension_provisioning, "extension provisioning")
+        if self.credential_authority is None:
+            raise CredentialAuthorityUnavailable("approved secret authority unavailable")
+        adoption = command.adoption
+        self._require_campaign_scope(command, command.context.campaign_id)
+
+        def apply() -> dict:
+            desired = adoption.model_dump(mode="json")
+            desired["adopt_existing_sha256"] = None
+            desired_hash = self.state.digest(desired)
+            mapping = self.state.mapping("extension", adoption.extension)
+            if mapping is not None and mapping["actual_id"] != adoption.user_id:
+                raise CollisionError("extension already adopted by a different user")
+            already_present = adoption.extension in self.repository.taken_extensions()
+            if already_present:
+                actual = self.repository.link_existing_phone(
+                    adoption.user_id, adoption.extension)
+            else:
+                issued = self.credential_authority.issue(
+                    username=adoption.user_id, extension=adoption.extension,
+                    idempotency_key=key,
+                )
+                actual = self.repository.bind_phone(
+                    adoption.user_id, adoption.extension, issued.value)
+            if actual.get("extension") != adoption.extension:
+                raise RuntimeError("extension adoption read-back failed")
+            self.state.put_mapping(
+                "extension", adoption.extension, adoption.user_id, desired_hash)
+            sanitized = {k: v for k, v in actual.items()
+                        if k not in {"pass", "password", "credential"}}
+            return {"status": "adopted", "already_present": already_present, "actual": sanitized}
+
+        return self._execute("extension.adopt", key, command, adoption.user_id, apply)
+
+    def provision_webrtc(self, key: str, command: WebrtcProvisionCommand) -> dict:
+        """Mission 6/7: issue a short-lived, single-use WebRTC registration
+        credential - never the durable phones.pass SIP secret. Enforces at
+        most one active session per user; a concurrent second attempt
+        raises WebrtcSessionActive, which the API layer maps to
+        409 WEBRTC_SESSION_ALREADY_ACTIVE."""
+        self._require(self.flags.webrtc_provisioning, "webrtc provisioning")
+        if self.credential_authority is None:
+            raise CredentialAuthorityUnavailable("approved secret authority unavailable")
+        user_id = command.webrtc.user_id
+        self._require_campaign_scope(command, command.context.campaign_id)
+
+        def apply() -> dict:
+            phone = self.repository.phone(user_id)
+            if phone is None:
+                raise ValueError("no phone assignment exists for this user")
+            existing_session = self.state.webrtc_session(user_id)
+            if existing_session is not None and not existing_session["single_use_consumed"]:
+                if existing_session["expires_at"] > datetime.now(timezone.utc).isoformat():
+                    raise WebrtcSessionActive(
+                        "a WebRTC session is already active for this user")
+            issued = self.credential_authority.issue(
+                username=user_id, extension=phone["extension"], idempotency_key=key,
+                operation="webrtc-registration",
+            )
+            expires_at = (datetime.now(timezone.utc) + timedelta(minutes=5)).isoformat()
+            self.state.put_webrtc_session(
+                user_id, phone["extension"], issued.reference, expires_at=expires_at)
+            return {
+                "status": "provisioned", "extension": phone["extension"],
+                "credential": issued.value, "credential_reference": issued.reference,
+                "expires_at": expires_at, "max_active_sessions": 1,
+            }
+
+        return self._execute("webrtc.provision", key, command, user_id, apply)
+
+    def rotate_webrtc_secret(self, key: str, command: WebrtcRotateCommand) -> dict:
+        """Mission 6: replace the active session's credential; the prior
+        one is invalidated by simply no longer being tracked (single row
+        per user_id in webrtc_sessions)."""
+        self._require(self.flags.webrtc_provisioning, "webrtc provisioning")
+        if self.credential_authority is None:
+            raise CredentialAuthorityUnavailable("approved secret authority unavailable")
+        user_id = command.user_id
+        self._require_campaign_scope(command, command.context.campaign_id)
+
+        def apply() -> dict:
+            phone = self.repository.phone(user_id)
+            if phone is None:
+                raise ValueError("no phone assignment exists for this user")
+            issued = self.credential_authority.issue(
+                username=user_id, extension=phone["extension"], idempotency_key=key,
+                operation="webrtc-registration",
+            )
+            expires_at = (datetime.now(timezone.utc) + timedelta(minutes=5)).isoformat()
+            self.state.put_webrtc_session(
+                user_id, phone["extension"], issued.reference, expires_at=expires_at)
+            return {
+                "status": "rotated", "extension": phone["extension"],
+                "credential": issued.value, "credential_reference": issued.reference,
+                "expires_at": expires_at,
+            }
+
+        return self._execute("webrtc.rotate", key, command, user_id, apply)
+
+    def revoke_webrtc(self, key: str, command: WebrtcRevokeCommand) -> dict:
+        """Mission 6: one atomic operation - invalidate the session ticket,
+        the tracked credential reference, and (via clear_phone_credential)
+        the phone row's live SIP secret, so a revoked WebRTC channel can
+        never silently keep working through a stale credential."""
+        self._require(self.flags.webrtc_provisioning, "webrtc provisioning")
+        user_id = command.user_id
+        self._require_campaign_scope(command, command.context.campaign_id)
+
+        def apply() -> dict:
+            self.state.clear_webrtc_session(user_id)
+            actual = self.repository.clear_phone_credential(user_id)
+            return {"status": "revoked", "actual": actual}
+
+        return self._execute("webrtc.revoke", key, command, user_id, apply)
 
     def publish_lead(self, key: str, command: LeadCommand) -> dict:
         self._require(self.flags.lead_publication, "lead publication")

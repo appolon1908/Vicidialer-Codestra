@@ -89,6 +89,10 @@ class StateStore:
         CREATE TABLE IF NOT EXISTS agent_adoption_intents(
           user_id TEXT PRIMARY KEY, original_hash TEXT NOT NULL,
           desired_hash TEXT NOT NULL, created_at TEXT NOT NULL);
+        CREATE TABLE IF NOT EXISTS webrtc_sessions(
+          user_id TEXT PRIMARY KEY, extension TEXT NOT NULL,
+          credential_reference TEXT NOT NULL, single_use_consumed INTEGER NOT NULL DEFAULT 0,
+          expires_at TEXT NOT NULL, created_at TEXT NOT NULL);
         CREATE TABLE IF NOT EXISTS reconciliation_runs(
           run_id TEXT PRIMARY KEY, result_json TEXT NOT NULL,
           created_at TEXT NOT NULL);
@@ -628,6 +632,49 @@ class StateStore:
         except Exception:
             self.db.rollback()
             raise
+
+    def put_webrtc_session(
+        self, user_id: str, extension: str, credential_reference: str, *, expires_at: str,
+    ) -> None:
+        """Record the one active WebRTC registration credential for a user.
+
+        Mission 6/7 requires at most one active WebRTC endpoint per user:
+        the primary key on ``user_id`` means a second ``provision_webrtc``
+        call for the same user replaces (rather than adds to) this row -
+        the caller (AdapterService.provision_webrtc) is responsible for
+        rejecting a second *concurrent* registration attempt with
+        ``WEBRTC_SESSION_ALREADY_ACTIVE`` before it ever reaches here.
+        """
+        self.db.execute(
+            "INSERT INTO webrtc_sessions(user_id,extension,credential_reference,"
+            "single_use_consumed,expires_at,created_at) VALUES(?,?,?,0,?,?) "
+            "ON CONFLICT(user_id) DO UPDATE SET extension=excluded.extension,"
+            "credential_reference=excluded.credential_reference,single_use_consumed=0,"
+            "expires_at=excluded.expires_at,created_at=excluded.created_at",
+            (user_id, extension, credential_reference, expires_at,
+             datetime.now(timezone.utc).isoformat()),
+        )
+        self.db.commit()
+
+    def webrtc_session(self, user_id: str) -> sqlite3.Row | None:
+        return self.db.execute(
+            "SELECT extension,credential_reference,single_use_consumed,expires_at "
+            "FROM webrtc_sessions WHERE user_id=?", (user_id,),
+        ).fetchone()
+
+    def consume_webrtc_session(self, user_id: str) -> None:
+        """Mark the credential used - a single-use ticket, per the spec's
+        'never return a long-lived SIP password' rule; a second attempt to
+        register with the same ticket must be rejected by the caller."""
+        self.db.execute(
+            "UPDATE webrtc_sessions SET single_use_consumed=1 WHERE user_id=?",
+            (user_id,),
+        )
+        self.db.commit()
+
+    def clear_webrtc_session(self, user_id: str) -> None:
+        self.db.execute("DELETE FROM webrtc_sessions WHERE user_id=?", (user_id,))
+        self.db.commit()
 
     def persist_reconciliation_run(
         self,

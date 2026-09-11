@@ -275,7 +275,7 @@ def test_version_ready_and_openapi_contract(
                     "x-codestra-required-scope"
                 ].startswith("telephony:")
 
-    assert len(protected) == 23
+    assert len(protected) == 29
     assert ("post", "/v1/idempotency/lookup") in protected
     assert schema["paths"]["/v1/idempotency/lookup"]["post"][
         "x-codestra-required-scope"
