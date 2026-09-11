@@ -61,6 +61,15 @@
       "method": "GET",
       "mutation": false,
       "operation": null,
+      "path": "/v1/extensions/{user_id}/actual-state",
+      "request_model": null,
+      "required_scope": "telephony:read"
+    },
+    {
+      "idempotency": "not_applicable",
+      "method": "GET",
+      "mutation": false,
+      "operation": null,
       "path": "/v1/leads/by-external-id/{external_id}",
       "request_model": null,
       "required_scope": "telephony:read"
@@ -165,6 +174,24 @@
       "required_scope": "telephony:read"
     },
     {
+      "idempotency": "header_required",
+      "method": "POST",
+      "mutation": true,
+      "operation": "extension.adopt",
+      "path": "/v1/extensions/adopt",
+      "request_model": "ExtensionAdoptCommand",
+      "required_scope": "telephony:extension-provision"
+    },
+    {
+      "idempotency": "header_required",
+      "method": "POST",
+      "mutation": true,
+      "operation": "extension.reserve",
+      "path": "/v1/extensions/reserve",
+      "request_model": "ExtensionReserveCommand",
+      "required_scope": "telephony:extension-provision"
+    },
+    {
       "idempotency": "body_key",
       "method": "POST",
       "mutation": false,
@@ -208,6 +235,33 @@
       "path": "/v1/transfer-policies/sync",
       "request_model": "TransferPolicyCommand",
       "required_scope": "telephony:transfer-policy"
+    },
+    {
+      "idempotency": "header_required",
+      "method": "POST",
+      "mutation": true,
+      "operation": "webrtc.provision",
+      "path": "/v1/webrtc/provision",
+      "request_model": "WebrtcProvisionCommand",
+      "required_scope": "telephony:webrtc-provision"
+    },
+    {
+      "idempotency": "header_required",
+      "method": "POST",
+      "mutation": true,
+      "operation": "webrtc.revoke",
+      "path": "/v1/webrtc/revoke",
+      "request_model": "WebrtcRevokeCommand",
+      "required_scope": "telephony:webrtc-provision"
+    },
+    {
+      "idempotency": "header_required",
+      "method": "POST",
+      "mutation": true,
+      "operation": "webrtc.rotate",
+      "path": "/v1/webrtc/rotate",
+      "request_model": "WebrtcRotateCommand",
+      "required_scope": "telephony:webrtc-provision"
     }
   ],
   "safety": {
