@@ -100,7 +100,11 @@ def test_originate_uses_only_policy_owned_channel_context_and_target(tmp_path):
             "Priority": "1",
             "Async": "true",
             "ChannelId": result["asterisk_uniqueid"],
-            "Variable": "CODESTRA_OPERATION_ID=operation-internal-0001",
+            "Variable": (
+                "CODESTRA_OPERATION_ID=operation-internal-0001,"
+                "CODESTRA_CALL_ID=operation-internal-0001,"
+                "CODESTRA_CORRELATION_ID=correlation-internal-0001"
+            ),
         }
     ]
 

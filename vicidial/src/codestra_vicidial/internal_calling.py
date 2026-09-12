@@ -22,7 +22,7 @@ class InternalCallError(RuntimeError):
 
 LIFECYCLE_REQUIRED_COLUMNS = {
     "calls": frozenset({
-        "call_key", "linkedid", "extension", "call_id", "binding_json",
+        "call_key", "linkedid", "extension", "call_id", "correlation_id", "binding_json",
         "asterisk_uniqueid", "state", "answered", "terminal", "created_at",
         "answered_at", "ended_at", "updated_at",
     }),
@@ -309,6 +309,10 @@ class InternalCallExecutor:
                 .sha256(command.operation_id.encode())
                 .hexdigest()[:32]
             )
+            # The Middleware operation is the canonical call_id for this
+            # controlled path. Do not derive a second gateway identity from
+            # correlation_id: one call has one immutable call ID.
+            gateway_call_id = command.operation_id
             created = rfc3339(datetime.now(UTC))
             db.execute(
                 "INSERT INTO internal_calls VALUES(?,?,?,?,?,?,?,?)",
@@ -334,7 +338,11 @@ class InternalCallExecutor:
                 "Priority": "1",
                 "Async": "true",
                 "ChannelId": uniqueid,
-                "Variable": f"CODESTRA_OPERATION_ID={command.operation_id}",
+                "Variable": (
+                    f"CODESTRA_OPERATION_ID={command.operation_id},"
+                    f"CODESTRA_CALL_ID={gateway_call_id},"
+                    f"CODESTRA_CORRELATION_ID={command.correlation_id}"
+                ),
             }
         )
         with closing(sqlite3.connect(self.state_path)) as db:
@@ -374,6 +382,10 @@ class InternalCallExecutor:
             "linkedid": evidence["linkedid"] if evidence else None,
             "call_id": evidence["gateway_call_id"] if evidence else None,
             "call_state": evidence["state"] if evidence else "unknown",
+            "fine_state": evidence["fine_state"] if evidence else None,
+            "fine_state_at": evidence["fine_state_at"] if evidence else None,
+            "last_event_sequence": evidence["last_event_sequence"] if evidence else 0,
+            "hangup_leg": evidence["hangup_leg"] if evidence else None,
             "answered_at": evidence["answered_at"] if evidence else None,
             "ended_at": evidence["ended_at"] if evidence else None,
             "terminal": bool(evidence and evidence["terminal"]),
@@ -526,7 +538,10 @@ class LifecycleEvidence:
                     not row["ended_at"]
                     or not events
                     or events[-1]["event_type"].rsplit(".", 1)[-1]
-                    not in {"completed", "failed", "missed"}
+                    not in {
+                        "completed", "failed", "busy", "no_answer",
+                        "canceled", "rejected", "missed", "cancelled",
+                    }
                 ):
                     raise InternalCallError("terminal AMI event evidence missing")
                 terminal_details = None
@@ -548,6 +563,7 @@ class LifecycleEvidence:
                     }
                     if (
                         envelope.get("tenant_id") != policy.tenant_id
+                        or envelope.get("correlation_id") != row["correlation_id"]
                         or envelope.get("event_id") != events[-1]["event_id"]
                         or envelope.get("event_type") != events[-1]["event_type"]
                         or any(payload.get(k) != v for k, v in expected.items())
@@ -559,14 +575,48 @@ class LifecycleEvidence:
                         k: payload.get(k)
                         for k in (
                             "duration", "talk_duration", "hangup_cause",
-                            "hangup_cause_code",
+                            "hangup_cause_code", "dial_status", "hangup_leg",
                         )
                     }
+                hangup_leg = None
+                last_event_at = None
+                for event in events:
+                    try:
+                        envelope = json.loads(event["envelope_json"])
+                    except (TypeError, ValueError):
+                        continue
+                    if isinstance(envelope, dict):
+                        last_event_at = envelope.get("occurred_at") or last_event_at
+                        payload = envelope.get("payload")
+                        if isinstance(payload, dict) and payload.get("hangup_leg"):
+                            hangup_leg = payload["hangup_leg"]
+                fine_state = {
+                    "new": "accepted",
+                    "offered": "accepted",
+                    "ringing": "ringing",
+                    "answering": "answered",
+                    "connected": "connected",
+                    "held": "connected",
+                    "transferring": "connected",
+                    "transferred": "connected",
+                    "ending": "connected" if row["answered"] == 1 else "accepted",
+                    "completed": "completed",
+                    "failed": "failed",
+                    "busy": "busy",
+                    "no_answer": "no_answer",
+                    "canceled": "canceled",
+                    "rejected": "rejected",
+                }.get(row["state"], "accepted")
                 return {
                     "asterisk_uniqueid": uniqueid,
                     "linkedid": row["linkedid"],
                     "gateway_call_id": row["call_id"],
+                    "correlation_id": row["correlation_id"],
                     "state": row["state"],
+                    "fine_state": fine_state,
+                    "fine_state_at": last_event_at,
+                    "last_event_sequence": row["sequence"],
+                    "hangup_leg": hangup_leg,
                     "answered": row["answered"] == 1,
                     "terminal": terminal,
                     "started_at": row["created_at"],
