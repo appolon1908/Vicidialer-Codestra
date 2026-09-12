@@ -75,7 +75,7 @@ def _gateway_events(tmp_path: Path) -> list[dict[str, object]]:
     process(4, "Unhold", "linked-normal", "uid-normal")
     process(5, "AgentComplete", "linked-normal", "uid-normal")
 
-    # Failed before answer.
+    # Failed before answer (adapter/network failure, not a telephony outcome).
     process(10, "DialBegin", "linked-failed", "uid-failed")
     process(
         11,
@@ -85,9 +85,27 @@ def _gateway_events(tmp_path: Path) -> list[dict[str, object]]:
         DialStatus="CHANUNAVAIL",
     )
 
-    # Ring-no-answer terminal state.
-    process(20, "AgentCalled", "linked-missed", "uid-missed")
-    process(21, "AgentRingNoAnswer", "linked-missed", "uid-missed")
+    # Agent-leg ring timeout, distinct from a far-end outcome.
+    process(20, "AgentCalled", "linked-timeout", "uid-timeout")
+    process(21, "AgentRingNoAnswer", "linked-timeout", "uid-timeout")
+
+    # Far-end busy (DialEnd DialStatus).
+    process(40, "DialBegin", "linked-busy", "uid-busy")
+    process(41, "DialEnd", "linked-busy", "uid-busy", DialStatus="BUSY")
+
+    # Far-end no answer (DialEnd DialStatus).
+    process(50, "DialBegin", "linked-no-answer", "uid-no-answer")
+    process(
+        51, "DialEnd", "linked-no-answer", "uid-no-answer", DialStatus="NOANSWER"
+    )
+
+    # Far-end call rejection (Hangup cause 21).
+    process(60, "DialBegin", "linked-rejected", "uid-rejected")
+    process(61, "Hangup", "linked-rejected", "uid-rejected", Cause="21")
+
+    # Local/agent hangup before the far end ever answered (Hangup cause 16).
+    process(70, "DialBegin", "linked-canceled", "uid-canceled")
+    process(71, "Hangup", "linked-canceled", "uid-canceled", Cause="16")
 
     # Successful blind transfer emits both transfer lifecycle events.
     process(30, "AgentCalled", "linked-transfer", "uid-transfer")

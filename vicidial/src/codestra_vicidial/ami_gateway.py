@@ -1026,7 +1026,7 @@ class LifecycleStore:
 
         if name in {"AgentCalled", "DialBegin"}:
             self._append_state(
-                conn, emitted, state, "offered", message, occurred
+                conn, emitted, state, "dialing", message, occurred
             )
         elif name == "Newstate":
             description = message.get("ChannelStateDesc").strip().lower()
@@ -1055,7 +1055,13 @@ class LifecycleStore:
                 "NOANSWER",
             }:
                 latest = self._load_call(conn, state.call_key) or state
-                suffix = "missed" if status in {"BUSY", "NOANSWER"} else "failed"
+                # DialStatus is Asterisk's own dial-outcome classification --
+                # BUSY and NOANSWER are real, distinct signals distinguishable
+                # from generic adapter/network failure (CHANUNAVAIL/CONGESTION).
+                suffix = {
+                    "BUSY": "busy",
+                    "NOANSWER": "no_answer",
+                }.get(status, "failed")
                 self._append_state(
                     conn,
                     emitted,
@@ -1101,11 +1107,14 @@ class LifecycleStore:
                         terminal=True,
                     )
         elif name == "AgentRingNoAnswer":
+            # Distinct from far-end DialEnd(NOANSWER)/Hangup(cause 18/19):
+            # this is the agent's own leg exceeding its ring timeout before
+            # ever being bridged, a real and separately-observable signal.
             self._append_state(
                 conn,
                 emitted,
                 state,
-                "missed",
+                "timeout",
                 message,
                 occurred,
                 terminal=True,
@@ -1132,12 +1141,12 @@ class LifecycleStore:
         occurred: datetime,
     ) -> None:
         latest = self._load_call(conn, state.call_key) or state
-        if latest.state in {"new", "offered", "ringing"}:
+        if latest.state in {"new", "dialing", "ringing"}:
             self._append_state(
                 conn, emitted, latest, "answered", message, occurred
             )
         latest = self._load_call(conn, state.call_key) or latest
-        if latest.state in {"answering", "new", "offered", "ringing"}:
+        if latest.state in {"answering", "new", "dialing", "ringing"}:
             self._append_state(
                 conn, emitted, latest, "connected", message, occurred
             )
@@ -1175,7 +1184,19 @@ class LifecycleStore:
             return emitted
 
         cause = parse_int(message.get("Cause"))
-        suffix = "missed" if cause in {16, 17, 18, 19, 21} else "failed"
+        # Q.850 cause codes carried on Asterisk's Hangup event -- already
+        # captured verbatim in the emitted payload's hangup_cause_code, but
+        # previously all collapsed into one "missed" bucket at the state
+        # level. Each of these is independently, reliably observable:
+        #   17 User Busy, 18/19 No User Responding / No Answer From User,
+        #   21 Call Rejected, 16 Normal Clearing (pre-answer local hangup).
+        suffix = {
+            16: "canceled",
+            17: "busy",
+            18: "no_answer",
+            19: "no_answer",
+            21: "rejected",
+        }.get(cause, "failed")
         self._append_state(
             conn,
             emitted,
@@ -1201,7 +1222,7 @@ class LifecycleStore:
         latest = self._load_call(conn, state.call_key) or state
         target_state = {
             "created": "new",
-            "offered": "offered",
+            "dialing": "dialing",
             "ringing": "ringing",
             "answered": "answering",
             "connected": "connected",
@@ -1213,6 +1234,11 @@ class LifecycleStore:
             "completed": "completed",
             "failed": "failed",
             "missed": "missed",
+            "busy": "failed",
+            "no_answer": "failed",
+            "rejected": "failed",
+            "canceled": "failed",
+            "timeout": "failed",
         }[event_suffix]
         if latest.terminal or (
             latest.state == target_state and event_suffix != "created"
@@ -1282,7 +1308,17 @@ class LifecycleStore:
             if latest.answered_at
             else 0
         )
-        if event_suffix in {"hangup", "completed", "failed", "missed"}:
+        if event_suffix in {
+            "hangup",
+            "completed",
+            "failed",
+            "missed",
+            "busy",
+            "no_answer",
+            "rejected",
+            "canceled",
+            "timeout",
+        }:
             payload["duration"] = duration
             payload["talk_duration"] = talk_duration
             cause = parse_int(message.get("Cause"))
@@ -1291,6 +1327,20 @@ class LifecycleStore:
             cause_text = message.get("Cause-txt").strip()
             if cause_text:
                 payload["hangup_cause"] = cause_text[:128]
+        if event_suffix == "hangup":
+            # The Channel field on the terminating Hangup event identifies
+            # which leg actually tore the call down. Comparing it against
+            # the agent's own bound extension is a real, already-observable
+            # signal distinguishing a local (agent) hangup from a remote
+            # (far-end/trunk) hangup -- not a separate canonical lifecycle
+            # state, but a genuine attribute of this one.
+            hanging_endpoint = channel_endpoint(message.get("Channel"))
+            if hanging_endpoint is not None:
+                payload["hangup_initiator"] = (
+                    "local"
+                    if hanging_endpoint == latest.binding.extension
+                    else "remote"
+                )
         if event_suffix == "transfer.completed":
             destination = transfer_destination(message)
             if not destination:
@@ -1325,7 +1375,7 @@ class LifecycleStore:
         }
         target_state = {
             "created": "new",
-            "offered": "offered",
+            "dialing": "dialing",
             "ringing": "ringing",
             "answered": "answering",
             "connected": "connected",
@@ -1337,6 +1387,11 @@ class LifecycleStore:
             "completed": "completed",
             "failed": "failed",
             "missed": "missed",
+            "busy": "failed",
+            "no_answer": "failed",
+            "rejected": "failed",
+            "canceled": "failed",
+            "timeout": "failed",
         }[event_suffix]
         answered = latest.answered or event_suffix in {
             "answered",
