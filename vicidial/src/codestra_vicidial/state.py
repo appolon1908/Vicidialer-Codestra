@@ -96,7 +96,8 @@ class StateStore:
         CREATE TABLE IF NOT EXISTS webrtc_pjsip_config(
           user_id TEXT PRIMARY KEY, extension TEXT NOT NULL,
           active INTEGER NOT NULL, content TEXT NOT NULL,
-          content_hash TEXT NOT NULL, generated_at TEXT NOT NULL);
+          content_hash TEXT NOT NULL, generated_at TEXT NOT NULL,
+          applied_hash TEXT, applied_at TEXT);
         CREATE TABLE IF NOT EXISTS reconciliation_runs(
           run_id TEXT PRIMARY KEY, result_json TEXT NOT NULL,
           created_at TEXT NOT NULL);
@@ -691,18 +692,47 @@ class StateStore:
         credential_reference) always yields the identical content_hash."""
         self.db.execute(
             "INSERT INTO webrtc_pjsip_config(user_id,extension,active,content,"
-            "content_hash,generated_at) VALUES(?,?,?,?,?,?) "
+            "content_hash,generated_at,applied_hash,applied_at) VALUES(?,?,?,?,?,?,NULL,NULL) "
             "ON CONFLICT(user_id) DO UPDATE SET extension=excluded.extension,"
             "active=excluded.active,content=excluded.content,"
-            "content_hash=excluded.content_hash,generated_at=excluded.generated_at",
+            "content_hash=excluded.content_hash,generated_at=excluded.generated_at,"
+            "applied_hash=CASE WHEN webrtc_pjsip_config.content_hash=excluded.content_hash "
+            "THEN webrtc_pjsip_config.applied_hash ELSE NULL END,"
+            "applied_at=CASE WHEN webrtc_pjsip_config.content_hash=excluded.content_hash "
+            "THEN webrtc_pjsip_config.applied_at ELSE NULL END",
             (user_id, extension, int(active), content, content_hash,
              datetime.now(timezone.utc).isoformat()),
         )
         self.db.commit()
 
+    def pending_webrtc_pjsip_configs(self) -> list[sqlite3.Row]:
+        """Rows whose desired content_hash has not yet been acknowledged as
+        applied at Asterisk (Mission 4 delivery gap) -- either never
+        delivered, or superseded by a newer provision/revoke since the last
+        successful delivery."""
+        return self.db.execute(
+            "SELECT user_id,extension,active,content,content_hash,generated_at "
+            "FROM webrtc_pjsip_config "
+            "WHERE applied_hash IS NULL OR applied_hash != content_hash "
+            "ORDER BY generated_at ASC",
+        ).fetchall()
+
+    def mark_webrtc_pjsip_config_applied(self, user_id: str, content_hash: str) -> bool:
+        """Record that Server B's sync agent successfully wrote and reloaded
+        this exact content_hash. Returns False (no-op) if the desired
+        content has since changed underneath the caller -- the caller
+        should re-fetch and retry rather than assume success."""
+        cursor = self.db.execute(
+            "UPDATE webrtc_pjsip_config SET applied_hash=?,applied_at=? "
+            "WHERE user_id=? AND content_hash=?",
+            (content_hash, datetime.now(timezone.utc).isoformat(), user_id, content_hash),
+        )
+        self.db.commit()
+        return cursor.rowcount > 0
+
     def webrtc_pjsip_config(self, user_id: str) -> sqlite3.Row | None:
         return self.db.execute(
-            "SELECT extension,active,content,content_hash,generated_at "
+            "SELECT extension,active,content,content_hash,generated_at,applied_hash,applied_at "
             "FROM webrtc_pjsip_config WHERE user_id=?", (user_id,),
         ).fetchone()
 
