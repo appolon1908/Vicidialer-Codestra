@@ -16,6 +16,7 @@ from .ami_gateway import (
     AMIConnectionConfig,
     AMIProtocolError,
     AgentDirectory,
+    CorrelationResolver,
     GatewayConfigurationError,
     LifecycleStore,
     parse_bool,
@@ -110,6 +111,8 @@ class GatewayRuntimeConfig:
     ami: AMIConnectionConfig
     agent_directory_file: Path
     state_database: Path
+    internal_calls_database: Path | None
+    external_calls_database: Path | None
     status_file: Path
     reconnect_min_seconds: float
     reconnect_max_seconds: float
@@ -212,6 +215,16 @@ class GatewayRuntimeConfig:
                 values,
                 "AMI_EVENT_STATE_DB",
                 "/var/lib/codestra-vicidial/ami-events.sqlite3",
+            ),
+            internal_calls_database=(
+                Path(values["CODESTRA_INTERNAL_CALL_STATE"]).resolve()
+                if values.get("CODESTRA_INTERNAL_CALL_STATE")
+                else None
+            ),
+            external_calls_database=(
+                Path(values["CODESTRA_EXTERNAL_CALL_STATE"]).resolve()
+                if values.get("CODESTRA_EXTERNAL_CALL_STATE")
+                else None
             ),
             status_file=_absolute_path(
                 values,
@@ -463,7 +476,13 @@ def build_runtime(
     values = os.environ if source is None else source
     config = GatewayRuntimeConfig.from_environment(values)
     directory = AgentDirectory.from_file(config.agent_directory_file)
-    store = LifecycleStore(config.state_database)
+    correlation_resolver = CorrelationResolver(
+        internal_calls_path=config.internal_calls_database,
+        external_calls_path=config.external_calls_database,
+    )
+    store = LifecycleStore(
+        config.state_database, correlation_resolver=correlation_resolver
+    )
     delivery_config, transport = delivery_config_from_environment(values)
     # Keycloak and Middleware may have distinct DNS identities. Preserve the
     # configured trust roots and client identity, but bind each request path to

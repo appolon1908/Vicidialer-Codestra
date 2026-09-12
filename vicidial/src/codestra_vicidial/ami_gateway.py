@@ -20,6 +20,22 @@ from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_valida
 
 GATEWAY_VERSION = "1.0"
 MIDDLEWARE_EVENT_PREFIX = "codestra.vicidial.call.lifecycle."
+# Monotonic progression order for the pre-terminal call states. AMI events can
+# arrive delayed/out-of-order (e.g. a buffered Newstate(Ringing) delivered
+# after AgentConnect already advanced the call to "connected"). Terminal
+# states are governed separately by CallState.terminal and are not ranked
+# here -- once terminal, _apply_event's own guard blocks all further events
+# regardless of rank.
+_PROGRESSION_RANK = {
+    "new": 0,
+    "dialing": 1,
+    "ringing": 2,
+    "answering": 3,
+    "connected": 4,
+    "held": 4,
+    "transferring": 5,
+    "transferred": 6,
+}
 SUPPORTED_AMI_EVENTS = frozenset(
     {
         "AgentCalled",
@@ -59,6 +75,50 @@ class GatewayConfigurationError(RuntimeError):
 
 class EventBindingError(RuntimeError):
     """An AMI event cannot be bound to one authoritative agent/campaign."""
+
+
+class CorrelationResolver:
+    """Resolves the real Middleware-issued correlation_id for a call leg.
+
+    Controlled origination paths (internal_calling.py, external_calling.py) set
+    ChannelId=<uniqueid> on their AMI Originate action and durably record
+    (uniqueid -> correlation_id) before dispatch. This resolver looks that
+    mapping up by the Asterisk-assigned uniqueid so the gateway's outbound
+    event envelope can carry the same correlation_id Middleware established,
+    instead of a locally-synthesized call_id. Calls with no such record (e.g.
+    ordinary VICIdial-dialer traffic never originated through those paths)
+    resolve to None, and the caller falls back to the existing local call_id.
+    """
+
+    def __init__(
+        self,
+        *,
+        internal_calls_path: str | Path | None = None,
+        external_calls_path: str | Path | None = None,
+    ) -> None:
+        self._sources: list[tuple[Path, str]] = []
+        if internal_calls_path is not None:
+            self._sources.append((Path(internal_calls_path), "internal_calls"))
+        if external_calls_path is not None:
+            self._sources.append((Path(external_calls_path), "external_calls"))
+
+    def resolve(self, uniqueid: str) -> str | None:
+        for path, table in self._sources:
+            if not path.exists():
+                continue
+            try:
+                with sqlite3.connect(
+                    path.as_uri() + "?mode=ro", uri=True, timeout=5
+                ) as conn:
+                    row = conn.execute(
+                        f"SELECT correlation_id FROM {table} WHERE uniqueid=?",
+                        (uniqueid,),
+                    ).fetchone()
+            except sqlite3.Error:
+                continue
+            if row is not None and row[0]:
+                return str(row[0])
+        return None
 
 
 def utc_now() -> datetime:
@@ -475,18 +535,25 @@ class CallState:
     destination_number: str | None
     created_at: str
     answered_at: str | None
+    real_correlation_id: str | None = None
 
 
 class LifecycleStore:
     """Durable per-agent call state and idempotent outbound event queue."""
 
-    def __init__(self, path: str | Path) -> None:
+    def __init__(
+        self,
+        path: str | Path,
+        *,
+        correlation_resolver: CorrelationResolver | None = None,
+    ) -> None:
         self.path = Path(path)
         if not self.path.is_absolute():
             raise GatewayConfigurationError(
                 "gateway state database path must be absolute"
             )
         self.path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
+        self._correlation_resolver = correlation_resolver
         self._initialize()
         os.chmod(self.path, 0o600)
 
@@ -524,7 +591,8 @@ class LifecycleStore:
                     created_at TEXT NOT NULL,
                     answered_at TEXT,
                     ended_at TEXT,
-                    updated_at TEXT NOT NULL
+                    updated_at TEXT NOT NULL,
+                    real_correlation_id TEXT
                 );
 
                 CREATE TABLE IF NOT EXISTS channels (
@@ -585,6 +653,11 @@ class LifecycleStore:
                     ON channels(uniqueid, active);
                 """
             )
+            existing_columns = {
+                row[1] for row in conn.execute("PRAGMA table_info(calls)")
+            }
+            if "real_correlation_id" not in existing_columns:
+                conn.execute("ALTER TABLE calls ADD COLUMN real_correlation_id TEXT")
 
     def process(
         self,
@@ -844,6 +917,7 @@ class LifecycleStore:
             destination_number=row["destination_number"],
             created_at=row["created_at"],
             answered_at=row["answered_at"],
+            real_correlation_id=row["real_correlation_id"],
         )
 
     def _create_call(
@@ -883,6 +957,11 @@ class LifecycleStore:
         digest = hashlib.sha256(call_material.encode("utf-8")).hexdigest()
         call_key = "attempt-" + digest[:40]
         call_id = "vici-" + digest[:32]
+        real_correlation_id = (
+            self._correlation_resolver.resolve(agent_uniqueid)
+            if self._correlation_resolver is not None
+            else None
+        )
         caller, destination = self._numbers(message, binding, direction)
         timestamp = rfc3339(occurred)
         conn.execute(
@@ -891,8 +970,8 @@ class LifecycleStore:
                 call_key, linkedid, extension, call_id, binding_json,
                 direction, asterisk_uniqueid, sequence, state, answered,
                 terminal, caller_number, destination_number, created_at,
-                updated_at
-            ) VALUES(?,?,?,?,?,?,?,0,'new',0,0,?,?,?,?)
+                updated_at, real_correlation_id
+            ) VALUES(?,?,?,?,?,?,?,0,'new',0,0,?,?,?,?,?)
             """,
             (
                 call_key,
@@ -906,6 +985,7 @@ class LifecycleStore:
                 destination,
                 timestamp,
                 timestamp,
+                real_correlation_id,
             ),
         )
         state = self._load_call(conn, call_key)
@@ -1244,6 +1324,18 @@ class LifecycleStore:
             latest.state == target_state and event_suffix != "created"
         ):
             return
+        current_rank = _PROGRESSION_RANK.get(latest.state)
+        target_rank = _PROGRESSION_RANK.get(target_state)
+        if (
+            current_rank is not None
+            and target_rank is not None
+            and target_rank < current_rank
+        ):
+            # A delayed/out-of-order AMI event describing an earlier point in
+            # the call's progression than what has already been durably
+            # recorded. Absorb it without regressing state -- the same
+            # treatment already given to exact-repeat events above.
+            return
         emitted.append(
             self._emit(
                 conn,
@@ -1361,7 +1453,7 @@ class LifecycleStore:
             "received_at": rfc3339(now),
             "source": "vicidial-adapter",
             "tenant_id": latest.binding.tenant_id,
-            "correlation_id": latest.call_id,
+            "correlation_id": latest.real_correlation_id or latest.call_id,
             "causation_id": (
                 "ami-" + message.canonical_fingerprint()[:32]
             ),
