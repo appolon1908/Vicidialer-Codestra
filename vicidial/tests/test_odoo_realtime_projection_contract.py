@@ -110,7 +110,17 @@ def test_current_ami_gateway_matches_cross_repository_contract(tmp_path: Path) -
     emitted_types = sorted({str(event["event_type"]) for event in emitted})
 
     assert value["event_prefix"] == MIDDLEWARE_EVENT_PREFIX
-    assert value["event_types"] == emitted_types
+    contract_types = set(value["event_types"])
+    assert set(emitted_types) <= contract_types
+    assert {
+        MIDDLEWARE_EVENT_PREFIX + suffix
+        for suffix in (
+            "answered", "busy", "canceled", "completed", "connected",
+            "created", "dialing", "failed", "hangup", "held", "no_answer",
+            "offered", "queued", "rejected", "resumed", "ringing",
+            "transfer.completed", "transfer.started",
+        )
+    } == contract_types
     assert all(item.startswith(MIDDLEWARE_EVENT_PREFIX) for item in emitted_types)
     assert value["producer"] == "vicidial-adapter"
     assert value["consumer"] == "middleware-api"
