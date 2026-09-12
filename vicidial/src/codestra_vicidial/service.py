@@ -880,6 +880,53 @@ class AdapterService:
 
         return self._execute("webrtc.revoke", key, command, user_id, apply)
 
+    def list_pending_pjsip_config(self) -> list[dict]:
+        """Mission 4 delivery: the generated AOR/endpoint/auth (or teardown)
+        artifacts this adapter believes should be applied at Asterisk but
+        has not yet been acknowledged as delivered. Read-only; does not
+        require the webrtc_provisioning flag, since observing what would be
+        delivered is not itself a mutation -- Server B's sync agent polls
+        this regardless of whether provisioning is currently enabled, so an
+        operator can inspect drift even while the kill switch stays closed."""
+        rows = self.state.pending_webrtc_pjsip_configs()
+        return [
+            {
+                "user_id": row["user_id"],
+                "extension": row["extension"],
+                "active": bool(row["active"]),
+                "content": row["content"],
+                "content_hash": row["content_hash"],
+                "generated_at": row["generated_at"],
+            }
+            for row in rows
+        ]
+
+    def ack_pjsip_config_applied(self, key: str, command: "WebrtcPjsipConfigAckCommand") -> dict:
+        """Mission 4 delivery: Server B's sync agent calls this after it has
+        actually written the artifact to disk and successfully reloaded
+        PJSIP. Gated behind webrtc_provisioning like every other write in
+        this family, so an ack cannot mark anything applied while the
+        adapter's own kill switch is closed. Campaign-scoped like every
+        other mutation -- the sync agent's credential must be scoped to the
+        same campaign as the agent whose endpoint it is confirming."""
+        self._require(self.flags.webrtc_provisioning, "webrtc provisioning")
+        user_id = command.user_id
+        self._require_campaign_scope(command, command.context.campaign_id)
+
+        def apply() -> dict:
+            applied = self.state.mark_webrtc_pjsip_config_applied(
+                user_id, command.content_hash,
+            )
+            if not applied:
+                raise ValueError(
+                    "content_hash does not match current desired configuration; "
+                    "re-fetch pending config and retry"
+                )
+            return {"status": "applied", "user_id": user_id,
+                    "content_hash": command.content_hash}
+
+        return self._execute("webrtc.pjsip_config.ack", key, command, user_id, apply)
+
     def publish_lead(self, key: str, command: LeadCommand) -> dict:
         self._require(self.flags.lead_publication, "lead publication")
         self._require_campaign_scope(command, command.context.campaign_id)
