@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import sqlite3
 from datetime import UTC, datetime, timedelta
 
@@ -100,7 +101,12 @@ def test_originate_uses_only_policy_owned_channel_context_and_target(tmp_path):
             "Priority": "1",
             "Async": "true",
             "ChannelId": result["asterisk_uniqueid"],
-            "Variable": "CODESTRA_OPERATION_ID=operation-internal-0001",
+            "Variable": (
+                "CODESTRA_OPERATION_ID=operation-internal-0001,"
+                "CODESTRA_CALL_ID=vici-"
+                + hashlib.sha256(b"correlation-internal-0001").hexdigest()[:32]
+                + ",CODESTRA_CORRELATION_ID=correlation-internal-0001"
+            ),
         }
     ]
 
