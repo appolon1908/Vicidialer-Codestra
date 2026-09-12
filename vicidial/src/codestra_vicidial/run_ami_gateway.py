@@ -476,9 +476,11 @@ def build_runtime(
     values = os.environ if source is None else source
     config = GatewayRuntimeConfig.from_environment(values)
     directory = AgentDirectory.from_file(config.agent_directory_file)
+    # Keep the gateway compatible with older injected config objects and
+    # test doubles that predate the optional correlation-database settings.
     correlation_resolver = CorrelationResolver(
-        internal_calls_path=config.internal_calls_database,
-        external_calls_path=config.external_calls_database,
+        internal_calls_path=getattr(config, "internal_calls_database", None),
+        external_calls_path=getattr(config, "external_calls_database", None),
     )
     store = LifecycleStore(
         config.state_database, correlation_resolver=correlation_resolver
