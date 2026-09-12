@@ -84,6 +84,15 @@
       "required_scope": "telephony:read"
     },
     {
+      "idempotency": "not_applicable",
+      "method": "GET",
+      "mutation": false,
+      "operation": null,
+      "path": "/v1/webrtc/pjsip-config/pending",
+      "request_model": null,
+      "required_scope": "telephony:read"
+    },
+    {
       "idempotency": "header_required",
       "method": "POST",
       "mutation": true,
@@ -235,6 +244,15 @@
       "path": "/v1/transfer-policies/sync",
       "request_model": "TransferPolicyCommand",
       "required_scope": "telephony:transfer-policy"
+    },
+    {
+      "idempotency": "header_required",
+      "method": "POST",
+      "mutation": false,
+      "operation": "webrtc.pjsip-config.ack",
+      "path": "/v1/webrtc/pjsip-config/ack",
+      "request_model": "WebrtcPjsipConfigAckCommand",
+      "required_scope": "telephony:webrtc-provision"
     },
     {
       "idempotency": "header_required",

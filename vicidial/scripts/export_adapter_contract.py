@@ -52,6 +52,7 @@ _OPERATION_BY_ROUTE = {
     "/v1/webrtc/provision": "webrtc.provision",
     "/v1/webrtc/rotate": "webrtc.rotate",
     "/v1/webrtc/revoke": "webrtc.revoke",
+    "/v1/webrtc/pjsip-config/ack": "webrtc.pjsip-config.ack",
     "/v1/calls/originate": "call.external.originate",
     "/v1/calls/internal/originate": "call.internal.originate",
     "/v1/calls/internal/{operation_id}/hangup": "call.internal.hangup",
