@@ -309,12 +309,10 @@ class InternalCallExecutor:
                 .sha256(command.operation_id.encode())
                 .hexdigest()[:32]
             )
-            gateway_call_id = (
-                "vici-"
-                + __import__("hashlib")
-                .sha256(command.correlation_id.encode())
-                .hexdigest()[:32]
-            )
+            # The Middleware operation is the canonical call_id for this
+            # controlled path. Do not derive a second gateway identity from
+            # correlation_id: one call has one immutable call ID.
+            gateway_call_id = command.operation_id
             created = rfc3339(datetime.now(UTC))
             db.execute(
                 "INSERT INTO internal_calls VALUES(?,?,?,?,?,?,?,?)",
