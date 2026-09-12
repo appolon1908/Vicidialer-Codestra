@@ -384,6 +384,10 @@ class InternalCallExecutor:
             "linkedid": evidence["linkedid"] if evidence else None,
             "call_id": evidence["gateway_call_id"] if evidence else None,
             "call_state": evidence["state"] if evidence else "unknown",
+            "fine_state": evidence["fine_state"] if evidence else None,
+            "fine_state_at": evidence["fine_state_at"] if evidence else None,
+            "last_event_sequence": evidence["last_event_sequence"] if evidence else 0,
+            "hangup_leg": evidence["hangup_leg"] if evidence else None,
             "answered_at": evidence["answered_at"] if evidence else None,
             "ended_at": evidence["ended_at"] if evidence else None,
             "terminal": bool(evidence and evidence["terminal"]),
@@ -576,12 +580,45 @@ class LifecycleEvidence:
                             "hangup_cause_code", "dial_status", "hangup_leg",
                         )
                     }
+                hangup_leg = None
+                last_event_at = None
+                for event in events:
+                    try:
+                        envelope = json.loads(event["envelope_json"])
+                    except (TypeError, ValueError):
+                        continue
+                    if isinstance(envelope, dict):
+                        last_event_at = envelope.get("occurred_at") or last_event_at
+                        payload = envelope.get("payload")
+                        if isinstance(payload, dict) and payload.get("hangup_leg"):
+                            hangup_leg = payload["hangup_leg"]
+                fine_state = {
+                    "new": "accepted",
+                    "offered": "accepted",
+                    "ringing": "ringing",
+                    "answering": "answered",
+                    "connected": "connected",
+                    "held": "connected",
+                    "transferring": "connected",
+                    "transferred": "connected",
+                    "ending": "connected" if row["answered"] == 1 else "accepted",
+                    "completed": "completed",
+                    "failed": "failed",
+                    "busy": "busy",
+                    "no_answer": "no_answer",
+                    "canceled": "canceled",
+                    "rejected": "rejected",
+                }.get(row["state"], "accepted")
                 return {
                     "asterisk_uniqueid": uniqueid,
                     "linkedid": row["linkedid"],
                     "gateway_call_id": row["call_id"],
                     "correlation_id": row["correlation_id"],
                     "state": row["state"],
+                    "fine_state": fine_state,
+                    "fine_state_at": last_event_at,
+                    "last_event_sequence": row["sequence"],
+                    "hangup_leg": hangup_leg,
                     "answered": row["answered"] == 1,
                     "terminal": terminal,
                     "started_at": row["created_at"],
