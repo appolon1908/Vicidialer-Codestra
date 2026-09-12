@@ -35,6 +35,8 @@ SUPPORTED_AMI_EVENTS = frozenset(
         "Hold",
         "Newchannel",
         "Newstate",
+        "QueueCallerAbandon",
+        "QueueCallerJoin",
         "Unhold",
     }
 )
@@ -47,6 +49,56 @@ _CHANNEL_ENDPOINT = re.compile(
 )
 _FALSE_VALUES = frozenset({"", "0", "false", "no", "off", "disabled"})
 _TRUE_VALUES = frozenset({"1", "true", "yes", "on", "enabled"})
+
+_CALL_ID_VARIABLE = "CODESTRA_CALL_ID"
+_CORRELATION_ID_VARIABLE = "CODESTRA_CORRELATION_ID"
+_TERMINAL_EVENT_SUFFIXES = frozenset({
+    "completed",
+    "failed",
+    "busy",
+    "no_answer",
+    "canceled",
+    "rejected",
+})
+_TARGET_STATE = {
+    "created": "new",
+    "queued": "queued",
+    "offered": "offered",
+    "dialing": "dialing",
+    "ringing": "ringing",
+    "answered": "answering",
+    "connected": "connected",
+    "held": "held",
+    "resumed": "connected",
+    "transfer.started": "transferring",
+    "transfer.completed": "transferred",
+    "hangup": "ending",
+    "completed": "completed",
+    "failed": "failed",
+    "busy": "busy",
+    "no_answer": "no_answer",
+    "canceled": "canceled",
+    "rejected": "rejected",
+}
+_INTERNAL_STATE_RANK = {
+    "new": 0,
+    "queued": 1,
+    "offered": 2,
+    "dialing": 3,
+    "ringing": 4,
+    "answering": 5,
+    "connected": 6,
+    "held": 7,
+    "transferring": 8,
+    "transferred": 9,
+    "ending": 90,
+    "completed": 100,
+    "failed": 100,
+    "busy": 100,
+    "no_answer": 100,
+    "canceled": 100,
+    "rejected": 100,
+}
 
 
 class AMIProtocolError(RuntimeError):
@@ -315,6 +367,7 @@ class AgentDirectory:
         agent_ids: dict[str, AgentBinding] = {}
         subjects: dict[str, AgentBinding] = {}
         queue_campaigns: dict[str, str] = {}
+        queue_bindings: dict[str, list[AgentBinding]] = {}
         for entry in entries:
             if entry.extension in by_extension:
                 raise GatewayConfigurationError(
@@ -338,6 +391,7 @@ class AgentDirectory:
                         f"queue belongs to multiple campaigns: {queue}"
                     )
                 queue_campaigns[queue] = entry.campaign_id
+                queue_bindings.setdefault(queue, []).append(entry)
             for alias in entry.endpoint_aliases:
                 key = alias.lower()
                 prior = by_alias.get(key)
@@ -348,6 +402,10 @@ class AgentDirectory:
                 by_alias[key] = entry
         self._by_extension = by_extension
         self._by_alias = by_alias
+        self._by_queue = {
+            queue: tuple(bindings)
+            for queue, bindings in queue_bindings.items()
+        }
 
     @classmethod
     def from_file(cls, path: str | Path) -> "AgentDirectory":
@@ -367,6 +425,12 @@ class AgentDirectory:
 
     def by_extension(self, extension: str) -> AgentBinding | None:
         return self._by_extension.get(extension)
+
+    def resolve_queue(self, message: AMIMessage) -> AgentBinding | None:
+        """Resolve a queue event only when exactly one agent owns that queue."""
+        queue = message.get("Queue").strip()
+        bindings = self._by_queue.get(queue, ())
+        return bindings[0] if len(bindings) == 1 else None
 
     def resolve(self, message: AMIMessage) -> AgentBinding | None:
         matches: dict[str, AgentBinding] = {}
@@ -433,6 +497,58 @@ def linked_id(message: AMIMessage) -> str:
     return ""
 
 
+def channel_variables(message: AMIMessage) -> dict[str, str]:
+    """Return only the two bounded identity variables trusted by this gateway."""
+    allowed = {_CALL_ID_VARIABLE, _CORRELATION_ID_VARIABLE}
+    result: dict[str, str] = {}
+    for raw in message.all("ChanVariable"):
+        if "=" not in raw:
+            continue
+        name, value = raw.split("=", 1)
+        if name in allowed and value:
+            result[name] = value
+    return result
+
+
+def safe_call_identity(value: str | None) -> str | None:
+    normalized = (value or "").strip()
+    if not normalized or len(normalized) > 128:
+        return None
+    return normalized if _SAFE_ID.fullmatch(normalized) else None
+
+
+def call_identity_from_message(
+    message: AMIMessage,
+) -> tuple[str | None, str | None]:
+    variables = channel_variables(message)
+    return (
+        safe_call_identity(variables.get(_CALL_ID_VARIABLE)),
+        safe_call_identity(variables.get(_CORRELATION_ID_VARIABLE)),
+    )
+
+
+def hangup_leg(state: CallState, message: AMIMessage) -> str | None:
+    uniqueid = safe_asterisk_id(message.get("Uniqueid"))
+    if not uniqueid:
+        return None
+    if uniqueid == state.asterisk_uniqueid:
+        return "agent_leg"
+    return "peer_leg"
+
+
+def terminal_outcome(message: AMIMessage) -> str:
+    status = message.get("DialStatus").strip().upper()
+    cause = parse_int(message.get("Cause"))
+    cause_text = message.get("Cause-txt").strip().lower()
+    if status == "BUSY" or cause == 17:
+        return "busy"
+    if status == "NOANSWER" or cause in {18, 19}:
+        return "no_answer"
+    if cause == 21 or "reject" in cause_text:
+        return "rejected"
+    return "failed"
+
+
 def safe_asterisk_id(value: str) -> str:
     normalized = value.strip()
     if not normalized or len(normalized) > 255:
@@ -464,6 +580,7 @@ class CallState:
     call_key: str
     linkedid: str
     call_id: str
+    correlation_id: str
     binding: AgentBinding
     direction: Literal["inbound", "outbound"]
     asterisk_uniqueid: str
@@ -512,6 +629,7 @@ class LifecycleStore:
                     linkedid TEXT NOT NULL,
                     extension TEXT NOT NULL,
                     call_id TEXT NOT NULL UNIQUE,
+                    correlation_id TEXT NOT NULL UNIQUE,
                     binding_json TEXT NOT NULL,
                     direction TEXT NOT NULL,
                     asterisk_uniqueid TEXT NOT NULL UNIQUE,
@@ -585,6 +703,20 @@ class LifecycleStore:
                     ON channels(uniqueid, active);
                 """
             )
+            columns = {
+                row[1]
+                for row in conn.execute("PRAGMA table_info(calls)").fetchall()
+            }
+            if "correlation_id" not in columns:
+                conn.execute("ALTER TABLE calls ADD COLUMN correlation_id TEXT")
+                conn.execute(
+                    "UPDATE calls SET correlation_id=call_id "
+                    "WHERE correlation_id IS NULL"
+                )
+            conn.execute(
+                "CREATE UNIQUE INDEX IF NOT EXISTS calls_correlation_id_idx "
+                "ON calls(correlation_id)"
+            )
 
     def process(
         self,
@@ -620,6 +752,11 @@ class LifecycleStore:
 
                 try:
                     binding = directory.resolve(message)
+                    if binding is None and name in {
+                        "QueueCallerAbandon",
+                        "QueueCallerJoin",
+                    }:
+                        binding = directory.resolve_queue(message)
                     state = self._select_call(
                         conn,
                         linkedid_value=linkedid_value,
@@ -632,6 +769,20 @@ class LifecycleStore:
                         raise EventBindingError(
                             "linked call attempt cannot change its agent binding"
                         )
+                    if state is not None:
+                        supplied_call_id, supplied_correlation_id = (
+                            call_identity_from_message(message)
+                        )
+                        if (
+                            supplied_call_id
+                            and supplied_call_id != state.call_id
+                        ) or (
+                            supplied_correlation_id
+                            and supplied_correlation_id != state.correlation_id
+                        ):
+                            raise EventBindingError(
+                                "linked call attempt changed its immutable identity"
+                            )
                     if binding is None and state is not None:
                         binding = state.binding
                     if binding is None:
@@ -696,10 +847,10 @@ class LifecycleStore:
     def _can_establish_attempt(message: AMIMessage) -> bool:
         if message.event in {
             "AgentCalled",
-            "AgentConnect",
             "BridgeEnter",
             "DialBegin",
             "Newstate",
+            "QueueCallerJoin",
         }:
             return True
         return False
@@ -833,6 +984,7 @@ class LifecycleStore:
             call_key=row["call_key"],
             linkedid=row["linkedid"],
             call_id=row["call_id"],
+            correlation_id=row["correlation_id"] or row["call_id"],
             binding=binding,
             direction=row["direction"],
             asterisk_uniqueid=row["asterisk_uniqueid"],
@@ -882,23 +1034,29 @@ class LifecycleStore:
         )
         digest = hashlib.sha256(call_material.encode("utf-8")).hexdigest()
         call_key = "attempt-" + digest[:40]
-        call_id = "vici-" + digest[:32]
+        generated_call_id = "vici-" + digest[:32]
+        supplied_call_id, supplied_correlation_id = call_identity_from_message(
+            message
+        )
+        call_id = supplied_call_id or generated_call_id
+        correlation_id = supplied_correlation_id or call_id
         caller, destination = self._numbers(message, binding, direction)
         timestamp = rfc3339(occurred)
         conn.execute(
             """
             INSERT INTO calls(
-                call_key, linkedid, extension, call_id, binding_json,
-                direction, asterisk_uniqueid, sequence, state, answered,
-                terminal, caller_number, destination_number, created_at,
-                updated_at
-            ) VALUES(?,?,?,?,?,?,?,0,'new',0,0,?,?,?,?)
+                call_key, linkedid, extension, call_id, correlation_id,
+                binding_json, direction, asterisk_uniqueid, sequence, state,
+                answered, terminal, caller_number, destination_number,
+                created_at, updated_at
+            ) VALUES(?,?,?,?,?,?,?, ?,0,'new',0,0,?,?,?,?)
             """,
             (
                 call_key,
                 linkedid_value,
                 binding.extension,
                 call_id,
+                correlation_id,
                 binding.model_dump_json(),
                 direction,
                 agent_uniqueid,
@@ -1024,13 +1182,35 @@ class LifecycleStore:
         name = message.event
         emitted: list[dict[str, Any]] = []
 
-        if name in {"AgentCalled", "DialBegin"}:
+        if name == "QueueCallerJoin":
+            self._append_state(
+                conn, emitted, state, "queued", message, occurred
+            )
+        elif name == "QueueCallerAbandon":
+            self._append_state(
+                conn,
+                emitted,
+                state,
+                "canceled",
+                message,
+                occurred,
+                terminal=True,
+            )
+        elif name == "AgentCalled":
             self._append_state(
                 conn, emitted, state, "offered", message, occurred
             )
+        elif name == "DialBegin":
+            self._append_state(
+                conn, emitted, state, "dialing", message, occurred
+            )
         elif name == "Newstate":
             description = message.get("ChannelStateDesc").strip().lower()
-            if description in {"ring", "ringing"}:
+            if description in {"dialing", "dialing offhook"}:
+                self._append_state(
+                    conn, emitted, state, "dialing", message, occurred
+                )
+            elif description in {"ring", "ringing"}:
                 self._append_state(
                     conn, emitted, state, "ringing", message, occurred
                 )
@@ -1038,6 +1218,18 @@ class LifecycleStore:
                 self._append_answer_and_connect(
                     conn, emitted, state, message, occurred
                 )
+            elif description == "busy":
+                latest = self._load_call(conn, state.call_key) or state
+                if not latest.answered:
+                    self._append_state(
+                        conn,
+                        emitted,
+                        latest,
+                        "busy",
+                        message,
+                        occurred,
+                        terminal=True,
+                    )
         elif name in {"AgentConnect", "BridgeEnter"}:
             self._append_answer_and_connect(
                 conn, emitted, state, message, occurred
@@ -1055,7 +1247,13 @@ class LifecycleStore:
                 "NOANSWER",
             }:
                 latest = self._load_call(conn, state.call_key) or state
-                suffix = "missed" if status in {"BUSY", "NOANSWER"} else "failed"
+                suffix = (
+                    "busy"
+                    if status == "BUSY"
+                    else "no_answer"
+                    if status == "NOANSWER"
+                    else "failed"
+                )
                 self._append_state(
                     conn,
                     emitted,
@@ -1105,7 +1303,7 @@ class LifecycleStore:
                 conn,
                 emitted,
                 state,
-                "missed",
+                "no_answer",
                 message,
                 occurred,
                 terminal=True,
@@ -1174,8 +1372,7 @@ class LifecycleStore:
             )
             return emitted
 
-        cause = parse_int(message.get("Cause"))
-        suffix = "missed" if cause in {16, 17, 18, 19, 21} else "failed"
+        suffix = terminal_outcome(message)
         self._append_state(
             conn,
             emitted,
@@ -1199,24 +1396,17 @@ class LifecycleStore:
         terminal: bool = False,
     ) -> None:
         latest = self._load_call(conn, state.call_key) or state
-        target_state = {
-            "created": "new",
-            "offered": "offered",
-            "ringing": "ringing",
-            "answered": "answering",
-            "connected": "connected",
-            "held": "held",
-            "resumed": "connected",
-            "transfer.started": "transferring",
-            "transfer.completed": "transferred",
-            "hangup": "ending",
-            "completed": "completed",
-            "failed": "failed",
-            "missed": "missed",
-        }[event_suffix]
-        if latest.terminal or (
-            latest.state == target_state and event_suffix != "created"
+        target_state = _TARGET_STATE[event_suffix]
+        if latest.terminal:
+            return
+        if event_suffix == "resumed":
+            if latest.state != "held":
+                return
+        elif _INTERNAL_STATE_RANK.get(target_state, -1) < _INTERNAL_STATE_RANK.get(
+            latest.state, -1
         ):
+            return
+        elif latest.state == target_state and event_suffix != "created":
             return
         emitted.append(
             self._emit(
@@ -1282,7 +1472,7 @@ class LifecycleStore:
             if latest.answered_at
             else 0
         )
-        if event_suffix in {"hangup", "completed", "failed", "missed"}:
+        if event_suffix == "hangup" or event_suffix in _TERMINAL_EVENT_SUFFIXES:
             payload["duration"] = duration
             payload["talk_duration"] = talk_duration
             cause = parse_int(message.get("Cause"))
@@ -1291,6 +1481,13 @@ class LifecycleStore:
             cause_text = message.get("Cause-txt").strip()
             if cause_text:
                 payload["hangup_cause"] = cause_text[:128]
+            dial_status = message.get("DialStatus").strip().upper()
+            if dial_status:
+                payload["dial_status"] = dial_status
+            if message.event == "Hangup" or event_suffix == "hangup":
+                leg = hangup_leg(latest, message)
+                if leg is not None:
+                    payload["hangup_leg"] = leg
         if event_suffix == "transfer.completed":
             destination = transfer_destination(message)
             if not destination:
@@ -1311,7 +1508,7 @@ class LifecycleStore:
             "received_at": rfc3339(now),
             "source": "vicidial-adapter",
             "tenant_id": latest.binding.tenant_id,
-            "correlation_id": latest.call_id,
+            "correlation_id": latest.correlation_id,
             "causation_id": (
                 "ami-" + message.canonical_fingerprint()[:32]
             ),
@@ -1323,21 +1520,7 @@ class LifecycleStore:
                 "gateway_version": GATEWAY_VERSION,
             },
         }
-        target_state = {
-            "created": "new",
-            "offered": "offered",
-            "ringing": "ringing",
-            "answered": "answering",
-            "connected": "connected",
-            "held": "held",
-            "resumed": "connected",
-            "transfer.started": "transferring",
-            "transfer.completed": "transferred",
-            "hangup": "ending",
-            "completed": "completed",
-            "failed": "failed",
-            "missed": "missed",
-        }[event_suffix]
+        target_state = _TARGET_STATE[event_suffix]
         answered = latest.answered or event_suffix in {
             "answered",
             "connected",
