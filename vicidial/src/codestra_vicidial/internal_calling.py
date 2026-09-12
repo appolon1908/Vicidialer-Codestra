@@ -22,7 +22,7 @@ class InternalCallError(RuntimeError):
 
 LIFECYCLE_REQUIRED_COLUMNS = {
     "calls": frozenset({
-        "call_key", "linkedid", "extension", "call_id", "binding_json",
+        "call_key", "linkedid", "extension", "call_id", "correlation_id", "binding_json",
         "asterisk_uniqueid", "state", "answered", "terminal", "created_at",
         "answered_at", "ended_at", "updated_at",
     }),
@@ -309,6 +309,12 @@ class InternalCallExecutor:
                 .sha256(command.operation_id.encode())
                 .hexdigest()[:32]
             )
+            gateway_call_id = (
+                "vici-"
+                + __import__("hashlib")
+                .sha256(command.correlation_id.encode())
+                .hexdigest()[:32]
+            )
             created = rfc3339(datetime.now(UTC))
             db.execute(
                 "INSERT INTO internal_calls VALUES(?,?,?,?,?,?,?,?)",
@@ -334,7 +340,11 @@ class InternalCallExecutor:
                 "Priority": "1",
                 "Async": "true",
                 "ChannelId": uniqueid,
-                "Variable": f"CODESTRA_OPERATION_ID={command.operation_id}",
+                "Variable": (
+                    f"CODESTRA_OPERATION_ID={command.operation_id},"
+                    f"CODESTRA_CALL_ID={gateway_call_id},"
+                    f"CODESTRA_CORRELATION_ID={command.correlation_id}"
+                ),
             }
         )
         with closing(sqlite3.connect(self.state_path)) as db:
@@ -526,7 +536,10 @@ class LifecycleEvidence:
                     not row["ended_at"]
                     or not events
                     or events[-1]["event_type"].rsplit(".", 1)[-1]
-                    not in {"completed", "failed", "missed"}
+                    not in {
+                        "completed", "failed", "busy", "no_answer",
+                        "canceled", "rejected", "missed", "cancelled",
+                    }
                 ):
                     raise InternalCallError("terminal AMI event evidence missing")
                 terminal_details = None
@@ -548,6 +561,7 @@ class LifecycleEvidence:
                     }
                     if (
                         envelope.get("tenant_id") != policy.tenant_id
+                        or envelope.get("correlation_id") != row["correlation_id"]
                         or envelope.get("event_id") != events[-1]["event_id"]
                         or envelope.get("event_type") != events[-1]["event_type"]
                         or any(payload.get(k) != v for k, v in expected.items())
@@ -559,13 +573,14 @@ class LifecycleEvidence:
                         k: payload.get(k)
                         for k in (
                             "duration", "talk_duration", "hangup_cause",
-                            "hangup_cause_code",
+                            "hangup_cause_code", "dial_status", "hangup_leg",
                         )
                     }
                 return {
                     "asterisk_uniqueid": uniqueid,
                     "linkedid": row["linkedid"],
                     "gateway_call_id": row["call_id"],
+                    "correlation_id": row["correlation_id"],
                     "state": row["state"],
                     "answered": row["answered"] == 1,
                     "terminal": terminal,
