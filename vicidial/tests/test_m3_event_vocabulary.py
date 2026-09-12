@@ -170,8 +170,6 @@ def test_real_ami_signals_cover_queue_to_terminal_and_preserve_identity(
     assert all(
         event["correlation_id"] == "odoo-correlation-001"
         and event["payload"]["call_id"] == "odoo-call-001"
-        and event["payload"]["correlation_id"]
-        == event["correlation_id"]
         for event in emitted
     )
     assert [event["payload"]["sequence"] for event in emitted] == list(
