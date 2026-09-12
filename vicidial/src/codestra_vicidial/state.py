@@ -93,6 +93,10 @@ class StateStore:
           user_id TEXT PRIMARY KEY, extension TEXT NOT NULL,
           credential_reference TEXT NOT NULL, single_use_consumed INTEGER NOT NULL DEFAULT 0,
           expires_at TEXT NOT NULL, created_at TEXT NOT NULL);
+        CREATE TABLE IF NOT EXISTS webrtc_pjsip_config(
+          user_id TEXT PRIMARY KEY, extension TEXT NOT NULL,
+          active INTEGER NOT NULL, content TEXT NOT NULL,
+          content_hash TEXT NOT NULL, generated_at TEXT NOT NULL);
         CREATE TABLE IF NOT EXISTS reconciliation_runs(
           run_id TEXT PRIMARY KEY, result_json TEXT NOT NULL,
           created_at TEXT NOT NULL);
@@ -675,6 +679,32 @@ class StateStore:
     def clear_webrtc_session(self, user_id: str) -> None:
         self.db.execute("DELETE FROM webrtc_sessions WHERE user_id=?", (user_id,))
         self.db.commit()
+
+    def put_webrtc_pjsip_config(
+        self, user_id: str, extension: str, active: bool, content: str, content_hash: str,
+    ) -> None:
+        """Persist the generated PJSIP AOR/endpoint/auth artifact this
+        adapter believes should be applied at Asterisk for one-active-
+        contact enforcement (Mission 4). Idempotent by (user_id) primary
+        key: re-provisioning after a revoke overwrites rather than
+        accumulates rows, and the identical (user_id, extension,
+        credential_reference) always yields the identical content_hash."""
+        self.db.execute(
+            "INSERT INTO webrtc_pjsip_config(user_id,extension,active,content,"
+            "content_hash,generated_at) VALUES(?,?,?,?,?,?) "
+            "ON CONFLICT(user_id) DO UPDATE SET extension=excluded.extension,"
+            "active=excluded.active,content=excluded.content,"
+            "content_hash=excluded.content_hash,generated_at=excluded.generated_at",
+            (user_id, extension, int(active), content, content_hash,
+             datetime.now(timezone.utc).isoformat()),
+        )
+        self.db.commit()
+
+    def webrtc_pjsip_config(self, user_id: str) -> sqlite3.Row | None:
+        return self.db.execute(
+            "SELECT extension,active,content,content_hash,generated_at "
+            "FROM webrtc_pjsip_config WHERE user_id=?", (user_id,),
+        ).fetchone()
 
     def persist_reconciliation_run(
         self,

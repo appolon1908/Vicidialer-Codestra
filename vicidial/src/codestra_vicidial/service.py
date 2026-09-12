@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 import uuid
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
@@ -36,6 +37,9 @@ from .state import (
     StaleResourceVersion, StateStore,
 )
 from .credential_authority import CredentialAuthorityUnavailable
+from . import pjsip_config
+
+log = logging.getLogger(__name__)
 
 
 class ReadbackMismatch(RuntimeError):
@@ -641,11 +645,27 @@ class AdapterService:
             # deactivated by repository.disable_agent itself; here we also
             # invalidate any WebRTC session/credential in the same
             # request, before read-back, so a disabled agent can never be
-            # left with a live registration ticket.
+            # left with a live registration ticket. Mission 4 extends this
+            # to also tear down the generated PJSIP config artifact, so a
+            # disabled agent's endpoint is independently unusable at the
+            # telephony layer too, not only via the revoked app session.
+            existing_config = self.state.webrtc_pjsip_config(command.user_id)
             self.state.clear_webrtc_session(command.user_id)
             actual = self.repository.disable_agent(command.user_id)
             if actual.get("active") not in (False, "N"):
                 raise RuntimeError("agent disable read-back failed")
+            if existing_config is not None and existing_config["active"]:
+                teardown = pjsip_config.revoked(command.user_id, existing_config["extension"])
+                self.state.put_webrtc_pjsip_config(
+                    command.user_id, existing_config["extension"], active=False,
+                    content=teardown.render(), content_hash=teardown.content_hash(),
+                )
+                log.info(
+                    "webrtc.credential.revoked",
+                    extra={"user_id": command.user_id, "extension": existing_config["extension"],
+                           "contact_count": 0, "reason": "agent_disabled",
+                           "pjsip_content_hash": teardown.content_hash()},
+                )
             return {"status": "disabled", "actual": actual}
 
         return self._execute("agent.disable", key, command, command.user_id, apply)
@@ -747,6 +767,11 @@ class AdapterService:
             existing_session = self.state.webrtc_session(user_id)
             if existing_session is not None and not existing_session["single_use_consumed"]:
                 if existing_session["expires_at"] > datetime.now(timezone.utc).isoformat():
+                    log.warning(
+                        "webrtc.registration.rejected",
+                        extra={"user_id": user_id, "extension": phone["extension"],
+                               "contact_count": 1, "reason": "session_already_active"},
+                    )
                     raise WebrtcSessionActive(
                         "a WebRTC session is already active for this user")
             issued = self.credential_authority.issue(
@@ -756,6 +781,25 @@ class AdapterService:
             expires_at = (datetime.now(timezone.utc) + timedelta(minutes=5)).isoformat()
             self.state.put_webrtc_session(
                 user_id, phone["extension"], issued.reference, expires_at=expires_at)
+            # Mission 4: generate the Asterisk-level max_contacts=1 PJSIP
+            # config artifact alongside the app-level session, so the
+            # 409 fast-path is backed by independent telephony-layer
+            # enforcement rather than being the only guard.
+            desired_endpoint = pjsip_config.PjsipEndpointConfig(
+                user_id=user_id, extension=phone["extension"],
+                credential_reference=issued.reference, active=True,
+            )
+            self.state.put_webrtc_pjsip_config(
+                user_id, phone["extension"], active=True,
+                content=desired_endpoint.render(),
+                content_hash=desired_endpoint.content_hash(),
+            )
+            log.info(
+                "webrtc.registration.accepted",
+                extra={"user_id": user_id, "extension": phone["extension"],
+                       "contact_count": 1,
+                       "pjsip_content_hash": desired_endpoint.content_hash()},
+            )
             return {
                 "status": "provisioned", "extension": phone["extension"],
                 "credential": issued.value, "credential_reference": issued.reference,
@@ -785,6 +829,20 @@ class AdapterService:
             expires_at = (datetime.now(timezone.utc) + timedelta(minutes=5)).isoformat()
             self.state.put_webrtc_session(
                 user_id, phone["extension"], issued.reference, expires_at=expires_at)
+            rotated_endpoint = pjsip_config.PjsipEndpointConfig(
+                user_id=user_id, extension=phone["extension"],
+                credential_reference=issued.reference, active=True,
+            )
+            self.state.put_webrtc_pjsip_config(
+                user_id, phone["extension"], active=True,
+                content=rotated_endpoint.render(),
+                content_hash=rotated_endpoint.content_hash(),
+            )
+            log.info(
+                "webrtc.credential.rotated",
+                extra={"user_id": user_id, "extension": phone["extension"],
+                       "pjsip_content_hash": rotated_endpoint.content_hash()},
+            )
             return {
                 "status": "rotated", "extension": phone["extension"],
                 "credential": issued.value, "credential_reference": issued.reference,
@@ -803,8 +861,21 @@ class AdapterService:
         self._require_campaign_scope(command, command.context.campaign_id)
 
         def apply() -> dict:
+            existing_config = self.state.webrtc_pjsip_config(user_id)
             self.state.clear_webrtc_session(user_id)
             actual = self.repository.clear_phone_credential(user_id)
+            if existing_config is not None:
+                teardown = pjsip_config.revoked(user_id, existing_config["extension"])
+                self.state.put_webrtc_pjsip_config(
+                    user_id, existing_config["extension"], active=False,
+                    content=teardown.render(), content_hash=teardown.content_hash(),
+                )
+                log.info(
+                    "webrtc.credential.revoked",
+                    extra={"user_id": user_id, "extension": existing_config["extension"],
+                           "contact_count": 0,
+                           "pjsip_content_hash": teardown.content_hash()},
+                )
             return {"status": "revoked", "actual": actual}
 
         return self._execute("webrtc.revoke", key, command, user_id, apply)
