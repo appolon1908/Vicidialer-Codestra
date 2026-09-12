@@ -580,6 +580,7 @@ class CallState:
     call_key: str
     linkedid: str
     call_id: str
+    correlation_id: str
     binding: AgentBinding
     direction: Literal["inbound", "outbound"]
     asterisk_uniqueid: str
