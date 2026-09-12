@@ -7,14 +7,19 @@
   "event_prefix": "codestra.vicidial.call.lifecycle.",
   "event_types": [
     "codestra.vicidial.call.lifecycle.answered",
+    "codestra.vicidial.call.lifecycle.busy",
+    "codestra.vicidial.call.lifecycle.canceled",
     "codestra.vicidial.call.lifecycle.completed",
     "codestra.vicidial.call.lifecycle.connected",
     "codestra.vicidial.call.lifecycle.created",
+    "codestra.vicidial.call.lifecycle.dialing",
     "codestra.vicidial.call.lifecycle.failed",
     "codestra.vicidial.call.lifecycle.hangup",
     "codestra.vicidial.call.lifecycle.held",
-    "codestra.vicidial.call.lifecycle.missed",
+    "codestra.vicidial.call.lifecycle.no_answer",
     "codestra.vicidial.call.lifecycle.offered",
+    "codestra.vicidial.call.lifecycle.queued",
+    "codestra.vicidial.call.lifecycle.rejected",
     "codestra.vicidial.call.lifecycle.resumed",
     "codestra.vicidial.call.lifecycle.ringing",
     "codestra.vicidial.call.lifecycle.transfer.completed",
@@ -48,5 +53,17 @@
     "allows_originate": false,
     "allows_ari_command": false,
     "production_dialing_default": false
-  }
+  },
+  "terminal_outcomes": [
+    "completed",
+    "failed",
+    "busy",
+    "no_answer",
+    "canceled",
+    "rejected"
+  ],
+  "unsourced_states": [
+    "timeout"
+  ],
+  "state_source_note": "timeout is intentionally not emitted until a configured authoritative timer or upstream disposition is available; generic AMI hangup is not mapped to it."
 }
