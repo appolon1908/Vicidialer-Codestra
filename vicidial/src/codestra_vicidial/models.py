@@ -234,6 +234,12 @@ class WebrtcRevokeCommand(StrictModel):
     user_id: Annotated[str, Field(pattern=r"^[A-Z]{3}[0-9]{4,12}$")]
 
 
+class WebrtcPjsipConfigAckCommand(StrictModel):
+    context: RequestContext
+    user_id: Annotated[str, Field(pattern=r"^[A-Z]{3}[0-9]{4,12}$")]
+    content_hash: Annotated[str, Field(min_length=8, max_length=128)]
+
+
 class DisableAgentCommand(StrictModel):
     context: RequestContext
     user_id: Annotated[str, Field(pattern=r"^[A-Z]{3}[0-9]{4,12}$")]

@@ -39,6 +39,7 @@ from .models import (
     TransferPolicyCommand,
     WebrtcProvisionCommand,
     WebrtcRevokeCommand,
+    WebrtcPjsipConfigAckCommand,
     WebrtcRotateCommand,
 )
 from .reconciliation import ReconciliationPolicy
@@ -77,6 +78,8 @@ _PROTECTED_SCOPE_BY_ROUTE = {
     ("post", "/v1/webrtc/provision"): "telephony:webrtc-provision",
     ("post", "/v1/webrtc/rotate"): "telephony:webrtc-provision",
     ("post", "/v1/webrtc/revoke"): "telephony:webrtc-provision",
+    ("get", "/v1/webrtc/pjsip-config/pending"): "telephony:read",
+    ("post", "/v1/webrtc/pjsip-config/ack"): "telephony:webrtc-provision",
     ("post", "/v1/calls/originate"): "telephony:external-call",
     ("post", "/v1/calls/internal/originate"): "telephony:internal-call",
     ("get", "/v1/calls/internal/{operation_id}"): "telephony:internal-call-read",
@@ -110,6 +113,7 @@ _COMMAND_MODEL_BY_ROUTE = {
     "/v1/webrtc/provision": WebrtcProvisionCommand,
     "/v1/webrtc/rotate": WebrtcRotateCommand,
     "/v1/webrtc/revoke": WebrtcRevokeCommand,
+    "/v1/webrtc/pjsip-config/ack": WebrtcPjsipConfigAckCommand,
     "/v1/leads/publish": LeadCommand,
     "/v1/callbacks/create": CallbackCommand,
     "/v1/transfer-policies/sync": TransferPolicyCommand,
@@ -647,6 +651,21 @@ def create_app(
     @app.post("/v1/webrtc/revoke")
     async def webrtc_revoke(request: Request, values=Depends(headers)):
         return await mutation(request, WebrtcRevokeCommand, service.revoke_webrtc,
+                              "telephony:webrtc-provision", *values)
+
+    @app.get("/v1/webrtc/pjsip-config/pending")
+    async def webrtc_pjsip_config_pending(request: Request, values=Depends(read_headers)):
+        """Mission 4 delivery: Server B's sync agent polls this to learn
+        which generated PJSIP artifacts have not yet been confirmed applied.
+        Deliberately available even while webrtc_provisioning is disabled --
+        observing drift is not a mutation."""
+        await authorize(request, "telephony:read", *values)
+        return {"pending": service.list_pending_pjsip_config()}
+
+    @app.post("/v1/webrtc/pjsip-config/ack")
+    async def webrtc_pjsip_config_ack(request: Request, values=Depends(headers)):
+        return await mutation(request, WebrtcPjsipConfigAckCommand,
+                              service.ack_pjsip_config_applied,
                               "telephony:webrtc-provision", *values)
 
 
