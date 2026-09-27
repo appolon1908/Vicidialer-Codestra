@@ -96,5 +96,55 @@ class ReadinessProbeTests(unittest.TestCase):
         self.assertEqual(results["middleware_grant_literals"], "FAIL")
 
 
+class InternalCallIngressTests(unittest.TestCase):
+    INCLUDE = ROOT / "vicidial/ops/apache/codestra-vicidial-restricted-adapter.include"
+    OPERATION = "0b7e5c1e-6f0a-5d8e-9a53-2f4a6c1d9e70"
+
+    def blocks(self):
+        import re
+
+        text = self.INCLUDE.read_text()
+        return [
+            (re.compile(pattern), body)
+            for pattern, body in re.findall(
+                r'<LocationMatch "(\^/v1/calls/internal/[^"]*)">(.*?)</LocationMatch>', text, re.S
+            )
+        ]
+
+    def matching(self, path):
+        return [body for pattern, body in self.blocks() if pattern.search(path)]
+
+    def test_middleware_origin_routes_are_guarded_and_proxied(self):
+        text = self.INCLUDE.read_text()
+        self.assertIn(
+            'ProxyPass "/v1/calls/internal/" "http://127.0.0.1:8097/v1/calls/internal/"', text
+        )
+        for path, method in (
+            ("/v1/calls/internal/originate", "POST"),
+            (f"/v1/calls/internal/{self.OPERATION}/hangup", "POST"),
+            (f"/v1/calls/internal/{self.OPERATION}", "GET"),
+        ):
+            bodies = self.matching(path)
+            self.assertEqual(len(bodies), 1, path)
+            self.assertIn(f"Require method {method}", bodies[0])
+            self.assertIn("Require ip 10.40.0.1", bodies[0])
+            self.assertIn("%{SSL_CLIENT_VERIFY} == 'SUCCESS'", bodies[0])
+
+    def test_other_internal_paths_are_denied(self):
+        for path in (
+            "/v1/calls/internal/",
+            "/v1/calls/internal/short",
+            f"/v1/calls/internal/{self.OPERATION}/replay",
+            "/v1/calls/internal/originate/extra",
+            "/v1/calls/internal/../originate",
+        ):
+            bodies = self.matching(path)
+            self.assertEqual(len(bodies), 1, path)
+            self.assertIn("Require all denied", bodies[0])
+
+    def test_probe_recognizes_the_route(self):
+        self.assertIn("calls/internal", self.INCLUDE.read_text())
+
+
 if __name__ == "__main__":
     unittest.main()

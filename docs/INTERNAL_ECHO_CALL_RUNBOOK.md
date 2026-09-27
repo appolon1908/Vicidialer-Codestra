@@ -23,11 +23,12 @@ These were found in source on 2026-09-27 and will stop the call if not resolved:
 
 1. **Ingress path.** Middleware requires `VICIDIAL_INTERNAL_CALL_BASE_URL` to be
    an HTTPS *origin with no path* and sends `/v1/calls/internal/...` to it. The
-   Apache include in this repo only proxies `/restricted-vicidial/…`, and its
-   allow-list does not name `calls/internal`. Either the live vhost forwards
-   `/v1/calls/internal/` to `127.0.0.1:8097` with the same mTLS + `Require ip`
-   guard, or this is a source change to make first. The probe reports this as
-   `ingress_internal_call_route`.
+   Apache include in this repo now exposes exactly those three routes at the
+   origin root (POST originate, GET readback, POST hangup) behind the same
+   `Require ip 10.40.0.1` + mTLS guard and denies every other path under
+   `/v1/calls/internal/`. The **live** vhost on Server B must be updated from
+   this include through the normal reviewed deploy, then `apachectl -t` and a
+   graceful reload. The probe reports this as `ingress_internal_call_route`.
 2. **Identity must be active for the window.** The adapter's pre-dial check
    (`internal_call_identity_ready`) requires `appolon` active=`Y`, level 8, group
    `WEBTEST_SYN` allowed exactly `TEST_SYN`, phone 6901 active=`Y`, and campaign
