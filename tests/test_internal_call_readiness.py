@@ -142,8 +142,107 @@ class InternalCallIngressTests(unittest.TestCase):
             self.assertEqual(len(bodies), 1, path)
             self.assertIn("Require all denied", bodies[0])
 
-    def test_probe_recognizes_the_route(self):
-        self.assertIn("calls/internal", self.INCLUDE.read_text())
+    def test_probe_accepts_the_shipped_include(self):
+        self.assertEqual(probe.ingress_problems(self.INCLUDE.read_text()), [])
+
+    def test_probe_ignores_commented_or_unguarded_routes(self):
+        text = self.INCLUDE.read_text()
+        commented = "\n".join("# " + line for line in text.splitlines())
+        self.assertIn("proxy_missing", probe.ingress_problems(commented))
+        head, marker, tail = text.partition('<LocationMatch "^/v1/calls/internal/')
+        unguarded = head + marker + tail.replace("        Require ip 10.40.0.1\n", "", 1)
+        self.assertTrue(probe.ingress_problems(unguarded))
+        self.assertTrue(probe.ingress_problems(text.replace("(?!originate$)", "")))
+
+    def test_only_includes_inside_the_vhost_count(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / "conf.d").mkdir()
+            (root / "conf.d/ingress.include").write_text(self.INCLUDE.read_text())
+            (root / "conf.d/ingress.include.bak").write_text(self.INCLUDE.read_text())
+            active = root / "vhost.conf"
+            active.write_text(
+                "Listen 10.40.0.2:8443\n"
+                "<VirtualHost 10.40.0.2:8443>\n"
+                "    SSLVerifyClient require\n"
+                "    Include conf.d/ingress.include\n"
+                "</VirtualHost>\n"
+            )
+            self.assertEqual(probe.ingress_problems(probe.vhost_block(active, 2, root)), [])
+            # A backup file next to it is not part of the vhost.
+            active.write_text(
+                "<VirtualHost 10.40.0.2:8443>\n"
+                "    # Include conf.d/ingress.include\n"
+                "</VirtualHost>\n"
+            )
+            self.assertIn("proxy_missing", probe.ingress_problems(probe.vhost_block(active, 1, root)))
+
+
+class PhaseTests(unittest.TestCase):
+    STEADY = {"CODESTRA_ADAPTER_DEPLOYMENT": "production-candidate", "ENABLE_INTERNAL_TEST_CALLING": "false"}
+    WINDOW = {
+        "CODESTRA_ADAPTER_DEPLOYMENT": "production-internal-test",
+        "ENABLE_INTERNAL_TEST_CALLING": "true",
+        "CODESTRA_ADAPTER_BACKEND": "mysql",
+        "CODESTRA_RELEASE_METADATA_REQUIRED": "true",
+        "CODESTRA_INTERNAL_CALL_STATE": "/var/lib/codestra-vicidial-restricted-adapter/internal-calls.sqlite3",
+        "CODESTRA_ADAPTER_STATE": "/var/lib/codestra-vicidial-restricted-adapter/state.sqlite3",
+    }
+
+    def setUp(self):
+        probe.RESULTS.clear()
+
+    def run_quiet(self, func, *args):
+        from contextlib import redirect_stdout
+        from io import StringIO
+
+        with redirect_stdout(StringIO()):
+            func(*args)
+        return dict(probe.RESULTS)
+
+    def test_window_env_must_couple_profile_and_gate(self):
+        self.assertNotIn("FAIL", self.run_quiet(probe.check_window_env, self.WINDOW, "staged").values())
+        probe.RESULTS.clear()
+        gate_off = {**self.WINDOW, "ENABLE_INTERNAL_TEST_CALLING": "false"}
+        results = self.run_quiet(probe.check_window_env, gate_off, "staged")
+        self.assertEqual(results["staged_internal_call_gate"], "FAIL")
+
+    def test_identity_binding_is_separate_from_activation(self):
+        steady = ["N", "8", "WEBTEST_SYN", " TEST_SYN -", "N:6901", "N"]
+        problems, activation = probe.identity_findings(steady)
+        self.assertEqual(problems, [])
+        self.assertEqual(activation, {"user": "N", "phone": "N", "campaign": "N"})
+        problems, _ = probe.identity_findings(["Y", "9", "OTHER", " TEST_SYN OTHER -", "", "Y"])
+        self.assertEqual(len(problems), 4)
+
+    def test_steady_copy_must_match_live(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            live, steady = Path(tmp, "live.env"), Path(tmp, "steady.env")
+            body = "".join(f"{k}={v}\n" for k, v in self.STEADY.items())
+            live.write_text(body)
+            steady.write_text(body)
+            os.chmod(steady, 0o600)
+            results = self.run_quiet(probe.check_steady_copy, live, steady, "closed")
+            # Not root-owned in the test sandbox, so protection fails but content matches.
+            self.assertEqual(results["steady_env_copy"], "PASS" if os.geteuid() == 0 else "FAIL")
+            probe.RESULTS.clear()
+            live.write_text(body.replace("false", "true"))
+            results = self.run_quiet(probe.check_steady_copy, live, steady, "closed")
+            self.assertEqual(results["steady_env_copy"], "FAIL")
+
+    def test_preflight_requires_the_staged_window_env(self):
+        argv = sys.argv
+        sys.argv = ["internal_call_readiness.py", "--phase", "preflight"]
+        try:
+            with self.assertRaises(SystemExit) as raised:
+                from contextlib import redirect_stderr
+                from io import StringIO
+
+                with redirect_stderr(StringIO()):
+                    probe.main()
+            self.assertEqual(raised.exception.code, 2)
+        finally:
+            sys.argv = argv
 
 
 if __name__ == "__main__":

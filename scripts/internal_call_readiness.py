@@ -1,17 +1,22 @@
 #!/usr/bin/env python3
 """Read-only readiness probe for the one internal echo call (appolon/6901 -> 6000).
 
-Run as root on Server B *before* anyone is asked to place the call:
+Run as root on Server B, once per phase of docs/INTERNAL_ECHO_CALL_RUNBOOK.md:
 
-    sudo python3 scripts/internal_call_readiness.py
+    --phase preflight  T-1, adapter on its steady profile, appolon inactive;
+                       validates the staged --window-env-file and the saved
+                       --steady-env-file that close-out will restore
+    --phase window     after the window env is installed and appolon is
+                       activated, immediately before the call is sent
+    --phase closed     after the steady env is restored and appolon deactivated
 
-Optionally add ``--middleware-env-file PATH`` on the Middleware host (or with a
-copy of its env file) to check the Middleware side of the same call.
+Add ``--middleware-env-file PATH`` on the Middleware host (or with a copy of
+its env file) to check the Middleware side of the same call.
 
 The probe never writes: SQLite is opened ``mode=ro``, MariaDB is queried with
-SELECT only, Asterisk is asked only ``show`` commands, and the adapter is only
-sent HTTP GETs on loopback. It never prints secret values. Its only output is
-one ``CHECK`` line per gate and a final ``READINESS=`` verdict.
+SELECT only, Asterisk and Apache are asked only ``show``/``-S``, and the adapter
+is only sent HTTP GETs on loopback. It never prints secret values. Its only
+output is one ``CHECK`` line per gate and a final ``VERDICT=``.
 
 Stdlib only; Python 3.9+.
 """
@@ -19,6 +24,7 @@ Stdlib only; Python 3.9+.
 from __future__ import annotations
 
 import argparse
+import glob
 import hashlib
 import json
 import os
@@ -78,7 +84,20 @@ MIDDLEWARE_REQUIRED = (
     "VICIDIAL_INTERNAL_CALL_MTLS_KEY_FILE",
     "CODESTRA_INTERNAL_CALL_POLICY_FILE",
 )
-APACHE_ROOTS = (Path("/etc/httpd"), Path("/etc/apache2"))
+INGRESS_VHOST = "10.40.0.2:8443"
+INGRESS_PROXY = (r'^\s*ProxyPass\s+"/v1/calls/internal/"\s+'
+                 r'"http://127\.0\.0\.1:8097/v1/calls/internal/"')
+_SAMPLE_OPERATION = "0b7e5c1e-6f0a-5d8e-9a53-2f4a6c1d9e70"
+# (path, method that must be the only one allowed, or None for "denied").
+INGRESS_EXPECTATIONS = (
+    ("/v1/calls/internal/originate", "POST"),
+    (f"/v1/calls/internal/{_SAMPLE_OPERATION}/hangup", "POST"),
+    (f"/v1/calls/internal/{_SAMPLE_OPERATION}", "GET"),
+    ("/v1/calls/internal/", None),
+    ("/v1/calls/internal/short", None),
+    (f"/v1/calls/internal/{_SAMPLE_OPERATION}/replay", None),
+    ("/v1/calls/internal/originate/extra", None),
+)
 
 RESULTS: list[tuple[str, str]] = []
 
@@ -109,11 +128,15 @@ def read_env(path: Path) -> dict[str, str]:
     return values
 
 
-def run(argv: list[str], timeout: int = 10) -> tuple[int, str]:
+def run(argv: list[str], timeout: int = 10, merge_stderr: bool = False) -> tuple[int, str]:
     if shutil.which(argv[0]) is None:
         return 127, ""
     try:
-        done = subprocess.run(argv, capture_output=True, text=True, timeout=timeout, check=False)
+        done = subprocess.run(
+            argv, stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT if merge_stderr else subprocess.PIPE,
+            text=True, timeout=timeout, check=False,
+        )
     except (OSError, subprocess.TimeoutExpired):
         return 124, ""
     return done.returncode, done.stdout
@@ -154,30 +177,49 @@ def service_ids() -> tuple[int | None, int | None]:
         return None, None
 
 
-def check_adapter(env: dict[str, str]) -> dict | None:
-    code, out = run(["systemctl", "is-active", ADAPTER_UNIT])
-    check("adapter_service_active", "PASS" if out.strip() == "active" else "FAIL", out.strip() or f"rc={code}")
+def check_window_env(env: dict[str, str], label: str) -> None:
+    """The env the adapter runs with during the call window.
 
+    scripts/validate_runtime.py (ExecStartPre) couples profile and gate: the
+    internal-test profile refuses to start unless the gate is "true", and every
+    other profile refuses to start unless it is "false". So the window is
+    entered and left by swapping the whole env file, never by flipping the gate.
+    """
     profile = env.get("CODESTRA_ADAPTER_DEPLOYMENT", "")
-    check("adapter_profile", "PASS" if profile == PROFILE else "FAIL", f"deployment={profile or 'unset'} required={PROFILE}")
-    backend = env.get("CODESTRA_ADAPTER_BACKEND", "")
-    check("adapter_backend_mysql", "PASS" if backend == "mysql" else "FAIL", f"backend={backend or 'unset'}")
-    enabled = [name for name in UNRELATED_GATES if env.get(name, "false") != "false"]
-    check("unrelated_gates_off", "FAIL" if enabled else "PASS", ("enabled=" + ",".join(enabled)) if enabled else "")
+    check(f"{label}_profile", "PASS" if profile == PROFILE else "FAIL",
+          f"deployment={profile or 'unset'} required={PROFILE}")
     gate = env.get("ENABLE_INTERNAL_TEST_CALLING", "false")
-    # Reported, not required: the runbook turns this on only for the call window.
-    check("internal_call_gate", "INFO", f"ENABLE_INTERNAL_TEST_CALLING={gate}")
+    check(f"{label}_internal_call_gate", "PASS" if gate == "true" else "FAIL",
+          f"ENABLE_INTERNAL_TEST_CALLING={gate} (validate_runtime.py requires true for {PROFILE})")
+    backend = env.get("CODESTRA_ADAPTER_BACKEND", "")
+    check(f"{label}_backend_mysql", "PASS" if backend == "mysql" else "FAIL", f"backend={backend or 'unset'}")
+    enabled = [name for name in UNRELATED_GATES if env.get(name, "false") != "false"]
+    check(f"{label}_unrelated_gates_off", "FAIL" if enabled else "PASS",
+          ("enabled=" + ",".join(enabled)) if enabled else "")
     required = env.get("CODESTRA_RELEASE_METADATA_REQUIRED", "false")
-    check("release_metadata_required", "PASS" if required == "true" else "FAIL", f"value={required}")
-
+    check(f"{label}_release_metadata_required", "PASS" if required == "true" else "FAIL", f"value={required}")
     for key, default in (
         ("CODESTRA_INTERNAL_CALL_STATE", "/var/lib/codestra-vicidial/internal-calls.sqlite3"),
         ("CODESTRA_ADAPTER_STATE", "/var/lib/codestra-vicidial/state.sqlite3"),
     ):
         path = Path(env.get(key, default))
-        inside = ADAPTER_WRITABLE in path.parents
-        check(f"writable_path_{key.lower()}", "PASS" if inside else "FAIL",
+        check(f"{label}_writable_{key.lower()}", "PASS" if ADAPTER_WRITABLE in path.parents else "FAIL",
               f"path={path} unit ReadWritePaths={ADAPTER_WRITABLE}")
+
+
+def check_live_adapter(env: dict[str, str], phase: str) -> str | None:
+    """Service, /version and /ready as they are right now; returns the release SHA."""
+    code, out = run(["systemctl", "is-active", ADAPTER_UNIT])
+    check("adapter_service_active", "PASS" if out.strip() == "active" else "FAIL", out.strip() or f"rc={code}")
+
+    profile = env.get("CODESTRA_ADAPTER_DEPLOYMENT", "staging-read-only")
+    gate = env.get("ENABLE_INTERNAL_TEST_CALLING", "false")
+    if phase == "window":
+        check_window_env(env, "live")
+    else:
+        # Before and after the window the adapter must be on its steady profile.
+        check("live_steady_profile", "PASS" if profile != PROFILE and gate == "false" else "FAIL",
+              f"deployment={profile} ENABLE_INTERNAL_TEST_CALLING={gate}")
 
     status, version = get_json("/version")
     sha = (version or {}).get("git_sha")
@@ -187,18 +229,24 @@ def check_adapter(env: dict[str, str]) -> dict | None:
     status, ready = get_json("/ready")
     if ready is None:
         check("adapter_ready", "FAIL", f"http={status}")
-        return {"git_sha": sha}
+        return sha
     checks = ready.get("checks") or {}
     failing = sorted(k for k, v in checks.items() if v is not True)
     check("adapter_ready", "PASS" if status == 200 and ready.get("status") == "ready" else "FAIL",
           f"http={status} status={ready.get('status')} profile={ready.get('deployment_profile')} "
           f"failing_checks={','.join(failing) or 'none'}")
-    check("adapter_ready_internal_call_policy",
-          "PASS" if checks.get("internal_call_policy") is True else "FAIL",
-          f"value={checks.get('internal_call_policy')}")
+    calling = ready.get("internal_test_calling")
+    if phase == "window":
+        check("adapter_ready_internal_call_policy",
+              "PASS" if checks.get("internal_call_policy") is True else "FAIL",
+              f"value={checks.get('internal_call_policy')}")
+        check("adapter_internal_test_calling_on", "PASS" if calling is True else "FAIL", f"value={calling}")
+    else:
+        check("adapter_internal_test_calling_off", "PASS" if calling is False else "FAIL",
+              f"value={calling} profile={ready.get('deployment_profile')}")
     check("adapter_customer_traffic_off", "PASS" if ready.get("customer_traffic_authorized") is False else "FAIL")
     check("adapter_production_dialing_off", "PASS" if ready.get("production_dialing") is False else "FAIL")
-    return {"git_sha": sha}
+    return sha
 
 
 def check_policy(env: dict[str, str], release_sha: str | None) -> str | None:
@@ -254,7 +302,7 @@ def check_policy(env: dict[str, str], release_sha: str | None) -> str | None:
     return route
 
 
-def check_state_store(env: dict[str, str]) -> None:
+def check_state_store(env: dict[str, str], phase: str) -> None:
     path = Path(env.get("CODESTRA_INTERNAL_CALL_STATE", "/var/lib/codestra-vicidial/internal-calls.sqlite3"))
     if not path.exists():
         check("one_call_unused", "PASS", f"no execution store yet path={path}")
@@ -265,7 +313,11 @@ def check_state_store(env: dict[str, str]) -> None:
     except sqlite3.Error as exc:
         check("one_call_unused", "FAIL", f"unreadable path={path} error={type(exc).__name__}")
         return
-    if rows:
+    if rows and phase == "closed":
+        # Expected after the call: the grant is consumed and blocks any other call.
+        check("one_call_consumed", "INFO", f"rows={len(rows)} operation={rows[0][0]} state={rows[0][1]} "
+              f"hangup={rows[0][2]}")
+    elif rows:
         check("one_call_unused", "FAIL",
               f"already consumed rows={len(rows)} first={rows[0][0]} state={rows[0][1]} "
               "(administrator reconciliation required before another call)")
@@ -289,9 +341,15 @@ def check_ami_credentials(env: dict[str, str]) -> None:
     check("ami_credential_protected",
           "PASS" if not stat.S_ISLNK(info.st_mode) and protected_mode_ok(info, uid, gid) else "FAIL",
           f"uid={info.st_uid} gid={info.st_gid} mode={oct(info.st_mode & 0o777)}")
-    host = config.get("host", "127.0.0.1")
+    host = config.get("host") if isinstance(config, dict) else None
     check("ami_loopback_only", "PASS" if host in {"127.0.0.1", "localhost"} else "FAIL", f"host={host}")
-    check("ami_credential_fields", "PASS" if config.get("username") and config.get("secret") else "FAIL")
+    # validate_runtime.py requires exactly these keys and an integer port.
+    keys = sorted(config) if isinstance(config, dict) else []
+    port = config.get("port") if isinstance(config, dict) else None
+    check("ami_credential_schema",
+          "PASS" if keys == ["host", "port", "secret", "username"] and type(port) is int
+          and 1 <= port <= 65535 and config.get("username") and config.get("secret") else "FAIL",
+          f"keys={','.join(keys)}")
 
 
 def parse_dialplan(out: str) -> list[dict] | None:
@@ -343,7 +401,30 @@ def check_pjsip() -> None:
           f"contacts={len(contacts)} states={','.join(contacts) or 'none'}")
 
 
-def check_identity() -> None:
+def identity_findings(fields: list[str]) -> tuple[list[str], dict[str, str]]:
+    """Split the appolon row into binding problems and activation state.
+
+    Binding (level, group, campaign ACL, phone login/dialplan) must hold in every
+    phase. Activation (user, phone, campaign active) is Y only inside the window.
+    """
+    active, level, group, allowed, phone, campaign = fields
+    phone_active, _, dialplan = (phone or "").partition(":")
+    campaigns = allowed.strip()[:-1].split() if allowed.strip().endswith("-") else None
+    problems = []
+    if level != "8":
+        problems.append(f"user_level={level}")
+    if group != "WEBTEST_SYN":
+        problems.append(f"user_group={group}")
+    if campaigns != ["TEST_SYN"]:
+        problems.append(f"allowed_campaigns={allowed.strip()}")
+    if dialplan != "6901":
+        problems.append(f"phone={phone or 'missing'}")
+    if campaign not in {"Y", "N"}:
+        problems.append("campaign_missing")
+    return problems, {"user": active, "phone": phone_active, "campaign": campaign}
+
+
+def check_identity(phase: str) -> None:
     query = (
         "SELECT u.active,u.user_level,u.user_group,g.allowed_campaigns,"
         "(SELECT CONCAT(p.active,':',p.dialplan_number) FROM phones p "
@@ -354,28 +435,23 @@ def check_identity() -> None:
     )
     code, out = run(["mysql", "--batch", "--skip-column-names", "asterisk", "-e", query])
     if code != 0:
-        check("vicidial_identity_ready", "UNKNOWN", f"mysql rc={code} (run with local socket access)")
+        check("vicidial_identity_binding", "UNKNOWN", f"mysql rc={code} (run with local socket access)")
         return
     fields = out.rstrip("\n").split("\t") if out.strip() else []
     if len(fields) != 6:
-        check("vicidial_identity_ready", "FAIL", "appolon user or group missing")
+        check("vicidial_identity_binding", "FAIL", "appolon user or group missing")
         return
-    active, level, group, allowed, phone, campaign = fields
-    campaigns = allowed.strip()[:-1].split() if allowed.strip().endswith("-") else None
-    problems = []
-    if active != "Y":
-        problems.append(f"user_active={active}")
-    if level != "8":
-        problems.append(f"user_level={level}")
-    if group != "WEBTEST_SYN":
-        problems.append(f"user_group={group}")
-    if campaigns != ["TEST_SYN"]:
-        problems.append(f"allowed_campaigns={allowed.strip()}")
-    if phone != "Y:6901":
-        problems.append(f"phone={phone}")
-    if campaign != "Y":
-        problems.append(f"campaign_active={campaign}")
-    check("vicidial_identity_ready", "FAIL" if problems else "PASS", " ".join(problems))
+    problems, activation = identity_findings(fields)
+    check("vicidial_identity_binding", "FAIL" if problems else "PASS", " ".join(problems))
+    state = " ".join(f"{k}_active={v}" for k, v in activation.items())
+    if phase == "window":
+        # internal_call_identity_ready() refuses to dial unless all three are Y.
+        check("vicidial_identity_activated", "PASS" if set(activation.values()) == {"Y"} else "FAIL", state)
+    elif phase == "closed":
+        check("vicidial_identity_deactivated", "PASS" if activation["user"] == "N" else "FAIL", state)
+    else:
+        # Steady state (appolon active=N) is expected before the window.
+        check("vicidial_identity_activation", "INFO", state + " (activated only inside the window)")
 
 
 def check_lifecycle(env: dict[str, str], gateway_env: dict[str, str]) -> None:
@@ -409,33 +485,94 @@ def check_lifecycle(env: dict[str, str], gateway_env: dict[str, str]) -> None:
         check("ami_gateway_status", "UNKNOWN", f"no status file path={status_path}")
 
 
-def check_apache_route() -> None:
-    # Middleware requires an HTTPS *origin* (no path prefix), so the private
-    # ingress must forward /v1/calls/internal/... itself; /restricted-vicidial/
-    # alone is not reachable by the worker.
-    hits, prefixed = [], []
-    for root in APACHE_ROOTS:
-        if not root.is_dir():
+def strip_apache_comments(text: str) -> str:
+    return "\n".join(line for line in text.splitlines() if not line.lstrip().startswith("#"))
+
+
+def ingress_problems(text: str) -> list[str]:
+    """Check the directives Apache actually applies to /v1/calls/internal/.
+
+    Middleware requires a bare HTTPS origin, so the private vhost itself must
+    proxy /v1/calls/internal/ and guard each route by method, source IP and
+    client certificate, denying every other path under it.
+    """
+    text = strip_apache_comments(text)
+    problems = []
+    if not re.search(INGRESS_PROXY, text, re.M):
+        problems.append("proxy_missing")
+    blocks = [
+        (re.compile(pattern), body)
+        for pattern, body in re.findall(r'<LocationMatch\s+"([^"]+)"\s*>(.*?)</LocationMatch>', text, re.S | re.I)
+    ]
+    for path, method in INGRESS_EXPECTATIONS:
+        bodies = [body for pattern, body in blocks if pattern.search(path)]
+        if len(bodies) != 1:
+            problems.append(f"{path}:rules={len(bodies)}")
             continue
-        for conf in root.rglob("*"):
+        body = bodies[0]
+        if method is None:
+            ok = re.search(r"^\s*Require\s+all\s+denied\s*$", body, re.M)
+        else:
+            ok = (
+                re.search(rf"^\s*Require\s+method\s+{method}\s*$", body, re.M)
+                and re.search(r"^\s*Require\s+ip\s+10\.40\.0\.1\s*$", body, re.M)
+                and "%{SSL_CLIENT_VERIFY} == 'SUCCESS'" in body
+            )
+        if not ok:
+            problems.append(f"{path}:guard")
+    return problems
+
+
+def vhost_block(path: Path, line: int, server_root: Path, depth: int = 0) -> str:
+    """Text of the <VirtualHost> starting at path:line, with its Includes expanded."""
+    lines = path.read_text(errors="replace").splitlines()[line - 1:]
+    block = []
+    for raw in lines:
+        block.append(raw)
+        if raw.strip().lower().startswith("</virtualhost"):
+            break
+    return expand_includes("\n".join(block), server_root, depth)
+
+
+def expand_includes(text: str, server_root: Path, depth: int = 0) -> str:
+    out = []
+    for raw in text.splitlines():
+        found = re.match(r'^\s*Include(?:Optional)?\s+"?([^"\s]+)"?\s*$', raw, re.I)
+        if not found or depth > 3:
+            out.append(raw)
+            continue
+        pattern = found.group(1)
+        pattern = pattern if pattern.startswith("/") else str(server_root / pattern)
+        for name in sorted(glob.glob(pattern)):
             try:
-                if not conf.is_file() or conf.stat().st_size > 1_000_000:
-                    continue
-                text = conf.read_text(errors="replace")
+                out.append(expand_includes(Path(name).read_text(errors="replace"), server_root, depth + 1))
             except OSError:
                 continue
-            if re.search(r"calls/internal", text) or re.search(r'ProxyPass\s+"?/"?\s+"?http://127\.0\.0\.1:8097/?', text):
-                hits.append(str(conf))
-            elif "127.0.0.1:8097" in text:
-                prefixed.append(str(conf))
-    if hits:
-        check("ingress_internal_call_route", "PASS", "files=" + ",".join(hits[:3]))
-    elif prefixed:
-        check("ingress_internal_call_route", "FAIL",
-              "adapter only proxied under a path prefix (files=" + ",".join(prefixed[:3]) +
-              "); Middleware sends /v1/calls/internal/* to the bare origin")
-    else:
-        check("ingress_internal_call_route", "UNKNOWN", "no Apache config referencing 127.0.0.1:8097 found")
+    return "\n".join(out)
+
+
+def check_apache_route() -> None:
+    ctl = next((name for name in ("apachectl", "apache2ctl", "httpd") if shutil.which(name)), None)
+    if ctl is None:
+        check("ingress_internal_call_route", "UNKNOWN", "apachectl not found")
+        return
+    code, out = run([ctl, "-S"], merge_stderr=True)
+    start = out.find(INGRESS_VHOST)
+    located = re.search(r"\((/[^:()]+):(\d+)\)", out[start:]) if start >= 0 else None
+    if code != 0 or located is None:
+        check("ingress_internal_call_route", "UNKNOWN", f"{INGRESS_VHOST} vhost not in `{ctl} -S` rc={code}")
+        return
+    root = re.search(r'^ServerRoot:\s*"([^"]+)"', out, re.M)
+    server_root = Path(root.group(1)) if root else Path("/etc/httpd")
+    vhost_file, vhost_line = Path(located.group(1)), int(located.group(2))
+    try:
+        text = vhost_block(vhost_file, vhost_line, server_root)
+    except OSError:
+        check("ingress_internal_call_route", "UNKNOWN", f"cannot read {vhost_file}")
+        return
+    problems = ingress_problems(text)
+    check("ingress_internal_call_route", "FAIL" if problems else "PASS",
+          f"vhost={vhost_file}:{vhost_line}" + (f" problems={','.join(problems)}" if problems else ""))
 
 
 def check_middleware(path: Path, grant_path: Path | None) -> None:
@@ -514,48 +651,91 @@ def check_middleware(path: Path, grant_path: Path | None) -> None:
 
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
-    parser.add_argument("--adapter-env-file", type=Path, default=ADAPTER_ENV)
+    parser.add_argument("--phase", choices=("preflight", "window", "closed"), default="preflight",
+                        help="preflight: steady state + staged window env (T-1); "
+                             "window: after activation, before dialing; closed: after close-out")
+    parser.add_argument("--adapter-env-file", type=Path, default=ADAPTER_ENV,
+                        help="the env file the adapter is running with now")
+    parser.add_argument("--window-env-file", type=Path,
+                        help="preflight: the staged env to install for the window (required)")
+    parser.add_argument("--steady-env-file", type=Path,
+                        help="saved copy of the steady env; preflight/closed compare it with the live file")
     parser.add_argument("--ami-gateway-env-file", type=Path)
     parser.add_argument("--middleware-env-file", type=Path)
     parser.add_argument("--middleware-grant-file", type=Path)
     parser.add_argument("--middleware-only", action="store_true")
     args = parser.parse_args()
+    if args.phase == "preflight" and not args.middleware_only and args.window_env_file is None:
+        parser.error("--phase preflight requires --window-env-file (the staged window env)")
 
-    print(f"PROBE internal-call-readiness host={os.uname().nodename} "
+    print(f"PROBE internal-call-readiness phase={args.phase} host={os.uname().nodename} "
           f"at={datetime.now(timezone.utc).isoformat(timespec='seconds')} mode=read-only")
     if not args.middleware_only:
         if os.geteuid() != 0:
             print("PROBE warning: not root; protected files will read as FAIL/UNKNOWN", file=sys.stderr)
-        try:
-            env = read_env(args.adapter_env_file)
-        except OSError:
-            check("adapter_env_file", "FAIL", f"unreadable path={args.adapter_env_file}")
-            env = {}
-        gateway_env = {}
-        if args.ami_gateway_env_file:
-            try:
-                gateway_env = read_env(args.ami_gateway_env_file)
-            except OSError:
-                check("ami_gateway_env_file", "FAIL", f"unreadable path={args.ami_gateway_env_file}")
-        version = check_adapter(env) or {}
-        policy_route = check_policy(env, version.get("git_sha"))
-        check_state_store(env)
-        check_ami_credentials(env)
+        live_env = load_env(args.adapter_env_file, "adapter_env_file")
+        gateway_env = load_env(args.ami_gateway_env_file, "ami_gateway_env_file") if args.ami_gateway_env_file else {}
+        if args.steady_env_file and args.phase in {"preflight", "closed"}:
+            check_steady_copy(args.adapter_env_file, args.steady_env_file, args.phase)
+        # The env whose policy/AMI/state paths the call will use.
+        call_env = live_env
+        if args.phase == "preflight":
+            call_env = load_env(args.window_env_file, "window_env_file")
+            check_window_env(call_env, "staged")
+        release_sha = check_live_adapter(live_env, args.phase)
+        if args.phase != "closed":
+            policy_route = check_policy(call_env, release_sha)
+            check_ami_credentials(call_env)
+        else:
+            policy_route = None
+        check_state_store(call_env, args.phase)
         check_dialplan(policy_route)
         check_pjsip()
-        check_identity()
-        check_lifecycle(env, gateway_env)
+        check_identity(args.phase)
+        check_lifecycle(call_env, gateway_env)
         check_apache_route()
     if args.middleware_env_file:
         check_middleware(args.middleware_env_file, args.middleware_grant_file)
 
-    for manual in ("backup_restore_verified", "rollback_verified", "change_ticket_approved"):
-        check(manual, "MANUAL", "operator must confirm; not machine-checkable")
+    if args.phase == "preflight":
+        for manual in ("backup_restore_verified", "rollback_verified", "change_ticket_approved"):
+            check(manual, "MANUAL", "operator must confirm; not machine-checkable")
     blocking = [n for n, s in RESULTS if s in {"FAIL", "UNKNOWN"}]
+    verdicts = {
+        "preflight": ("PREFLIGHT_BLOCKED", "PREFLIGHT_PASS_PENDING_MANUAL_CONFIRMATION"),
+        "window": ("WINDOW_NOT_READY", "WINDOW_READY_TO_CALL"),
+        "closed": ("CLOSEOUT_INCOMPLETE", "CLOSEOUT_VERIFIED"),
+    }[args.phase]
     print("BLOCKING=" + (",".join(blocking) or "none"))
-    print("READINESS=" + ("NOT_READY" if blocking else "READY_PENDING_MANUAL_CONFIRMATION"))
-    print("WRITES_PERFORMED=NONE SECRETS_PRINTED=NONE LIVE_CALLS_PLACED=0")
+    print("VERDICT=" + verdicts[0 if blocking else 1])
+    print("WRITES_PERFORMED=NONE SECRETS_PRINTED=NONE PROBE_CALLS_PLACED=0")
     return 1 if blocking else 0
+
+
+def load_env(path: Path, label: str) -> dict[str, str]:
+    try:
+        return read_env(path)
+    except OSError:
+        check(label, "FAIL", f"unreadable path={path}")
+        return {}
+
+
+def check_steady_copy(live: Path, steady: Path, phase: str) -> None:
+    """Rollback evidence: the saved steady env must equal the live file.
+
+    Before the window this proves the copy that close-out will restore is the
+    real steady configuration; after close-out it proves it was restored.
+    """
+    try:
+        same = read_env(live) == read_env(steady)
+        info = os.lstat(steady)
+    except OSError:
+        check("steady_env_copy", "FAIL", f"unreadable path={steady}")
+        return
+    protected = stat.S_ISREG(info.st_mode) and info.st_uid == 0 and not info.st_mode & 0o077
+    check("steady_env_copy", "PASS" if same and protected else "FAIL",
+          f"path={steady} matches_live={same} mode={oct(info.st_mode & 0o777)} "
+          + ("(restore target)" if phase == "preflight" else "(restored)"))
 
 
 if __name__ == "__main__":
