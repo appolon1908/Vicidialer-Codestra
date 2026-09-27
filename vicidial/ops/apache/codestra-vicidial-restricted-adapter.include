@@ -18,3 +18,33 @@
 
 ProxyPass "/restricted-vicidial/" "http://127.0.0.1:8097/" connectiontimeout=2 timeout=10
 ProxyPassReverse "/restricted-vicidial/" "http://127.0.0.1:8097/"
+
+# Middleware's bounded internal-call worker requires VICIDIAL_INTERNAL_CALL_BASE_URL
+# to be a bare HTTPS origin, so its three routes are exposed at the origin root
+# (not under /restricted-vicidial/) with the same source-IP and mTLS guard.
+<LocationMatch "^/v1/calls/internal/(?:originate|[A-Za-z0-9][A-Za-z0-9._:-]{7,127}/hangup)$">
+    <RequireAll>
+        Require method POST
+        Require ip 10.40.0.1
+        Require expr "%{SSL_CLIENT_VERIFY} == 'SUCCESS'"
+    </RequireAll>
+    RequestHeader set X-Forwarded-For "%{REMOTE_ADDR}s"
+    RequestHeader unset Proxy early
+</LocationMatch>
+
+<LocationMatch "^/v1/calls/internal/(?!originate$)[A-Za-z0-9][A-Za-z0-9._:-]{7,127}$">
+    <RequireAll>
+        Require method GET
+        Require ip 10.40.0.1
+        Require expr "%{SSL_CLIENT_VERIFY} == 'SUCCESS'"
+    </RequireAll>
+    RequestHeader set X-Forwarded-For "%{REMOTE_ADDR}s"
+    RequestHeader unset Proxy early
+</LocationMatch>
+
+<LocationMatch "^/v1/calls/internal/(?!(?:originate|[A-Za-z0-9][A-Za-z0-9._:-]{7,127}(?:/hangup)?)$)">
+    Require all denied
+</LocationMatch>
+
+ProxyPass "/v1/calls/internal/" "http://127.0.0.1:8097/v1/calls/internal/" connectiontimeout=2 timeout=10
+ProxyPassReverse "/v1/calls/internal/" "http://127.0.0.1:8097/v1/calls/internal/"
