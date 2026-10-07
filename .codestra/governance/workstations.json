@@ -1,0 +1,621 @@
+{
+  "schema_version": "codestra.workstations.v3",
+  "family": "contact-center",
+  "product": "Vicidialer-Codestra",
+  "sections": [
+    {
+      "section": "vici-01-telephony-runtime",
+      "branch": "section/vici-01-telephony-runtime",
+      "order": 1,
+      "depends_on": [],
+      "subsections": [
+        {
+          "subsection": "01-asterisk-sip",
+          "workstation_id": "vicidialer-codestra::vici-01-telephony-runtime::01-asterisk-sip",
+          "branch": "subsection/vici-01-telephony-runtime--01-asterisk-sip",
+          "parent_branch": "section/vici-01-telephony-runtime",
+          "order": 1,
+          "depends_on": [],
+          "required_gates": [
+            "lint",
+            "unit",
+            "integration",
+            "contract",
+            "security",
+            "clean_tree",
+            "remote_sha_match",
+            "ci_exact_sha",
+            "review",
+            "regression"
+          ],
+          "worktree": "/srv/codestra/workstations/Vicidialer-Codestra/sections/vici-01-telephony-runtime/subsections/01-asterisk-sip/repo"
+        },
+        {
+          "subsection": "02-carriers",
+          "workstation_id": "vicidialer-codestra::vici-01-telephony-runtime::02-carriers",
+          "branch": "subsection/vici-01-telephony-runtime--02-carriers",
+          "parent_branch": "section/vici-01-telephony-runtime",
+          "order": 2,
+          "depends_on": [
+            "vicidialer-codestra::vici-01-telephony-runtime::01-asterisk-sip"
+          ],
+          "required_gates": [
+            "lint",
+            "unit",
+            "integration",
+            "contract",
+            "security",
+            "clean_tree",
+            "remote_sha_match",
+            "ci_exact_sha",
+            "review",
+            "regression"
+          ],
+          "worktree": "/srv/codestra/workstations/Vicidialer-Codestra/sections/vici-01-telephony-runtime/subsections/02-carriers/repo"
+        },
+        {
+          "subsection": "03-runtime-config",
+          "workstation_id": "vicidialer-codestra::vici-01-telephony-runtime::03-runtime-config",
+          "branch": "subsection/vici-01-telephony-runtime--03-runtime-config",
+          "parent_branch": "section/vici-01-telephony-runtime",
+          "order": 3,
+          "depends_on": [
+            "vicidialer-codestra::vici-01-telephony-runtime::02-carriers"
+          ],
+          "required_gates": [
+            "lint",
+            "unit",
+            "integration",
+            "contract",
+            "security",
+            "clean_tree",
+            "remote_sha_match",
+            "ci_exact_sha",
+            "review",
+            "regression"
+          ],
+          "worktree": "/srv/codestra/workstations/Vicidialer-Codestra/sections/vici-01-telephony-runtime/subsections/03-runtime-config/repo"
+        }
+      ]
+    },
+    {
+      "section": "vici-02-campaign-engine",
+      "branch": "section/vici-02-campaign-engine",
+      "order": 2,
+      "depends_on": [
+        "vicidialer-codestra::vici-01-telephony-runtime"
+      ],
+      "subsections": [
+        {
+          "subsection": "01-campaigns",
+          "workstation_id": "vicidialer-codestra::vici-02-campaign-engine::01-campaigns",
+          "branch": "subsection/vici-02-campaign-engine--01-campaigns",
+          "parent_branch": "section/vici-02-campaign-engine",
+          "order": 1,
+          "depends_on": [],
+          "required_gates": [
+            "lint",
+            "unit",
+            "integration",
+            "contract",
+            "security",
+            "clean_tree",
+            "remote_sha_match",
+            "ci_exact_sha",
+            "review",
+            "regression"
+          ],
+          "worktree": "/srv/codestra/workstations/Vicidialer-Codestra/sections/vici-02-campaign-engine/subsections/01-campaigns/repo"
+        },
+        {
+          "subsection": "02-lists-statuses",
+          "workstation_id": "vicidialer-codestra::vici-02-campaign-engine::02-lists-statuses",
+          "branch": "subsection/vici-02-campaign-engine--02-lists-statuses",
+          "parent_branch": "section/vici-02-campaign-engine",
+          "order": 2,
+          "depends_on": [
+            "vicidialer-codestra::vici-02-campaign-engine::01-campaigns"
+          ],
+          "required_gates": [
+            "lint",
+            "unit",
+            "integration",
+            "contract",
+            "security",
+            "clean_tree",
+            "remote_sha_match",
+            "ci_exact_sha",
+            "review",
+            "regression"
+          ],
+          "worktree": "/srv/codestra/workstations/Vicidialer-Codestra/sections/vici-02-campaign-engine/subsections/02-lists-statuses/repo"
+        },
+        {
+          "subsection": "03-dispositions",
+          "workstation_id": "vicidialer-codestra::vici-02-campaign-engine::03-dispositions",
+          "branch": "subsection/vici-02-campaign-engine--03-dispositions",
+          "parent_branch": "section/vici-02-campaign-engine",
+          "order": 3,
+          "depends_on": [
+            "vicidialer-codestra::vici-02-campaign-engine::02-lists-statuses"
+          ],
+          "required_gates": [
+            "lint",
+            "unit",
+            "integration",
+            "contract",
+            "security",
+            "clean_tree",
+            "remote_sha_match",
+            "ci_exact_sha",
+            "review",
+            "regression"
+          ],
+          "worktree": "/srv/codestra/workstations/Vicidialer-Codestra/sections/vici-02-campaign-engine/subsections/03-dispositions/repo"
+        }
+      ]
+    },
+    {
+      "section": "vici-03-dialing",
+      "branch": "section/vici-03-dialing",
+      "order": 3,
+      "depends_on": [
+        "vicidialer-codestra::vici-02-campaign-engine"
+      ],
+      "subsections": [
+        {
+          "subsection": "01-manual-preview",
+          "workstation_id": "vicidialer-codestra::vici-03-dialing::01-manual-preview",
+          "branch": "subsection/vici-03-dialing--01-manual-preview",
+          "parent_branch": "section/vici-03-dialing",
+          "order": 1,
+          "depends_on": [],
+          "required_gates": [
+            "lint",
+            "unit",
+            "integration",
+            "contract",
+            "security",
+            "clean_tree",
+            "remote_sha_match",
+            "ci_exact_sha",
+            "review",
+            "regression"
+          ],
+          "worktree": "/srv/codestra/workstations/Vicidialer-Codestra/sections/vici-03-dialing/subsections/01-manual-preview/repo"
+        },
+        {
+          "subsection": "02-predictive",
+          "workstation_id": "vicidialer-codestra::vici-03-dialing::02-predictive",
+          "branch": "subsection/vici-03-dialing--02-predictive",
+          "parent_branch": "section/vici-03-dialing",
+          "order": 2,
+          "depends_on": [
+            "vicidialer-codestra::vici-03-dialing::01-manual-preview"
+          ],
+          "required_gates": [
+            "lint",
+            "unit",
+            "integration",
+            "contract",
+            "security",
+            "clean_tree",
+            "remote_sha_match",
+            "ci_exact_sha",
+            "review",
+            "regression"
+          ],
+          "worktree": "/srv/codestra/workstations/Vicidialer-Codestra/sections/vici-03-dialing/subsections/02-predictive/repo"
+        },
+        {
+          "subsection": "03-call-controls",
+          "workstation_id": "vicidialer-codestra::vici-03-dialing::03-call-controls",
+          "branch": "subsection/vici-03-dialing--03-call-controls",
+          "parent_branch": "section/vici-03-dialing",
+          "order": 3,
+          "depends_on": [
+            "vicidialer-codestra::vici-03-dialing::02-predictive"
+          ],
+          "required_gates": [
+            "lint",
+            "unit",
+            "integration",
+            "contract",
+            "security",
+            "clean_tree",
+            "remote_sha_match",
+            "ci_exact_sha",
+            "review",
+            "regression"
+          ],
+          "worktree": "/srv/codestra/workstations/Vicidialer-Codestra/sections/vici-03-dialing/subsections/03-call-controls/repo"
+        }
+      ]
+    },
+    {
+      "section": "vici-04-routing",
+      "branch": "section/vici-04-routing",
+      "order": 4,
+      "depends_on": [
+        "vicidialer-codestra::vici-03-dialing"
+      ],
+      "subsections": [
+        {
+          "subsection": "01-closer-groups",
+          "workstation_id": "vicidialer-codestra::vici-04-routing::01-closer-groups",
+          "branch": "subsection/vici-04-routing--01-closer-groups",
+          "parent_branch": "section/vici-04-routing",
+          "order": 1,
+          "depends_on": [],
+          "required_gates": [
+            "lint",
+            "unit",
+            "integration",
+            "contract",
+            "security",
+            "clean_tree",
+            "remote_sha_match",
+            "ci_exact_sha",
+            "review",
+            "regression"
+          ],
+          "worktree": "/srv/codestra/workstations/Vicidialer-Codestra/sections/vici-04-routing/subsections/01-closer-groups/repo"
+        },
+        {
+          "subsection": "02-overflow",
+          "workstation_id": "vicidialer-codestra::vici-04-routing::02-overflow",
+          "branch": "subsection/vici-04-routing--02-overflow",
+          "parent_branch": "section/vici-04-routing",
+          "order": 2,
+          "depends_on": [
+            "vicidialer-codestra::vici-04-routing::01-closer-groups"
+          ],
+          "required_gates": [
+            "lint",
+            "unit",
+            "integration",
+            "contract",
+            "security",
+            "clean_tree",
+            "remote_sha_match",
+            "ci_exact_sha",
+            "review",
+            "regression"
+          ],
+          "worktree": "/srv/codestra/workstations/Vicidialer-Codestra/sections/vici-04-routing/subsections/02-overflow/repo"
+        },
+        {
+          "subsection": "03-callbacks",
+          "workstation_id": "vicidialer-codestra::vici-04-routing::03-callbacks",
+          "branch": "subsection/vici-04-routing--03-callbacks",
+          "parent_branch": "section/vici-04-routing",
+          "order": 3,
+          "depends_on": [
+            "vicidialer-codestra::vici-04-routing::02-overflow"
+          ],
+          "required_gates": [
+            "lint",
+            "unit",
+            "integration",
+            "contract",
+            "security",
+            "clean_tree",
+            "remote_sha_match",
+            "ci_exact_sha",
+            "review",
+            "regression"
+          ],
+          "worktree": "/srv/codestra/workstations/Vicidialer-Codestra/sections/vici-04-routing/subsections/03-callbacks/repo"
+        }
+      ]
+    },
+    {
+      "section": "vici-05-agent-endpoints",
+      "branch": "section/vici-05-agent-endpoints",
+      "order": 5,
+      "depends_on": [
+        "vicidialer-codestra::vici-04-routing"
+      ],
+      "subsections": [
+        {
+          "subsection": "01-extensions",
+          "workstation_id": "vicidialer-codestra::vici-05-agent-endpoints::01-extensions",
+          "branch": "subsection/vici-05-agent-endpoints--01-extensions",
+          "parent_branch": "section/vici-05-agent-endpoints",
+          "order": 1,
+          "depends_on": [],
+          "required_gates": [
+            "lint",
+            "unit",
+            "integration",
+            "contract",
+            "security",
+            "clean_tree",
+            "remote_sha_match",
+            "ci_exact_sha",
+            "review",
+            "regression"
+          ],
+          "worktree": "/srv/codestra/workstations/Vicidialer-Codestra/sections/vici-05-agent-endpoints/subsections/01-extensions/repo"
+        },
+        {
+          "subsection": "02-webrtc-registration",
+          "workstation_id": "vicidialer-codestra::vici-05-agent-endpoints::02-webrtc-registration",
+          "branch": "subsection/vici-05-agent-endpoints--02-webrtc-registration",
+          "parent_branch": "section/vici-05-agent-endpoints",
+          "order": 2,
+          "depends_on": [
+            "vicidialer-codestra::vici-05-agent-endpoints::01-extensions"
+          ],
+          "required_gates": [
+            "lint",
+            "unit",
+            "integration",
+            "contract",
+            "security",
+            "clean_tree",
+            "remote_sha_match",
+            "ci_exact_sha",
+            "review",
+            "regression"
+          ],
+          "worktree": "/srv/codestra/workstations/Vicidialer-Codestra/sections/vici-05-agent-endpoints/subsections/02-webrtc-registration/repo"
+        },
+        {
+          "subsection": "03-presence",
+          "workstation_id": "vicidialer-codestra::vici-05-agent-endpoints::03-presence",
+          "branch": "subsection/vici-05-agent-endpoints--03-presence",
+          "parent_branch": "section/vici-05-agent-endpoints",
+          "order": 3,
+          "depends_on": [
+            "vicidialer-codestra::vici-05-agent-endpoints::02-webrtc-registration"
+          ],
+          "required_gates": [
+            "lint",
+            "unit",
+            "integration",
+            "contract",
+            "security",
+            "clean_tree",
+            "remote_sha_match",
+            "ci_exact_sha",
+            "review",
+            "regression"
+          ],
+          "worktree": "/srv/codestra/workstations/Vicidialer-Codestra/sections/vici-05-agent-endpoints/subsections/03-presence/repo"
+        }
+      ]
+    },
+    {
+      "section": "vici-06-recording",
+      "branch": "section/vici-06-recording",
+      "order": 6,
+      "depends_on": [
+        "vicidialer-codestra::vici-05-agent-endpoints"
+      ],
+      "subsections": [
+        {
+          "subsection": "01-recording",
+          "workstation_id": "vicidialer-codestra::vici-06-recording::01-recording",
+          "branch": "subsection/vici-06-recording--01-recording",
+          "parent_branch": "section/vici-06-recording",
+          "order": 1,
+          "depends_on": [],
+          "required_gates": [
+            "lint",
+            "unit",
+            "integration",
+            "contract",
+            "security",
+            "clean_tree",
+            "remote_sha_match",
+            "ci_exact_sha",
+            "review",
+            "regression"
+          ],
+          "worktree": "/srv/codestra/workstations/Vicidialer-Codestra/sections/vici-06-recording/subsections/01-recording/repo"
+        },
+        {
+          "subsection": "02-retention",
+          "workstation_id": "vicidialer-codestra::vici-06-recording::02-retention",
+          "branch": "subsection/vici-06-recording--02-retention",
+          "parent_branch": "section/vici-06-recording",
+          "order": 2,
+          "depends_on": [
+            "vicidialer-codestra::vici-06-recording::01-recording"
+          ],
+          "required_gates": [
+            "lint",
+            "unit",
+            "integration",
+            "contract",
+            "security",
+            "clean_tree",
+            "remote_sha_match",
+            "ci_exact_sha",
+            "review",
+            "regression"
+          ],
+          "worktree": "/srv/codestra/workstations/Vicidialer-Codestra/sections/vici-06-recording/subsections/02-retention/repo"
+        },
+        {
+          "subsection": "03-retrieval",
+          "workstation_id": "vicidialer-codestra::vici-06-recording::03-retrieval",
+          "branch": "subsection/vici-06-recording--03-retrieval",
+          "parent_branch": "section/vici-06-recording",
+          "order": 3,
+          "depends_on": [
+            "vicidialer-codestra::vici-06-recording::02-retention"
+          ],
+          "required_gates": [
+            "lint",
+            "unit",
+            "integration",
+            "contract",
+            "security",
+            "clean_tree",
+            "remote_sha_match",
+            "ci_exact_sha",
+            "review",
+            "regression"
+          ],
+          "worktree": "/srv/codestra/workstations/Vicidialer-Codestra/sections/vici-06-recording/subsections/03-retrieval/repo"
+        }
+      ]
+    },
+    {
+      "section": "vici-07-integration",
+      "branch": "section/vici-07-integration",
+      "order": 7,
+      "depends_on": [
+        "vicidialer-codestra::vici-06-recording"
+      ],
+      "subsections": [
+        {
+          "subsection": "01-middleware-api",
+          "workstation_id": "vicidialer-codestra::vici-07-integration::01-middleware-api",
+          "branch": "subsection/vici-07-integration--01-middleware-api",
+          "parent_branch": "section/vici-07-integration",
+          "order": 1,
+          "depends_on": [],
+          "required_gates": [
+            "lint",
+            "unit",
+            "integration",
+            "contract",
+            "security",
+            "clean_tree",
+            "remote_sha_match",
+            "ci_exact_sha",
+            "review",
+            "regression"
+          ],
+          "worktree": "/srv/codestra/workstations/Vicidialer-Codestra/sections/vici-07-integration/subsections/01-middleware-api/repo"
+        },
+        {
+          "subsection": "02-events",
+          "workstation_id": "vicidialer-codestra::vici-07-integration::02-events",
+          "branch": "subsection/vici-07-integration--02-events",
+          "parent_branch": "section/vici-07-integration",
+          "order": 2,
+          "depends_on": [
+            "vicidialer-codestra::vici-07-integration::01-middleware-api"
+          ],
+          "required_gates": [
+            "lint",
+            "unit",
+            "integration",
+            "contract",
+            "security",
+            "clean_tree",
+            "remote_sha_match",
+            "ci_exact_sha",
+            "review",
+            "regression"
+          ],
+          "worktree": "/srv/codestra/workstations/Vicidialer-Codestra/sections/vici-07-integration/subsections/02-events/repo"
+        },
+        {
+          "subsection": "03-reconciliation",
+          "workstation_id": "vicidialer-codestra::vici-07-integration::03-reconciliation",
+          "branch": "subsection/vici-07-integration--03-reconciliation",
+          "parent_branch": "section/vici-07-integration",
+          "order": 3,
+          "depends_on": [
+            "vicidialer-codestra::vici-07-integration::02-events"
+          ],
+          "required_gates": [
+            "lint",
+            "unit",
+            "integration",
+            "contract",
+            "security",
+            "clean_tree",
+            "remote_sha_match",
+            "ci_exact_sha",
+            "review",
+            "regression"
+          ],
+          "worktree": "/srv/codestra/workstations/Vicidialer-Codestra/sections/vici-07-integration/subsections/03-reconciliation/repo"
+        }
+      ]
+    },
+    {
+      "section": "vici-08-release",
+      "branch": "section/vici-08-release",
+      "order": 8,
+      "depends_on": [
+        "vicidialer-codestra::vici-07-integration"
+      ],
+      "subsections": [
+        {
+          "subsection": "01-observability",
+          "workstation_id": "vicidialer-codestra::vici-08-release::01-observability",
+          "branch": "subsection/vici-08-release--01-observability",
+          "parent_branch": "section/vici-08-release",
+          "order": 1,
+          "depends_on": [],
+          "required_gates": [
+            "lint",
+            "unit",
+            "integration",
+            "contract",
+            "security",
+            "clean_tree",
+            "remote_sha_match",
+            "ci_exact_sha",
+            "review",
+            "regression"
+          ],
+          "worktree": "/srv/codestra/workstations/Vicidialer-Codestra/sections/vici-08-release/subsections/01-observability/repo"
+        },
+        {
+          "subsection": "02-load-failover",
+          "workstation_id": "vicidialer-codestra::vici-08-release::02-load-failover",
+          "branch": "subsection/vici-08-release--02-load-failover",
+          "parent_branch": "section/vici-08-release",
+          "order": 2,
+          "depends_on": [
+            "vicidialer-codestra::vici-08-release::01-observability"
+          ],
+          "required_gates": [
+            "lint",
+            "unit",
+            "integration",
+            "contract",
+            "security",
+            "clean_tree",
+            "remote_sha_match",
+            "ci_exact_sha",
+            "review",
+            "regression"
+          ],
+          "worktree": "/srv/codestra/workstations/Vicidialer-Codestra/sections/vici-08-release/subsections/02-load-failover/repo"
+        },
+        {
+          "subsection": "03-certification-promotion",
+          "workstation_id": "vicidialer-codestra::vici-08-release::03-certification-promotion",
+          "branch": "subsection/vici-08-release--03-certification-promotion",
+          "parent_branch": "section/vici-08-release",
+          "order": 3,
+          "depends_on": [
+            "vicidialer-codestra::vici-08-release::02-load-failover"
+          ],
+          "required_gates": [
+            "lint",
+            "unit",
+            "integration",
+            "contract",
+            "security",
+            "clean_tree",
+            "remote_sha_match",
+            "ci_exact_sha",
+            "review",
+            "regression"
+          ],
+          "worktree": "/srv/codestra/workstations/Vicidialer-Codestra/sections/vici-08-release/subsections/03-certification-promotion/repo"
+        }
+      ]
+    }
+  ]
+}
