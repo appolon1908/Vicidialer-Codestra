@@ -1,91 +1,81 @@
-# AGENTS.md — Codestra VICIdial Production Authority
+# Codestra Agent Governance Standard
 
-Repository: `appolon1908-hue/Vicidialer-Codestra`
+Every task belongs to Product → Section → Subsection → Atomic Task.
 
-Primary runtime boundary:
+Valid promotion path only:
 
-- Codestra application/middleware side: `10.40.0.1` / `65.109.65.169`
-- VICIdial/Asterisk side: `10.40.0.2` / `65.21.67.207`
-- Canonical private adapter ingress: `10.40.0.2:8443`
-- Restricted adapter backend: `127.0.0.1:8097`
+atomic task → subsection branch → section branch → development → testing → staging → production
 
-Read these first:
+No other promotion path is accepted.
 
-- `docs/PRODUCTION_COMPLETION_MILESTONES.md`
-- `docs/VICIDIAL_ADAPTER_CONTRACT.md`
-- `vicidial/docs/AUTOMATIC_CAMPAIGN_PROVISIONING.md`
-- `RUNTIME_TO_SOURCE_RECONCILIATION.md`
-- the current consolidation PR and exact-head CI evidence
+## Ownership and leases
 
-## Non-negotiable architecture
+Each active subsection has exactly one implementation owner. Review, test, certification, and investigation agents may assist but must not independently edit the same implementation scope unless explicitly assigned.
 
-- Odoo owns business desired state.
-- Codestra Middleware is the sole remote operational write authority.
-- VICIdial is the telephony system of record.
-- Asterisk is the call engine.
-- The restricted local adapter is the only controlled VICIdial mutation authority.
-- n8n is an asynchronous consumer and never writes directly to VICIdial.
-- MariaDB stays local-only; never expose it to application servers or the public Internet.
-- Never add generic SQL, shell, filesystem, AMI, or ARI proxy endpoints.
+Allowed states: NOT_STARTED, CLAIMED, IN_PROGRESS, BLOCKED, REVIEW, COMPLETE, CERTIFIED.
 
-## Agent execution rules
+Abandoned leases may be reclaimed only after the configured heartbeat timeout and worktree inspection.
 
-- Implement and test; do not only advise.
-- Preserve compatible existing work and reuse validated code.
-- Do not discard unrelated changes or rewrite history.
-- Never commit, print, log, or upload credentials, customer data, recordings, database dumps, private keys, or live provider secrets.
-- Begin runtime work with read-only inventory and exact source/runtime identity capture.
-- Back up and checksum affected state before controlled mutations.
-- Every state-changing command is authenticated, authorized, schema-validated, idempotent where applicable, correlated, audited, and read back.
-- A successful API response may never stand in for failed or unverified persistence.
-- Existing compatible resources are adopted only with explicit ownership proof; incompatible collisions block.
-- Never delete historical calls, leads, users, recordings metadata, dispositions, or reporting history.
-- New campaign resources are disabled/non-dialing by default.
-- Activation is a separate explicit production decision after certification.
-- Every PASS must name exact commit/image identity, test command/run, environment, timestamp, and evidence.
-- Backups, isolated restore proof, monitoring, reconciliation and rollback are required before production activation.
+## Mandatory pre-work synchronization
 
-## Production code rule
+Before editing: fetch/prune origin; verify workstation and parent branch; record HEAD SHA; verify clean tree; record ahead/behind; synchronize safely from parent; run preflight; verify production-effect gates remain disabled.
 
-No production feature is complete when runtime behavior depends on `pass`, `NotImplementedError`, placeholder/no-op logic, hard-coded success, mock persistence, fake runtime state, or `.candidate` / `.reference` files. Test doubles belong only in tests. Canonical executable modules must be the same modules compiled/tested by CI and used by deployment authority.
+Stop on unexplained local changes, divergence, invalidated base assumptions, conflicts, missing required dependencies/credentials, or uncertain safety. Never overwrite unknown local work.
 
-## Required fail-closed defaults
+## Atomic implementation
 
-```text
-ENABLE_VICIDIAL_WRITES=false
-ENABLE_PROVISIONING=false
-ENABLE_AGENT_SYNC=false
-ENABLE_LEAD_PUBLICATION=false
-ENABLE_LIVE_CALL_CONTROL=false
-ENABLE_WARM_TRANSFER=false
-ENABLE_IVR_ROUTING=false
-ENABLE_IVR_CALLBACKS=false
-ENABLE_PRODUCTION_DIALING=false
-ENABLE_SMS_DELIVERY=false
-ENABLE_EMAIL_DELIVERY=false
-ENABLE_EXTERNAL_DELIVERY=false
-ENABLE_AI_ACTIONS=false
-```
+Every atomic task includes applicable implementation, tests, error handling, contracts, documentation, migrations, observability, and security review. Do not combine unrelated changes.
 
-Do not turn production dialing or customer traffic on as part of ordinary development, certification, CI, staging, or repository cleanup.
+## Code quality
 
-<!-- CODESTRA_AGENT_PROTOCOL_V1 -->
-## Codestra continuation contract
+Completion is prohibited with placeholder code, TODO-as-implementation, dead/duplicate code, temporary bypasses, broad exception swallowing, hard-coded credentials, production secrets, unexplained lint suppression, disabled tests, skipped security checks, or temporary production flags.
 
-Canonical protocol:
-https://github.com/ingtrader21-spec/codestra/blob/main/docs/AGENT-CONTINUATION-PROTOCOL.md
+## Test before push
 
-Quick start:
-https://github.com/ingtrader21-spec/codestra/blob/main/docs/AGENT-QUICKSTART.md
+Run applicable formatting, lint, types, unit, integration, contract/OpenAPI, migration, security, secret scan, and git diff --check gates before every checkpoint push. Do not knowingly push broken code.
 
-Before changing code:
-1. Read `.codestra-mission/*` when present.
-2. Read the active Linear issue and linked Notion architecture.
-3. Inspect exact Git branch/HEAD/dirty/worktree/upstream/PR/CI state.
-4. Preserve all existing local work.
-5. If acting as Builder, verify exclusive issue ownership and use a dedicated worktree.
-6. Do not invent or self-assign the next task.
-7. Update GitHub + Linear + Notion + the mission checkpoint before handoff.
-8. Do not cross the live-production approval boundary.
+## Push discipline
 
-The canonical protocol's no-loss, one-writer, protected-merge, checkpoint, and production-boundary rules are mandatory.
+After each atomic checkpoint: validate, commit intended changes, push branch, verify remote SHA, update mission status, record blockers. Do not end with unexplained uncommitted implementation work.
+
+## Commit standard
+
+One understandable unit per commit. Avoid meaningless messages such as update, fix, changes, or stuff.
+
+## Parent synchronization
+
+Before merge request: fetch remote; compare parent; integrate current parent safely; resolve conflicts intentionally; rerun required tests; push refreshed exact branch; require CI on the new exact SHA. Old CI evidence does not certify changed code.
+
+## Protected branches
+
+Do not directly develop on main, development, testing, staging, or production. Protected branches move only through approved pull requests and required checks. Force pushes are prohibited.
+
+## Production effects default OFF
+
+Unless a separately approved production activation mission changes them:
+
+PRODUCTION_GO=NO
+LIVE_CAPABILITIES_ENABLED=NO
+EXTERNAL_EFFECTS=false
+
+Implementation missions must not silently enable calls, SMS, email, WhatsApp, payments, social publishing, production database mutation, production infrastructure changes, credential issuance, or external media publishing.
+
+## Completion evidence
+
+Every completed subsection records final branch/SHA, parent SHA, changed files, tests/results, security result, migration result, API/contract result, dependency changes, limitations, remaining TODOs, CI result, and reviewer result. Missing evidence means not COMPLETE.
+
+## COMPLETE
+
+COMPLETE requires implementation present, applicable local/integration/contract/security tests green, current documentation, valid migrations, branch pushed, clean tree, local/remote SHA match, and no unresolved blockers.
+
+## CERTIFIED
+
+CERTIFIED additionally requires exact-SHA CI green, independent review, parent integration success, regression/security/performance gates as applicable, no unresolved critical/high defects, and stored completion evidence. Only CERTIFIED work may promote.
+
+## Cleanup
+
+After parent integration, verify exact intended changes are present, remove obsolete temporary worktrees/locks, archive evidence, prune stale local refs, preserve unmerged branches, and retain recovery references where required.
+
+## Fail closed
+
+When safety cannot be proven, stop and mark BLOCKED. Never guess around secrets, migrations, authorization, branch ancestry, production effects, destructive operations, or incomplete CI evidence.
