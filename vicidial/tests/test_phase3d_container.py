@@ -58,7 +58,7 @@ def test_dockerfile_is_pinned_multistage_nonroot_and_amd64_buildable():
     assert '"libcrypto3=${OPENSSL_PACKAGE_VERSION}"' in text
     assert '"libssl3=${OPENSSL_PACKAGE_VERSION}"' in text
     assert '"libuuid=${LIBUUID_PACKAGE_VERSION}"' in text
-    assert "OPENSSL_PACKAGE_VERSION=3.5.8-r0" in text
+    assert "OPENSSL_PACKAGE_VERSION=3.5.9-r0" in text
     assert "LIBUUID_PACKAGE_VERSION=2.42.3-r1" in text
     assert "https://dl-cdn.alpinelinux.org/alpine/v3.24/main" in text
     assert "https://github.com/appolon1908-hue/Vicidialer-Codestra" in text

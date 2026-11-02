@@ -15,7 +15,7 @@ FROM ${PYTHON_IMAGE} AS release
 ARG SOURCE_SHA
 ARG BUILD_DATE
 ARG RELEASE_ENVIRONMENT=production-candidate
-ARG OPENSSL_PACKAGE_VERSION=3.5.8-r0
+ARG OPENSSL_PACKAGE_VERSION=3.5.9-r0
 ARG LIBUUID_PACKAGE_VERSION=2.42.3-r1
 LABEL org.opencontainers.image.title="Codestra VICIdial Restricted Adapter" \
       org.opencontainers.image.revision="${SOURCE_SHA}" \
