@@ -28,7 +28,7 @@ def main():
             return f.read()
         if read("SOURCE_SHA") != (a.source_sha+"\n").encode(): raise ValueError("source identity mismatch")
         manifest=json.loads(read("SOURCE_RELEASE_MANIFEST.json"))
-        expected={"schema_version":1,"artifact_type":"codestra-vicidial-server-b-source-release","source_repository":"appolon1908-hue/Vicidialer-Codestra","source_sha":a.source_sha,"builder_workflow_sha":a.builder_sha,"archive_root":".","installer_contract":"systemd-python-source-v1"}
+        expected={"schema_version":1,"artifact_type":"codestra-vicidial-server-b-source-release","source_repository":"appolon1908/Vicidialer-Codestra","source_sha":a.source_sha,"builder_workflow_sha":a.builder_sha,"archive_root":".","installer_contract":"systemd-python-source-v1"}
         if any(manifest.get(k)!=v for k,v in expected.items()): raise ValueError("manifest binding mismatch")
         raw=read("SHA256SUMS"); checks={}
         for line in raw.decode("ascii").splitlines():

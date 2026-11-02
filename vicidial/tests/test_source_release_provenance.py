@@ -12,7 +12,7 @@ import yaml
 
 ROOT = Path(__file__).resolve().parents[2]
 SHA = '9ac8ef4840f78ba4ad9b816e4e409298505103ce'
-WORKFLOW = 'appolon1908-hue/Vicidialer-Codestra/.github/workflows/publish-server-b-source-release.yml@refs/heads/main'
+WORKFLOW = 'appolon1908/Vicidialer-Codestra/.github/workflows/publish-server-b-source-release.yml@refs/heads/main'
 
 
 def statement(archive):
@@ -22,9 +22,9 @@ def statement(archive):
         'subject': [{'name': archive.name, 'digest': {'sha256': hashlib.sha256(archive.read_bytes()).hexdigest()}}],
         'predicate': {
             'buildDefinition': {
-                'buildType': 'https://github.com/appolon1908-hue/Vicidialer-Codestra/server-b-source-release/v1',
+                'buildType': 'https://github.com/appolon1908/Vicidialer-Codestra/server-b-source-release/v1',
                 'externalParameters': {'source_sha': SHA, 'builder_sha': 'b' * 40},
-                'resolvedDependencies': [{'uri': 'git+https://github.com/appolon1908-hue/Vicidialer-Codestra', 'digest': {'gitCommit': SHA}}],
+                'resolvedDependencies': [{'uri': 'git+https://github.com/appolon1908/Vicidialer-Codestra', 'digest': {'gitCommit': SHA}}],
             },
             'runDetails': {'builder': {'id': WORKFLOW}, 'metadata': {'invocationId': '12345/2'}},
         },

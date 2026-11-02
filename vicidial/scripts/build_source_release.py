@@ -55,7 +55,7 @@ def build(root: Path, source_sha: str, builder_sha: str, output: Path) -> dict:
         (stage / "SOURCE_SHA").write_text(source_sha + "\n", encoding="ascii")
         sums = [f"{sha256(path)}  {path.relative_to(stage).as_posix()}" for path in sorted(stage.rglob("*")) if path.is_file()]
         (stage / "SHA256SUMS").write_text("\n".join(sums) + "\n", encoding="ascii")
-        manifest = {"schema_version": 1, "artifact_type": "codestra-vicidial-server-b-source-release", "source_repository": "appolon1908-hue/Vicidialer-Codestra", "source_sha": source_sha, "builder_workflow_sha": builder_sha, "archive_root": ".", "installer_contract": "systemd-python-source-v1", "file_count": len(sums), "checksums_sha256": sha256(stage / "SHA256SUMS")}
+        manifest = {"schema_version": 1, "artifact_type": "codestra-vicidial-server-b-source-release", "source_repository": "appolon1908/Vicidialer-Codestra", "source_sha": source_sha, "builder_workflow_sha": builder_sha, "archive_root": ".", "installer_contract": "systemd-python-source-v1", "file_count": len(sums), "checksums_sha256": sha256(stage / "SHA256SUMS")}
         manifest_bytes = (json.dumps(manifest, sort_keys=True, separators=(",", ":")) + "\n").encode()
         (stage / "SOURCE_RELEASE_MANIFEST.json").write_bytes(manifest_bytes)
         output.parent.mkdir(parents=True, exist_ok=True)
