@@ -95,6 +95,14 @@ def test_vulnerability_policy_is_exact_and_verifier_fails_closed(tmp_path):
     from vicidial.scripts.verify_vulnerability_adjudication import verify
 
     policy = json.loads((ROOT / "vicidial/config/vulnerability-adjudication.json").read_text())
+    # Preserve legacy engine coverage using explicit test-only exceptions.
+    # The separately tested current production policy permits no exceptions.
+    assert policy["adjudications"] == []
+    policy = {**policy, "adjudications": [
+        {"vulnerability_id": "CVE-2026-4224", "package": "python", "installed_version": "3.11.16", "required_regression": "cve_2026_4224"},
+        {"vulnerability_id": "CVE-2026-7210", "package": "python", "installed_version": "3.11.16", "required_regression": "cve_2026_7210_runtime_component"},
+        {"vulnerability_id": "CVE-2026-3644", "package": "python", "installed_version": "3.11.16", "required_regression": "cve_2026_3644"},
+    ]}
     assert {(x["vulnerability_id"], x["package"], x["installed_version"])
             for x in policy["adjudications"]} == {
         ("CVE-2026-4224", "python", "3.11.16"),
@@ -295,3 +303,41 @@ def test_local_image_health_release_tuple_and_restart(tmp_path):
         assert get("/ready")["status"] == "ready"
     finally:
         subprocess.run([engine, "rm", "--force", name], capture_output=True)
+
+
+def _strict_production_scan_fixture():
+    policy = json.loads((ROOT / "vicidial/config/vulnerability-adjudication.json").read_text())
+    image_id = "b" * 64
+    metadata = {"Id": image_id, "Config": {"Labels": {"org.opencontainers.image.revision": "a" * 40}}}
+    regression = {"python_short": "3.11.18", "implementation": "cpython", "expat_short": "2.9.0", "openssl_short": "3.5.9", "libcrypto3": "3.5.9-r0", "libssl3": "3.5.9-r0", "libuuid": "2.42.3-r1", "cve_2026_4224": "PASS", "cve_2026_7210_runtime_component": "PASS", "cve_2026_3644": "PASS"}
+    grype = {"matches": [], "source": {"type": "image", "target": {"imageID": f"sha256:{image_id}", "manifestDigest": f"sha256:{'c' * 64}"}}, "descriptor": {"name": "grype", "version": "0.104.0", "timestamp": "2026-11-02T00:00:00Z"}}
+    trivy = {"SchemaVersion": 2, "ArtifactName": "codestra/vicidial:test", "ArtifactType": "container_image", "CreatedAt": "2026-11-02T00:00:00Z", "Metadata": {"ImageID": f"sha256:{image_id}"}, "Results": [{"Target": "runtime", "Class": "os-pkgs", "Type": "alpine", "Vulnerabilities": []}]}
+    return policy, metadata, regression, grype, trivy
+
+
+def test_current_production_policy_has_no_adjudication_exceptions():
+    policy, *_ = _strict_production_scan_fixture()
+    assert policy["adjudications"] == []
+
+
+def test_current_clean_exact_image_can_validate_and_expiry_remains_fatal():
+    from datetime import date
+    from vicidial.scripts.verify_vulnerability_adjudication import verify
+    policy, metadata, regression, grype, trivy = _strict_production_scan_fixture()
+    assert verify(policy, grype, metadata, regression, "a" * 40, today=date(2026, 11, 2), trivy=trivy)["status"] == "PASS"
+    with pytest.raises(ValueError, match="policy is expired"):
+        verify(policy, grype, metadata, regression, "a" * 40, today=date(2026, 11, 10), trivy=trivy)
+
+
+@pytest.mark.parametrize("scanner", ["grype", "trivy"])
+@pytest.mark.parametrize("severity", ["High", "Critical"])
+def test_production_policy_rejects_all_high_critical_even_old_fixed_regressions(scanner, severity):
+    from datetime import date
+    from vicidial.scripts.verify_vulnerability_adjudication import verify
+    policy, metadata, regression, grype, trivy = _strict_production_scan_fixture()
+    if scanner == "grype":
+        grype["matches"] = [{"vulnerability": {"id": "CVE-2026-4224", "severity": severity}, "artifact": {"name": "python", "version": "3.11.16"}}]
+    else:
+        trivy["Results"][0]["Vulnerabilities"] = [{"VulnerabilityID": "CVE-2026-4224", "Severity": severity, "PkgName": "python", "InstalledVersion": "3.11.16"}]
+    with pytest.raises(ValueError, match="unadjudicated High|Critical findings"):
+        verify(policy, grype, metadata, regression, "a" * 40, today=date(2026, 8, 26), trivy=trivy)
