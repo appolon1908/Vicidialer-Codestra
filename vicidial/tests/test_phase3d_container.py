@@ -50,7 +50,7 @@ def test_container_workflow_runs_for_gateway_signer_changes():
 def test_dockerfile_is_pinned_multistage_nonroot_and_amd64_buildable():
     text = (DOCKER / "Dockerfile").read_text()
     assert text.count("FROM ${PYTHON_IMAGE}") == 2
-    assert "python:3.11.16-alpine@sha256:" in text
+    assert "python:3.11.18-alpine@sha256:09d17d5e4c16d0a7a1eea690bcb7c6ab8616b211f8421e429e97c1bef5bd0ed2" in text
     assert "USER 10001:10001" in text
     assert "SOURCE.COMMIT" in text and "RELEASE_MANIFEST.json" in text
     assert "/health" in text and "/ready" in text and "/version" in text
@@ -80,7 +80,7 @@ def test_runtime_security_regression_is_bounded_and_version_pinned():
     text = (DOCKER / "security_regression.py").read_text()
     assert "RLIMIT_CPU" in text and "RLIMIT_AS" in text
     assert "process.join(5)" in text
-    assert "(3, 11, 16)" in text
+    assert "(3, 11, 18)" in text
     assert "(2, 8, 0)" in text
     assert "Morsel" in text and "pickle" in text and "js_output" in text
 
@@ -104,7 +104,7 @@ def test_vulnerability_policy_is_exact_and_verifier_fails_closed(tmp_path):
     image_id = "b" * 64
     metadata = {"Id": image_id,
                 "Config": {"Labels": {"org.opencontainers.image.revision": "a" * 40}}}
-    regression = {"python_short": "3.11.16", "implementation": "cpython",
+    regression = {"python_short": "3.11.18", "implementation": "cpython",
                       "expat_short": "2.8.3", "openssl_short": "3.5.8",
                       "libcrypto3": "3.5.8-r0", "libssl3": "3.5.8-r0",
                       "libuuid": "2.42.3-r1",
