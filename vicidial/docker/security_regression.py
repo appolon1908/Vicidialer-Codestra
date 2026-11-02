@@ -36,7 +36,7 @@ def _expect_cookie_error(operation) -> None:
 
 
 def main() -> None:
-    assert sys.version_info[:3] == (3, 11, 16)
+    assert sys.version_info[:3] == (3, 11, 18)
     assert sys.implementation.name == "cpython"
     assert tuple(map(int, pyexpat.EXPAT_VERSION.removeprefix("expat_").split("."))) >= (2, 8, 0)
 

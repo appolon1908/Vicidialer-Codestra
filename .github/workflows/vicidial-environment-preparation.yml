@@ -1,13 +1,6 @@
 name: VICIdial staging and production preparation
 on:
   pull_request:
-    paths:
-      - .codestra/deployment-candidate.json
-      - scripts/prepare_vicidial_environments.py
-      - tests/test_prepare_vicidial_environments.py
-      - .github/workflows/vicidial-environment-preparation.yml
-      - .github/workflows/publish-server-b-source-release.yml
-      - docs/STAGING_PRODUCTION_PREPARATION.md
   push:
     branches: [main]
     paths:

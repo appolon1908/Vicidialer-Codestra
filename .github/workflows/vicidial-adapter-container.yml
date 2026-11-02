@@ -4,13 +4,6 @@ name: VICIdial restricted adapter container
 
 on:
   pull_request:
-    paths:
-      - "campaign_provisioning/**"
-      - "scripts/**"
-      - "tests/**"
-      - "vicidial/**"
-      - "deploy/vicidial-restricted-adapter/**"
-      - ".github/workflows/vicidial-adapter-container.yml"
   workflow_dispatch:
 
 permissions:
@@ -64,7 +57,7 @@ jobs:
           docker compose -f vicidial/docker/compose.production.yml -f vicidial/docker/compose.agent-provisioning.yml config --quiet
       - uses: actions/setup-python@v5
         with:
-          python-version: "3.11"
+          python-version: "3.11.18"
       - name: Install locked runtime and bounded test dependencies
         run: |
           python -m pip install --requirement vicidial/docker/requirements.lock
@@ -297,6 +290,40 @@ jobs:
           output-file: evidence/GRYPE_REPORT.json
           severity-cutoff: negligible
           fail-build: false
+      - name: Emit secret-safe exact-image security review metadata
+        run: |
+          python - <<'PYSEC'
+          import hashlib, json, re
+          from pathlib import Path
+          def safe(value, pattern):
+              value = str(value)
+              return value if re.fullmatch(pattern, value) else "INVALID_METADATA"
+          findings = []
+          for name in ("GRYPE_REPORT.json", "VULNERABILITY_REPORT.json", "PYTHON_SECURITY_REGRESSION.json", "IMAGE_METADATA.json"):
+              path = Path("evidence") / name
+              print("SECURITY_REPORT_SHA256=" + name + ":" + hashlib.sha256(path.read_bytes()).hexdigest())
+          grype = json.loads(Path("evidence/GRYPE_REPORT.json").read_text())
+          trivy = json.loads(Path("evidence/VULNERABILITY_REPORT.json").read_text())
+          for match in grype["matches"]:
+              vulnerability, artifact = match["vulnerability"], match["artifact"]
+              findings.append(("grype", vulnerability["id"], artifact["name"], artifact["version"], vulnerability["severity"]))
+          for result in trivy.get("Results", []):
+              for match in result.get("Vulnerabilities") or []:
+                  findings.append(("trivy", match["VulnerabilityID"], match["PkgName"], match["InstalledVersion"], match["Severity"]))
+          print("SECURITY_FINDING_RECORDS=" + str(len(findings)))
+          for scanner, identifier, package, version, severity in sorted(set(findings)):
+              print("SECURITY_FINDING=" + json.dumps({
+                  "scanner": scanner,
+                  "id": safe(identifier, r"(?:CVE-[0-9]{4}-[0-9]+|GHSA-[a-z0-9-]+)"),
+                  "package": safe(package, r"[A-Za-z0-9_.+:/@-]{1,160}"),
+                  "version": safe(version, r"[0-9][A-Za-z0-9_.+~-]{0,80}"),
+                  "severity": safe(severity.lower(), r"critical|high|medium|moderate|low|negligible|unknown"),
+              }, sort_keys=True))
+          regression = json.loads(Path("evidence/PYTHON_SECURITY_REGRESSION.json").read_text())
+          keys = ("python_short", "implementation", "expat_short", "openssl_short", "libcrypto3", "libssl3", "libuuid", "cve_2026_4224", "cve_2026_7210_runtime_component", "cve_2026_3644")
+          print("SECURITY_RUNTIME_REGRESSION=" + json.dumps({key: safe(regression.get(key, ""), r"[A-Za-z0-9_.+-]{1,80}") for key in keys}, sort_keys=True))
+          print("SECURITY_ADJUDICATION_STILL_REQUIRED=true")
+          PYSEC
       - name: Verify exact-image vulnerability adjudication
         run: |
           python vicidial/scripts/verify_vulnerability_adjudication.py \

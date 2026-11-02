@@ -67,3 +67,16 @@ def test_cli_emits_only_complete_reference(tmp_path):
     )
     assert result.returncode == 0, result.stderr
     assert result.stdout.strip().endswith("@sha256:" + "b" * 64)
+
+
+@pytest.mark.parametrize("relative", [
+    "vicidial/ops/codestra-vicidial-restricted-adapter.service",
+    "deploy/vicidial-restricted-adapter/codestra-vicidial-restricted-adapter.service",
+])
+def test_credential_service_waits_for_exec_before_post_start_checks(relative):
+    unit = (ROOT / relative).read_text(encoding="utf-8")
+    assert "Type=exec\n" in unit
+    assert "LoadCredential=adapter-hmac:" in unit
+    assert "ExecStartPost=" in unit and "scripts/verify_operational_contract.py" in unit
+    assert "NoNewPrivileges=true" in unit
+    assert "IPAddressDeny=any" in unit

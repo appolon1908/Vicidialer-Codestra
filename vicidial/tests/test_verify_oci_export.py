@@ -108,7 +108,7 @@ def _slsa_predicate(source_sha: str) -> dict:
             ),
             "resolvedDependencies": [
                 {
-                    "uri": "git+https://github.com/appolon1908-hue/"
+                    "uri": "git+https://github.com/appolon1908/"
                     "Vicidialer-Codestra@refs/pull/2/head",
                     "digest": {"gitCommit": source_sha},
                 }

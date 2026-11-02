@@ -7,7 +7,7 @@ import re
 
 
 SLSA_PROVENANCE_PREDICATE = "https://slsa.dev/provenance/v1"
-SOURCE_REPOSITORY = "https://github.com/appolon1908-hue/Vicidialer-Codestra"
+SOURCE_REPOSITORY = "https://github.com/appolon1908/Vicidialer-Codestra"
 RESOURCE_DESCRIPTOR_STRING_FIELDS = (
     "name", "uri", "downloadLocation", "mediaType",
 )

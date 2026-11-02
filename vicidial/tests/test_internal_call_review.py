@@ -539,6 +539,8 @@ def test_protected_policy_permissions_fail_closed(tmp_path, monkeypatch, mode, u
     from types import SimpleNamespace
 
     import codestra_vicidial.internal_call_transport as module
+    # Keep permission simulations local; do not replace stdlib file-I/O metadata.
+    monkeypatch.setattr(module, "os", SimpleNamespace(**vars(module.os)))
 
     path = tmp_path / "policy.json"
     path.write_text(policy().model_dump_json())
@@ -553,6 +555,8 @@ def test_root_owned_group_readonly_policy_is_service_readable(tmp_path, monkeypa
     from types import SimpleNamespace
 
     import codestra_vicidial.internal_call_transport as module
+    # Keep permission simulations local; do not replace stdlib file-I/O metadata.
+    monkeypatch.setattr(module, "os", SimpleNamespace(**vars(module.os)))
 
     path = tmp_path / "policy.json"
     path.write_text('{"scope":"synthetic"}')
@@ -568,6 +572,8 @@ def test_service_owned_readonly_policy_is_readable(tmp_path, monkeypatch):
     from types import SimpleNamespace
 
     import codestra_vicidial.internal_call_transport as module
+    # Keep permission simulations local; do not replace stdlib file-I/O metadata.
+    monkeypatch.setattr(module, "os", SimpleNamespace(**vars(module.os)))
 
     path = tmp_path / "policy.json"
     path.write_text('{"scope":"synthetic"}')
@@ -592,6 +598,8 @@ def test_protected_policy_rejects_duplicate_keys_and_symlinks(tmp_path, monkeypa
     from types import SimpleNamespace
 
     import codestra_vicidial.internal_call_transport as module
+    # Keep permission simulations local; do not replace stdlib file-I/O metadata.
+    monkeypatch.setattr(module, "os", SimpleNamespace(**vars(module.os)))
 
     path = tmp_path / "policy.json"
     path.write_text('{"max_calls":1,"max_calls":10}')

@@ -9,7 +9,7 @@ import pytest
 ROOT = Path(__file__).resolve().parents[2]
 SCRIPT = ROOT / "vicidial" / "scripts" / "verify_oci_export.py"
 WORKFLOW = ROOT / ".github" / "workflows" / "vicidial-adapter-container.yml"
-SOURCE_REPOSITORY = "https://github.com/appolon1908-hue/Vicidialer-Codestra"
+SOURCE_REPOSITORY = "https://github.com/appolon1908/Vicidialer-Codestra"
 SOURCE_SHA = "a" * 40
 
 

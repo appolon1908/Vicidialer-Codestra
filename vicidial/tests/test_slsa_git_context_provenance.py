@@ -13,7 +13,7 @@ if str(SCRIPTS) not in sys.path:
 
 from slsa_attestation_contracts import validate_slsa_provenance  # noqa: E402
 
-SOURCE_REPOSITORY = "https://github.com/appolon1908-hue/Vicidialer-Codestra"
+SOURCE_REPOSITORY = "https://github.com/appolon1908/Vicidialer-Codestra"
 SOURCE_SHA = "a" * 40
 
 
@@ -115,4 +115,16 @@ def test_rejects_conflicting_hex_revision_in_source_uri():
         f"{SOURCE_REPOSITORY}.git#{'f' * 40}"
     )
     with pytest.raises(ValueError, match="URI revision differs"):
+        validate_slsa_provenance(predicate, SOURCE_SHA)
+
+
+@pytest.mark.parametrize("repository", [
+    "https://github.com/appolon1908-hue/Vicidialer-Codestra",
+    "https://github.com/ingtrader21-spec/Vicidialer-Codestra",
+    "https://github.com/other/Vicidialer-Codestra",
+])
+def test_former_or_unrelated_source_repository_is_rejected(repository):
+    import json
+    predicate = json.loads(json.dumps(_buildkit_git_predicate()).replace(SOURCE_REPOSITORY, repository))
+    with pytest.raises(ValueError):
         validate_slsa_provenance(predicate, SOURCE_SHA)

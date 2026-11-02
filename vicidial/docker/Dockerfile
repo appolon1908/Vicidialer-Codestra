@@ -1,5 +1,5 @@
 # syntax=docker/dockerfile:1.7
-ARG PYTHON_IMAGE=python:3.11.16-alpine@sha256:6857d2dae63e052057f2db389a7061188ac9a92a3fa8d402bde68f36df6fada1
+ARG PYTHON_IMAGE=python:3.11.18-alpine@sha256:09d17d5e4c16d0a7a1eea690bcb7c6ab8616b211f8421e429e97c1bef5bd0ed2
 
 FROM ${PYTHON_IMAGE} AS builder
 WORKDIR /build
@@ -15,12 +15,12 @@ FROM ${PYTHON_IMAGE} AS release
 ARG SOURCE_SHA
 ARG BUILD_DATE
 ARG RELEASE_ENVIRONMENT=production-candidate
-ARG OPENSSL_PACKAGE_VERSION=3.5.8-r0
+ARG OPENSSL_PACKAGE_VERSION=3.5.9-r0
 ARG LIBUUID_PACKAGE_VERSION=2.42.3-r1
 LABEL org.opencontainers.image.title="Codestra VICIdial Restricted Adapter" \
       org.opencontainers.image.revision="${SOURCE_SHA}" \
       org.opencontainers.image.created="${BUILD_DATE}" \
-      org.opencontainers.image.source="https://github.com/appolon1908-hue/Vicidialer-Codestra"
+      org.opencontainers.image.source="https://github.com/appolon1908/Vicidialer-Codestra"
 ENV PATH=/opt/venv/bin:$PATH \
     PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
