@@ -41,7 +41,10 @@ DEPRECATED_FLAGS = (
 
 def test_container_workflow_runs_for_gateway_signer_changes():
     workflow = (ROOT / ".github/workflows/vicidial-adapter-container.yml").read_text()
-    assert '- "campaign_provisioning/**"' in workflow
+    document = yaml.safe_load(workflow)
+    triggers = document.get('on', document.get(True))
+    assert 'pull_request' in triggers
+    assert triggers['pull_request'] is None  # All source changes, including gateway signers.
 
 
 def test_dockerfile_is_pinned_multistage_nonroot_and_amd64_buildable():

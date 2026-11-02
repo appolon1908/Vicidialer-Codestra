@@ -2,9 +2,6 @@ name: calling-contract-pin
 
 on:
   pull_request:
-    paths:
-      - ".codestra/calling-contract.lock.json"
-      - ".github/workflows/calling-contract-pin.yml"
   push:
     branches: ["main"]
     paths:

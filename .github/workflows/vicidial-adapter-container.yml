@@ -4,13 +4,6 @@ name: VICIdial restricted adapter container
 
 on:
   pull_request:
-    paths:
-      - "campaign_provisioning/**"
-      - "scripts/**"
-      - "tests/**"
-      - "vicidial/**"
-      - "deploy/vicidial-restricted-adapter/**"
-      - ".github/workflows/vicidial-adapter-container.yml"
   workflow_dispatch:
 
 permissions:
